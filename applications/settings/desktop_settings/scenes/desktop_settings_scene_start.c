@@ -20,10 +20,11 @@ typedef enum {
     DesktopSettingsRgbBacklight       = 7,
     DesktopSettingsVgmOptions         = 8,
 
-    DesktopSettingsFavoriteLeftShort  = 16,
-    DesktopSettingsFavoriteLeftLong   = 17,
-    DesktopSettingsFavoriteRightShort = 18,
-    DesktopSettingsFavoriteOkLong     = 19,
+    DesktopSettingsFavoriteLeftShort  = 17,
+    DesktopSettingsFavoriteLeftLong   = 18,
+    DesktopSettingsFavoriteRightShort = 19,
+    DesktopSettingsFavoriteOkLong     = 20,
+    DesktopSettingsFavoriteDownShort  = 21,
 
 } DesktopSettingsEntry;
 
@@ -48,6 +49,9 @@ static CliSettings s_cli_settings;
 #define GPIO_PINS_COUNT 2
 static const char* const gpio_pins_text[GPIO_PINS_COUNT] = {"13/14", "15/16"};
 static GpioRemapSettings s_gpio_remap;
+
+#define NOTIFY_TEXT_COUNT 3
+static const char* const notify_text_text[NOTIFY_TEXT_COUNT] = {"All", "Critical", "None"};
 
 #define BATTERY_VIEW_COUNT 6
 static const char* const battery_view_text[BATTERY_VIEW_COUNT] =
@@ -115,6 +119,12 @@ static void desktop_settings_scene_start_gpio_pins_changed(VariableItem* item) {
     gpio_remap_settings_save(&s_gpio_remap);
 }
 
+static void desktop_settings_scene_start_notify_text_changed(VariableItem* item) {
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, notify_text_text[index]);
+    fox_settings_set_notification_text(index);
+}
+
 void desktop_settings_scene_start_on_enter(void* context) {
     DesktopSettingsApp* app = context;
     VariableItemList* list = app->variable_item_list;
@@ -136,6 +146,16 @@ void desktop_settings_scene_start_on_enter(void* context) {
     variable_item_list_add(list, "Alarm Clock", 0, NULL, NULL);
     variable_item_list_add(list, "RGB Backlight", 0, NULL, NULL);
     variable_item_list_add(list, "VGM Options", 0, NULL, NULL);
+
+    item = variable_item_list_add(
+        list, "Notification Text", NOTIFY_TEXT_COUNT,
+        desktop_settings_scene_start_notify_text_changed, app);
+    {
+        uint8_t ni = fox_settings_get_notification_text();
+        if(ni >= NOTIFY_TEXT_COUNT) ni = 0;
+        variable_item_set_current_value_index(item, ni);
+        variable_item_set_current_value_text(item, notify_text_text[ni]);
+    }
 
     item = variable_item_list_add(
         list, "Battery View", BATTERY_VIEW_COUNT,
@@ -192,6 +212,7 @@ void desktop_settings_scene_start_on_enter(void* context) {
     variable_item_list_add(list, "Favorite - Left Long",   0, NULL, NULL);
     variable_item_list_add(list, "Favorite - Right Short", 0, NULL, NULL);
     variable_item_list_add(list, "Favorite - Ok Long",     0, NULL, NULL);
+    variable_item_list_add(list, "Favorite - Down Short",  0, NULL, NULL);
 
     variable_item_list_set_enter_callback(
         list, desktop_settings_scene_start_var_list_enter_callback, app);
@@ -262,6 +283,12 @@ bool desktop_settings_scene_start_on_event(void* context, SceneManagerEvent even
             scene_manager_set_scene_state(
                 app->scene_manager, DesktopSettingsAppSceneFavorite,
                 SCENE_STATE_SET_FAVORITE_APP | FavoriteAppOkLong);
+            scene_manager_next_scene(app->scene_manager, DesktopSettingsAppSceneFavorite);
+            break;
+        case DesktopSettingsFavoriteDownShort:
+            scene_manager_set_scene_state(
+                app->scene_manager, DesktopSettingsAppSceneFavorite,
+                SCENE_STATE_SET_FAVORITE_APP | FavoriteAppRightLong); /* Down-short -> RightLong slot */
             scene_manager_next_scene(app->scene_manager, DesktopSettingsAppSceneFavorite);
             break;
         default:

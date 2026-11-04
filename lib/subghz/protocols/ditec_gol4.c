@@ -1,4 +1,7 @@
 #include "ditec_gol4.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -9,6 +12,8 @@
 #include <string.h>
 
 #define TAG "SubGhzProtocolDitecGOL4"
+
+static bool ditec_gol4_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
 
 #define DITEC_GOL4_UPLOAD_SIZE 128
 #define GOL4_RAW_BYTES 7
@@ -34,6 +39,9 @@ struct SubGhzProtocolEncoderDitecGOL4 {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderDitecGOL4);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderDitecGOL4);
+
 typedef enum {
     DitecGOL4DecoderStepReset = 0,
     DitecGOL4DecoderStepStartBit,
@@ -43,34 +51,34 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_ditec_gol4_decoder = {
     .alloc = subghz_protocol_decoder_ditec_gol4_alloc,
-    .free = subghz_protocol_decoder_ditec_gol4_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_ditec_gol4_feed,
     .reset = subghz_protocol_decoder_ditec_gol4_reset,
 
-    .get_hash_data = subghz_protocol_decoder_ditec_gol4_get_hash_data,
-    .serialize = subghz_protocol_decoder_ditec_gol4_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_ditec_gol4_deserialize,
-    .get_string = subghz_protocol_decoder_ditec_gol4_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_ditec_gol4_encoder = {
-    .alloc = subghz_protocol_encoder_ditec_gol4_alloc,
-    .free = subghz_protocol_encoder_ditec_gol4_free,
-
-    .deserialize = subghz_protocol_encoder_ditec_gol4_deserialize,
-    .stop = subghz_protocol_encoder_ditec_gol4_stop,
-    .yield = subghz_protocol_encoder_ditec_gol4_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    void* ditec_gol4_raw_replay;
+} enc_ditec_gol4_host_t;
+static const enc_ditec_gol4_host_t enc_ditec_gol4_host = {
+    .ditec_gol4_raw_replay = (void*)&ditec_gol4_raw_replay,
 };
+static const SubGhzEncoderExternal subghz_protocol_ditec_gol4_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_ditec_gol4", &enc_ditec_gol4_host);
 
 const SubGhzProtocol subghz_protocol_ditec_gol4 = {
     .name = SUBGHZ_PROTOCOL_DITEC_GOL4_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
 
     .decoder = &subghz_protocol_ditec_gol4_decoder,
-    .encoder = &subghz_protocol_ditec_gol4_encoder,
+    .encoder = &subghz_protocol_ditec_gol4_encoder_ext.vtable,
 };
 
 static uint8_t subghz_protocol_ditec_gol4_get_btn_code(void);
@@ -100,55 +108,6 @@ static uint8_t gol4_lcg_step(uint8_t seed, uint8_t steps) {
         x = (uint8_t)((21 * x + 1) & 0xFF);
     }
     return x;
-}
-
-static uint8_t gol4_lcg_inverse(uint8_t target, uint8_t steps) {
-    steps &= 0xFF;
-    if(steps == 0) return target & 0xFF;
-    return gol4_lcg_step(target, (uint8_t)(256 - steps));
-}
-
-static void gol4_decode_rotate_and_bitrev(uint8_t* raw) {
-    uint8_t carry = 0;
-    for(uint8_t r = 0; r < 3; r++) {
-        for(uint8_t i = 2; i < 7; i++) {
-            uint8_t new_carry = raw[i] & 1;
-            raw[i] = (uint8_t)(((raw[i] >> 1) | (carry << 7)) & 0xFF);
-            carry = new_carry;
-        }
-    }
-
-    raw[0] = gol4_bit_reverse(raw[0]);
-    raw[1] = gol4_bit_reverse(raw[1]);
-    raw[3] = gol4_bit_reverse(raw[3]);
-    raw[4] = gol4_bit_reverse(raw[4]);
-
-    uint8_t b2 = raw[2] & 0xDF;
-    b2 = (uint8_t)(((b2 << 4) | (b2 >> 4)) & 0xFF);
-    b2 = (uint8_t)((~b2) & 0xFF);
-    raw[2] = gol4_bit_reverse(b2);
-
-    raw[5] = gol4_bit_reverse(raw[5]);
-    raw[6] = gol4_bit_reverse(raw[6]);
-}
-
-static bool gol4_decode_lcg_xor(uint8_t* raw) {
-    if(raw[6] & 0x80) raw[5] ^= 1;
-
-    uint8_t out5 = gol4_lcg_inverse(raw[5], 0xFE);
-    raw[5] = out5;
-
-    uint8_t out6 = gol4_lcg_inverse(raw[6], raw[5]);
-    raw[6] = out6;
-
-    raw[5] ^= 0xA7;
-    raw[6] ^= 0x69;
-    return true;
-}
-
-static bool gol4_rolling_decode(uint8_t* raw) {
-    gol4_decode_rotate_and_bitrev(raw);
-    return gol4_decode_lcg_xor(raw);
 }
 
 static bool gol4_encode_lcg_xor(uint8_t* raw) {
@@ -205,15 +164,6 @@ static bool gol4_rolling_encode(uint8_t* raw) {
     return true;
 }
 
-static void bits_to_raw(const uint8_t* bits, uint8_t* raw) {
-    memset(raw, 0, GOL4_RAW_BYTES);
-    for(uint8_t i = 0; i < subghz_protocol_ditec_gol4_const.min_count_bit_for_found; i++) {
-        uint8_t byte_idx = i / 8;
-        uint8_t bit_idx = 7 - (i % 8);
-        if(bits[i]) raw[byte_idx] |= (1 << bit_idx);
-    }
-}
-
 static void raw_to_bits(const uint8_t* raw, uint8_t* bits) {
     for(uint8_t i = 0; i < subghz_protocol_ditec_gol4_const.min_count_bit_for_found; i++) {
         uint8_t byte_idx = i / 8;
@@ -230,87 +180,6 @@ static uint64_t bits_to_data(const uint8_t* bits) {
     return data;
 }
 
-static uint32_t serial_to_display(const uint8_t* s) {
-    if(!s) return 0;
-    return (uint32_t)((s[0] << 24) | (s[4] << 16) | (s[1] << 8) | s[3]);
-}
-
-void* subghz_protocol_encoder_ditec_gol4_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderDitecGOL4* instance = malloc(sizeof(SubGhzProtocolEncoderDitecGOL4));
-
-    instance->base.protocol = &subghz_protocol_ditec_gol4;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 4;
-    instance->encoder.size_upload = DITEC_GOL4_UPLOAD_SIZE;
-    instance->encoder.upload = malloc(DITEC_GOL4_UPLOAD_SIZE * sizeof(LevelDuration));
-    instance->encoder.front = 0;
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_ditec_gol4_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderDitecGOL4* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static void
-    subghz_protocol_encoder_ditec_gol4_get_upload(SubGhzProtocolEncoderDitecGOL4* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_long * 22);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_short * 2);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_long);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_short);
-        }
-    }
-
-    instance->encoder.size_upload = index;
-}
-
-static void subghz_protocol_ditec_gol4_decode_key(SubGhzBlockGeneric* instance) {
-    uint8_t bits[subghz_protocol_ditec_gol4_const.min_count_bit_for_found];
-    uint64_t data = instance->data;
-    for(int i = subghz_protocol_ditec_gol4_const.min_count_bit_for_found - 1; i >= 0; i--) {
-        bits[i] = (uint8_t)(data & 1);
-        data >>= 1;
-    }
-    uint8_t decrypted[GOL4_RAW_BYTES];
-    bits_to_raw(bits, decrypted);
-
-    if(gol4_rolling_decode(decrypted)) {
-        uint8_t temp_serial[5];
-        memcpy(temp_serial, decrypted, 5);
-        instance->serial = serial_to_display(temp_serial);
-        instance->btn = decrypted[2] & 0x0F;
-        instance->cnt = (uint16_t)((decrypted[5] | (decrypted[6] << 8)) & 0xFFFF);
-
-        if(subghz_custom_btn_get_original() == 0) {
-            subghz_custom_btn_set_original(instance->btn);
-        }
-        subghz_custom_btn_set_max(4);
-    }
-}
-
 static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance) {
     uint8_t decrypted[GOL4_RAW_BYTES];
 
@@ -324,7 +193,9 @@ static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance) 
         FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", instance->btn);
     }
 
-    if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
+    if(ditec_gol4_raw_replay) {
+        /* #16: freeze counter on TxRaw verbatim replay */
+    } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->cnt)) {
 
@@ -361,82 +232,10 @@ static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance) 
     instance->data = bits_to_data(bits);
 }
 
-SubGhzProtocolStatus
-    subghz_protocol_encoder_ditec_gol4_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderDitecGOL4* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_ditec_gol4_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        subghz_protocol_ditec_gol4_decode_key(&instance->generic);
-        subghz_protocol_ditec_gol4_encode_key(&instance->generic);
-        subghz_protocol_encoder_ditec_gol4_get_upload(instance);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
-        }
-        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "Unable to update Key");
-            break;
-        }
-
-        instance->encoder.front = 0;
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_ditec_gol4_stop(void* context) {
-    SubGhzProtocolEncoderDitecGOL4* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_ditec_gol4_yield(void* context) {
-    SubGhzProtocolEncoderDitecGOL4* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
 void* subghz_protocol_decoder_ditec_gol4_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderDitecGOL4* instance = malloc(sizeof(SubGhzProtocolDecoderDitecGOL4));
-    instance->base.protocol = &subghz_protocol_ditec_gol4;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_ditec_gol4_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDitecGOL4* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderDitecGOL4), &subghz_protocol_ditec_gol4);
 }
 
 void subghz_protocol_decoder_ditec_gol4_reset(void* context) {
@@ -521,22 +320,6 @@ void subghz_protocol_decoder_ditec_gol4_feed(void* context, bool level, uint32_t
         }
         break;
     }
-}
-
-uint8_t subghz_protocol_decoder_ditec_gol4_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDitecGOL4* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_ditec_gol4_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDitecGOL4* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 }
 
 SubGhzProtocolStatus
@@ -666,33 +449,3 @@ static uint8_t subghz_protocol_ditec_gol4_get_btn_code(void) {
     return btn;
 }
 
-void subghz_protocol_decoder_ditec_gol4_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDitecGOL4* instance = context;
-
-    subghz_protocol_ditec_gol4_decode_key(&instance->generic);
-
-    subghz_block_generic_global.cnt_is_available = true;
-    subghz_block_generic_global.cnt_length_bit = 16;
-    subghz_block_generic_global.current_cnt = instance->generic.cnt;
-
-    subghz_block_generic_global.btn_is_available = true;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 4;
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key:0x%0lX%08lX\r\n"
-        "Serial:0x%08lX\r\n"
-        "Btn:%01X %s\r\n"
-        "Cnt:%04lX",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (unsigned long)(instance->generic.data >> 32),
-        (unsigned long)(instance->generic.data & 0xFFFFFFFF),
-        (unsigned long)instance->generic.serial,
-        instance->generic.btn,
-        (instance->generic.btn == 0x0) ? "- Prog" : "",
-        (unsigned long)instance->generic.cnt);
-}

@@ -28,6 +28,7 @@
 #include "protocols/protocols_common.h"
 #include "protocols/protocol_items.h"
 #include "helpers/protopirate_plugins.h"
+#include "helpers/protopirate_settings_plugin_helpers.h"
 #include "helpers/protopirate_views.h"
 #include "helpers/protopirate_radio.h"
 #include "helpers/protopirate_protocol_plugin_host.h"
@@ -106,7 +107,8 @@ struct ProtoPirateApp {
     uint8_t emulate_feature_enabled      : 1;
     // Byte 2
     uint8_t key_found                    : 1;
-    uint8_t reserved                     : 7;
+    uint8_t dialog_showing               : 1;
+    uint8_t reserved                     : 6;
     /*****************/
 };
 

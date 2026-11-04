@@ -5,6 +5,9 @@
 #include "../blocks/generic.h"
 #include "../blocks/math.h"
 #include <lib/toolbox/manchester_decoder.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 #define TAG "SubGhzProtocolFiatSpa"
 
@@ -59,7 +62,7 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_fiat_spa_decoder = {
     .alloc = subghz_protocol_decoder_fiat_spa_alloc,
-    .free = subghz_protocol_decoder_fiat_spa_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_fiat_spa_feed,
     .reset = subghz_protocol_decoder_fiat_spa_reset,
     .get_hash_data = subghz_protocol_decoder_fiat_spa_get_hash_data,
@@ -68,13 +71,7 @@ const SubGhzProtocolDecoder subghz_protocol_fiat_spa_decoder = {
     .get_string = subghz_protocol_decoder_fiat_spa_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_fiat_spa_encoder = {
-    .alloc = subghz_protocol_encoder_fiat_spa_alloc,
-    .free = subghz_protocol_encoder_fiat_spa_free,
-    .deserialize = subghz_protocol_encoder_fiat_spa_deserialize,
-    .stop = subghz_protocol_encoder_fiat_spa_stop,
-    .yield = subghz_protocol_encoder_fiat_spa_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_fiat_spa_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_fiat_spa");
 
 const SubGhzProtocol subghz_protocol_fiat_spa = {
     .name = SUBGHZ_PROTOCOL_FIAT_SPA_NAME,
@@ -83,7 +80,7 @@ const SubGhzProtocol subghz_protocol_fiat_spa = {
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_fiat_spa_decoder,
-    .encoder = &subghz_protocol_fiat_spa_encoder,
+    .encoder = &subghz_protocol_fiat_spa_encoder_ext.vtable,
 };
 
 void* subghz_protocol_decoder_fiat_spa_alloc(SubGhzEnvironment* environment) {
@@ -94,11 +91,7 @@ void* subghz_protocol_decoder_fiat_spa_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_fiat_spa_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFiatSpa* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_fiat_spa_reset(void* context) {
     furi_assert(context);
@@ -349,169 +342,15 @@ SubGhzProtocolStatus subghz_protocol_decoder_fiat_spa_deserialize(
 }
 
 void subghz_protocol_decoder_fiat_spa_get_string(void* context, FuriString* output) {
-    furi_assert(context);
     SubGhzProtocolCommonFiatSpa* instance = context;
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%08lX%08lX\r\n"
-        "Fix:%08lX\r\n"
-        "Hop:%08lX\r\n"
-        "EndByte:%02X",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)(instance->generic.data & 0xFFFFFFFF),
-        instance->generic.serial,
-        instance->generic.cnt,
-        instance->generic.btn);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
 
-void* subghz_protocol_encoder_fiat_spa_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFiatSpa* instance = malloc(sizeof(SubGhzProtocolEncoderFiatSpa));
-    instance->base.protocol = &subghz_protocol_fiat_spa;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = FIAT_SPA_UPLOAD_MAX;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-    instance->hop = 0;
-    instance->fix = 0;
-    instance->endbyte = 0;
-    return instance;
-}
 
-void subghz_protocol_encoder_fiat_spa_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatSpa* instance = context;
-    if(instance->encoder.upload) {
-        free(instance->encoder.upload);
-    }
-    free(instance);
-}
-
-void subghz_protocol_encoder_fiat_spa_stop(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatSpa* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_fiat_spa_yield(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatSpa* instance = context;
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-    return ret;
-}
-
-static void subghz_protocol_encoder_fiat_spa_get_upload(SubGhzProtocolEncoderFiatSpa* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-    uint32_t te_short = subghz_protocol_fiat_spa_const.te_short;
-    uint32_t te_long = subghz_protocol_fiat_spa_const.te_long;
-
-    uint64_t data = ((uint64_t)instance->hop << 32) | instance->fix;
-    uint8_t endbyte_to_send = instance->endbyte >> 1;
-
-    for(uint8_t burst = 0; burst < FIAT_SPA_TOTAL_BURSTS; burst++) {
-        if(burst > 0) {
-            instance->encoder.upload[index++] =
-                level_duration_make(false, FIAT_SPA_INTER_BURST_GAP);
-        }
-        for(int i = 0; i < FIAT_SPA_PREAMBLE_PAIRS; i++) {
-            instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            instance->encoder.upload[index++] = level_duration_make(false, te_short);
-        }
-        instance->encoder.upload[index - 1] = level_duration_make(false, FIAT_SPA_GAP_US);
-
-        bool first_bit = (data >> 63) & 1;
-        if(first_bit) {
-            instance->encoder.upload[index++] = level_duration_make(true, te_long);
-        } else {
-            instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            instance->encoder.upload[index++] = level_duration_make(false, te_long);
-        }
-        bool prev_bit = first_bit;
-
-        for(int bit = 62; bit >= 0; bit--) {
-            bool curr_bit = (data >> bit) & 1;
-            if(!prev_bit && !curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-            } else if(!prev_bit && curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(true, te_long);
-            } else if(prev_bit && !curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(false, te_long);
-            } else {
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            }
-            prev_bit = curr_bit;
-        }
-
-        for(int bit = 5; bit >= 0; bit--) {
-            bool curr_bit = (endbyte_to_send >> bit) & 1;
-            if(!prev_bit && !curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-            } else if(!prev_bit && curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(true, te_long);
-            } else if(prev_bit && !curr_bit) {
-                instance->encoder.upload[index++] = level_duration_make(false, te_long);
-            } else {
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            }
-            prev_bit = curr_bit;
-        }
-
-        if(prev_bit) {
-            instance->encoder.upload[index++] = level_duration_make(false, te_short);
-        }
-        instance->encoder.upload[index++] = level_duration_make(false, te_short * 8);
-    }
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0;
-}
-
-SubGhzProtocolStatus subghz_protocol_encoder_fiat_spa_deserialize(
-    void* context,
-    FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatSpa* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) break;
-
-        instance->hop = (uint32_t)(instance->generic.data >> 32);
-        instance->fix = (uint32_t)(instance->generic.data & 0xFFFFFFFF);
-
-        uint32_t endbyte_temp = 0;
-        if(!flipper_format_read_uint32(flipper_format, "EndByte", &endbyte_temp, 1)) {
-            instance->endbyte = 0;
-        } else {
-            instance->endbyte = (uint8_t)endbyte_temp;
-        }
-
-        instance->generic.cnt = instance->hop;
-        instance->generic.serial = instance->fix;
-        instance->generic.btn = instance->endbyte;
-
-        subghz_protocol_encoder_fiat_spa_get_upload(instance);
-
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-    return ret;
-}

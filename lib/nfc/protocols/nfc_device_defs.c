@@ -18,6 +18,7 @@
 #include <nfc/protocols/ntag4xx/ntag4xx.h>
 #include <nfc/protocols/type_4_tag/type_4_tag.h>
 #include <nfc/protocols/emv/emv.h>
+#include <nfc/protocols/texkom/texkom.h>
 
 const NfcDeviceBase* const nfc_devices[NfcProtocolNum] = {
     [NfcProtocolIso14443_3a] = &nfc_device_iso14443_3a,
@@ -35,6 +36,7 @@ const NfcDeviceBase* const nfc_devices[NfcProtocolNum] = {
     [NfcProtocolNtag4xx] = NULL,
     [NfcProtocolType4Tag] = NULL,
     [NfcProtocolEmv] = NULL,
+    [NfcProtocolTexkom] = &nfc_device_texkom,
 
 };
 
@@ -54,6 +56,7 @@ static const char* const nfc_protocol_names[NfcProtocolNum] = {
     [NfcProtocolNtag4xx] = "NTAG4xx",
     [NfcProtocolType4Tag] = "Type 4 Tag",
     [NfcProtocolEmv] = "EMV",
+    [NfcProtocolTexkom] = "Texkom",
 };
 
 const char* nfc_protocol_get_name(NfcProtocol protocol) {

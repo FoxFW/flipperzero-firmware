@@ -662,7 +662,7 @@ static void render_result(
             "Could not claim any\nUART pins at all.\nAnother app may be\nusing them.");
     }
 
-    widget_add_text_box_element(app->widget, 0, 0, 128, 50, AlignLeft, AlignTop, text, false);
+    widget_add_text_scroll_element(app->widget, 0, 0, 128, 47, text);
     widget_add_button_element(app->widget, GuiButtonTypeCenter, "Rescan", scan_button_callback, app);
 }
 

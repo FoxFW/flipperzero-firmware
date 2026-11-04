@@ -20,11 +20,37 @@ ARRAY_DEF(SubGhzKeyArray, SubGhzKey, M_POD_OPLIST)
 
 typedef struct SubGhzKeystore SubGhzKeystore;
 
+typedef struct SubGhzKeystoreIter SubGhzKeystoreIter;
+
 SubGhzKeystore* subghz_keystore_alloc(void);
 
 void subghz_keystore_free(SubGhzKeystore* instance);
 
 bool subghz_keystore_load(SubGhzKeystore* instance, const char* filename);
+
+bool subghz_keystore_attach_file(SubGhzKeystore* instance, const char* filename);
+
+SubGhzKeystoreIter* subghz_keystore_iter_alloc(SubGhzKeystore* instance);
+
+const SubGhzKey* subghz_keystore_iter_next(SubGhzKeystoreIter* iter);
+
+void subghz_keystore_iter_free(SubGhzKeystoreIter* iter);
+
+const char* subghz_keystore_keep_name(SubGhzKeystore* instance, const char* name);
+
+static inline void subghz_keystore_iter_cleanup(SubGhzKeystoreIter** iter) {
+    if(*iter) subghz_keystore_iter_free(*iter);
+    *iter = NULL;
+}
+
+#define SUBGHZ_KEYSTORE_FOR_EACH(item, keystore)                                    \
+    for(SubGhzKeystoreIter* item##_iter                                            \
+            __attribute__((cleanup(subghz_keystore_iter_cleanup))) =               \
+                subghz_keystore_iter_alloc(keystore),                               \
+        *item##_once = item##_iter;                                                \
+        item##_once;                                                               \
+        item##_once = NULL)                                                        \
+        for(const SubGhzKey* item = NULL; (item = subghz_keystore_iter_next(item##_iter));)
 
 bool subghz_keystore_save(SubGhzKeystore* instance, const char* filename, uint8_t* iv);
 

@@ -9,6 +9,7 @@
 #include "../mazda_v0.h"
 #include "../psa.h"
 #include "../renault_v1.h"
+#include "../alps_rke.h"
 #include <lib/flipper_application/flipper_application.h>
 
 static const SubGhzProtocol* const protopirate_protocol_registry_fm_items[] = {
@@ -21,6 +22,7 @@ static const SubGhzProtocol* const protopirate_protocol_registry_fm_items[] = {
     &kia_protocol_v7,
     &psa_protocol,
     &renault_v1_protocol,
+    &subghz_protocol_alps_rke,
 };
 
 static const SubGhzProtocolRegistry protopirate_protocol_registry_fm = {

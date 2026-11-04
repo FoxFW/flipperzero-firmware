@@ -1,4 +1,7 @@
 #include "sheriff_cfm.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "keeloq_common.h"
 #include "../blocks/custom_btn_i.h"
 #include "../blocks/generic.h"
@@ -44,14 +47,6 @@ typedef enum {
     SheriffCfmModelCount = 2,
 } SheriffCfmModel;
 
-static const char* cfm_model_name(SheriffCfmModel model) {
-    switch(model) {
-    case SheriffCfmModelZX750: return "ZX-750";
-    case SheriffCfmModelZX930: return "ZX-930";
-    default: return "?";
-    }
-}
-
 static void cfm_decrypt_transform(uint8_t* hop, SheriffCfmModel model) {
     uint8_t temp;
     switch(model) {
@@ -76,63 +71,6 @@ static void cfm_decrypt_transform(uint8_t* hop, SheriffCfmModel model) {
     }
 }
 
-static void cfm_encrypt_transform(uint8_t* hop, SheriffCfmModel model) {
-    uint8_t temp;
-    switch(model) {
-    case SheriffCfmModelZX750:
-        hop[0] = cfm_swap(hop[0]);
-        hop[2] = cfm_swap(hop[2]);
-        break;
-
-    case SheriffCfmModelZX930:
-        hop[1] = cfm_rrf(hop[1]);
-        hop[1] = cfm_rrf(hop[1]);
-        hop[1] = cfm_swap(hop[1]);
-        hop[0] = cfm_rlf(hop[0]);
-        hop[0] = ~hop[0];
-        temp = hop[1];
-        hop[1] = hop[2];
-        hop[2] = temp;
-        break;
-
-    default:
-        break;
-    }
-}
-
-static const char* cfm_btn_name(uint8_t btn) {
-    switch(btn) {
-    case 0x10: return "Lock";
-    case 0x20: return "Unlock";
-    case 0x40: return "Trunk";
-    case 0x80: return "Panic";
-    default: return "?";
-    }
-}
-
-static uint8_t cfm_btn_to_custom(uint8_t btn) {
-    switch(btn) {
-    case 0x10: return SUBGHZ_CUSTOM_BTN_UP;
-    case 0x20: return SUBGHZ_CUSTOM_BTN_DOWN;
-    case 0x40: return SUBGHZ_CUSTOM_BTN_LEFT;
-    case 0x80: return SUBGHZ_CUSTOM_BTN_RIGHT;
-    default: return SUBGHZ_CUSTOM_BTN_OK;
-    }
-}
-
-static uint8_t cfm_custom_to_btn(uint8_t custom, uint8_t original_btn) {
-    if(custom == SUBGHZ_CUSTOM_BTN_OK) return original_btn;
-    if(custom == SUBGHZ_CUSTOM_BTN_UP) return 0x10;
-    if(custom == SUBGHZ_CUSTOM_BTN_DOWN) return 0x20;
-    if(custom == SUBGHZ_CUSTOM_BTN_LEFT) return 0x40;
-    if(custom == SUBGHZ_CUSTOM_BTN_RIGHT) return 0x80;
-    return original_btn;
-}
-
-static uint8_t cfm_get_btn_code(uint8_t original_btn) {
-    return cfm_custom_to_btn(subghz_custom_btn_get(), original_btn);
-}
-
 static const SubGhzBlockConst subghz_protocol_sheriff_cfm_const = {
     .te_short = 400,
     .te_long = 800,
@@ -154,6 +92,11 @@ struct SubGhzProtocolEncoderSheriffCfm {
     SubGhzBlockGeneric generic;
     SheriffCfmModel model;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderSheriffCfm);
+
+
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderSheriffCfm);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderSheriffCfm);
 
 typedef enum {
     SheriffCfmDecoderStepReset = 0,
@@ -164,22 +107,25 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_sheriff_cfm_decoder = {
     .alloc = subghz_protocol_decoder_sheriff_cfm_alloc,
-    .free = subghz_protocol_decoder_sheriff_cfm_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_sheriff_cfm_feed,
     .reset = subghz_protocol_decoder_sheriff_cfm_reset,
-    .get_hash_data = subghz_protocol_decoder_sheriff_cfm_get_hash_data,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
     .serialize = subghz_protocol_decoder_sheriff_cfm_serialize,
     .deserialize = subghz_protocol_decoder_sheriff_cfm_deserialize,
-    .get_string = subghz_protocol_decoder_sheriff_cfm_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_sheriff_cfm_encoder = {
-    .alloc = subghz_protocol_encoder_sheriff_cfm_alloc,
-    .free = subghz_protocol_encoder_sheriff_cfm_free,
-    .deserialize = subghz_protocol_encoder_sheriff_cfm_deserialize,
-    .stop = subghz_protocol_encoder_sheriff_cfm_stop,
-    .yield = subghz_protocol_encoder_sheriff_cfm_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
+    __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
+} enc_sheriff_cfm_host_t;
+static const enc_sheriff_cfm_host_t enc_sheriff_cfm_host = {
+    .subghz_protocol_keeloq_common_decrypt = subghz_protocol_keeloq_common_decrypt,
+    .subghz_protocol_keeloq_common_encrypt = subghz_protocol_keeloq_common_encrypt,
 };
+static const SubGhzEncoderExternal subghz_protocol_sheriff_cfm_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_sheriff_cfm", &enc_sheriff_cfm_host);
 
 const SubGhzProtocol subghz_protocol_sheriff_cfm = {
     .name = SUBGHZ_PROTOCOL_SHERIFF_CFM_NAME,
@@ -188,7 +134,7 @@ const SubGhzProtocol subghz_protocol_sheriff_cfm = {
             SubGhzProtocolFlag_Decodable |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_sheriff_cfm_decoder,
-    .encoder = &subghz_protocol_sheriff_cfm_encoder,
+    .encoder = &subghz_protocol_sheriff_cfm_encoder_ext.vtable,
 };
 
 static uint64_t cfm_get_mfkey(SheriffCfmModel model) {
@@ -256,213 +202,13 @@ static bool cfm_try_decrypt(
     return false;
 }
 
-void* subghz_protocol_encoder_sheriff_cfm_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderSheriffCfm* instance = malloc(sizeof(SubGhzProtocolEncoderSheriffCfm));
-    instance->base.protocol = &subghz_protocol_sheriff_cfm;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 256;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-    instance->model = SheriffCfmModelZX750;
-    return instance;
-}
-
-void subghz_protocol_encoder_sheriff_cfm_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderSheriffCfm* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_sheriff_cfm_get_upload(
-    SubGhzProtocolEncoderSheriffCfm* instance,
-    uint8_t btn) {
-    furi_check(instance);
-
-    uint32_t override_cnt = 0;
-    if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
-        instance->generic.cnt = override_cnt & 0xFFFF;
-    } else {
-        uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-        if((instance->generic.cnt + mult) > 0xFFFF) {
-            instance->generic.cnt = 0;
-        } else {
-            instance->generic.cnt += mult;
-        }
-    }
-
-    uint32_t fix = (uint32_t)(instance->generic.data >> 32);
-    uint16_t serial_lo = (uint16_t)(fix & 0x3FF);
-    uint32_t hop_plain =
-        ((uint32_t)btn << 24) |
-        ((uint32_t)serial_lo << 16) |
-        (instance->generic.cnt & 0xFFFF);
-
-    uint64_t mfkey = cfm_get_mfkey(instance->model);
-    uint32_t hop_encrypted = subghz_protocol_keeloq_common_encrypt(hop_plain, mfkey);
-
-    uint8_t hop_bytes[4];
-    hop_bytes[0] = (uint8_t)(hop_encrypted & 0xFF);
-    hop_bytes[1] = (uint8_t)((hop_encrypted >> 8) & 0xFF);
-    hop_bytes[2] = (uint8_t)((hop_encrypted >> 16) & 0xFF);
-    hop_bytes[3] = (uint8_t)((hop_encrypted >> 24) & 0xFF);
-    cfm_encrypt_transform(hop_bytes, instance->model);
-
-    hop_encrypted =
-        (uint32_t)hop_bytes[0] |
-        ((uint32_t)hop_bytes[1] << 8) |
-        ((uint32_t)hop_bytes[2] << 16) |
-        ((uint32_t)hop_bytes[3] << 24);
-
-    instance->generic.data = ((uint64_t)fix << 32) | hop_encrypted;
-    instance->generic.btn = btn;
-
-    size_t index = 0;
-
-    for(uint8_t i = 11; i > 0; i--) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-    }
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short * 10);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_sheriff_cfm_const.te_long);
-        } else {
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_sheriff_cfm_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-        }
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_sheriff_cfm_const.te_short * 40);
-
-    instance->encoder.size_upload = index;
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_sheriff_cfm_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderSheriffCfm* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_sheriff_cfm_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) break;
-
-        uint32_t model_temp = 0;
-        if(flipper_format_read_uint32(flipper_format, "Model", &model_temp, 1)) {
-            instance->model = (SheriffCfmModel)model_temp;
-        } else {
-            SheriffCfmModel detected;
-            uint8_t det_btn;
-            uint32_t det_serial;
-            uint16_t det_cnt;
-            if(cfm_try_decrypt(instance->generic.data, &detected, &det_btn, &det_serial, &det_cnt)) {
-                instance->model = detected;
-                instance->generic.btn = det_btn;
-                instance->generic.serial = det_serial;
-                instance->generic.cnt = det_cnt;
-            }
-        }
-
-        if(!flipper_format_read_uint32(
-               flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1)) {
-            instance->encoder.repeat = 3;
-        }
-
-        subghz_custom_btn_set_original(cfm_btn_to_custom(instance->generic.btn));
-        subghz_custom_btn_set_max(4);
-
-        uint8_t selected_btn = cfm_get_btn_code(instance->generic.btn);
-        subghz_block_generic_global_button_override_get(&selected_btn);
-
-        if(!subghz_protocol_encoder_sheriff_cfm_get_upload(instance, selected_btn)) {
-            break;
-        }
-
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> (i * 8)) & 0xFF;
-        }
-        flipper_format_rewind(flipper_format);
-        flipper_format_insert_or_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t));
-
-        uint32_t model = (uint32_t)instance->model;
-        flipper_format_rewind(flipper_format);
-        flipper_format_insert_or_update_uint32(flipper_format, "Model", &model, 1);
-
-        uint32_t btn = instance->generic.btn;
-        flipper_format_rewind(flipper_format);
-        flipper_format_insert_or_update_uint32(flipper_format, "Btn", &btn, 1);
-
-        flipper_format_rewind(flipper_format);
-        flipper_format_insert_or_update_uint32(flipper_format, "Cnt", &instance->generic.cnt, 1);
-
-        instance->encoder.is_running = true;
-        instance->encoder.front = 0;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_sheriff_cfm_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderSheriffCfm* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_sheriff_cfm_yield(void* context) {
-    SubGhzProtocolEncoderSheriffCfm* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
 void* subghz_protocol_decoder_sheriff_cfm_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderSheriffCfm* instance = malloc(sizeof(SubGhzProtocolDecoderSheriffCfm));
-    instance->base.protocol = &subghz_protocol_sheriff_cfm;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderSheriffCfm), &subghz_protocol_sheriff_cfm);
 }
 
-void subghz_protocol_decoder_sheriff_cfm_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderSheriffCfm* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_sheriff_cfm_reset(void* context) {
     furi_check(context);
@@ -577,12 +323,7 @@ void subghz_protocol_decoder_sheriff_cfm_feed(void* context, bool level, uint32_
     }
 }
 
-uint8_t subghz_protocol_decoder_sheriff_cfm_get_hash_data(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderSheriffCfm* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
+
 
 SubGhzProtocolStatus subghz_protocol_decoder_sheriff_cfm_serialize(
     void* context,
@@ -633,27 +374,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_sheriff_cfm_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderSheriffCfm* instance = context;
-
-    subghz_custom_btn_set_original(cfm_btn_to_custom(instance->generic.btn));
-    subghz_custom_btn_set_max(4);
-
-    uint8_t selected_btn = cfm_get_btn_code(instance->generic.btn);
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%lX%08lX\r\n"
-        "Sn:%08lX Btn:[%s]\r\n"
-        "Cnt:%04lX Model:%s\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)instance->generic.data,
-        instance->generic.serial,
-        cfm_btn_name(selected_btn),
-        (uint32_t)instance->generic.cnt,
-        cfm_model_name(instance->model));
-}

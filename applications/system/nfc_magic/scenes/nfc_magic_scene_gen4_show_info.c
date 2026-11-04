@@ -85,7 +85,7 @@ void nfc_magic_scene_gen4_show_info_on_enter(void* context) {
         "Total blocks: %u",
         gen4->config.data_parsed.total_blocks + 1); // config stores the number of the last block
 
-    widget_add_text_scroll_element(widget, 0, 0, 128, 64, furi_string_get_cstr(output));
+    widget_add_text_scroll_element(widget, 0, 0, 128, 47, furi_string_get_cstr(output));
 
     widget_add_button_element(
         widget,

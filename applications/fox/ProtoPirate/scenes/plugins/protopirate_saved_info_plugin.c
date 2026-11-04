@@ -212,7 +212,7 @@ cleanup:
     // Now do widget operations
     if(success && info_str && furi_string_size(info_str) > 0) {
         FURI_LOG_I(TAG, "Adding scroll element");
-        widget_add_text_scroll_element(app->widget, 0, 0, 128, 50, furi_string_get_cstr(info_str));
+        widget_add_text_scroll_element(app->widget, 0, 0, 128, 47, furi_string_get_cstr(info_str));
 
         bool needs_bf = false;
         bool error = false;

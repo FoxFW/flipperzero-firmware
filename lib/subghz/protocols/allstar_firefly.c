@@ -1,4 +1,7 @@
 #include "allstar_firefly.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -47,6 +50,9 @@ struct SubGhzProtocolEncoderAllstarFirefly {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderAllstarFirefly);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderAllstarFirefly);
+
 typedef enum {
     AllstarFireflyDecoderStepReset = 0,
     AllstarFireflyDecoderStepSaveDuration,
@@ -55,25 +61,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_allstar_firefly_decoder = {
     .alloc = subghz_protocol_decoder_allstar_firefly_alloc,
-    .free = subghz_protocol_decoder_allstar_firefly_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_allstar_firefly_feed,
     .reset = subghz_protocol_decoder_allstar_firefly_reset,
 
-    .get_hash_data = subghz_protocol_decoder_allstar_firefly_get_hash_data,
-    .serialize = subghz_protocol_decoder_allstar_firefly_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_allstar_firefly_deserialize,
-    .get_string = subghz_protocol_decoder_allstar_firefly_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_allstar_firefly_encoder = {
-    .alloc = subghz_protocol_encoder_allstar_firefly_alloc,
-    .free = subghz_protocol_encoder_allstar_firefly_free,
-
-    .deserialize = subghz_protocol_encoder_allstar_firefly_deserialize,
-    .stop = subghz_protocol_encoder_allstar_firefly_stop,
-    .yield = subghz_protocol_encoder_allstar_firefly_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_allstar_firefly_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_allstar_firefly");
 
 const SubGhzProtocol subghz_protocol_allstar_firefly = {
     .name = SUBGHZ_PROTOCOL_ALLSTAR_FIREFLY_NAME,
@@ -82,116 +81,13 @@ const SubGhzProtocol subghz_protocol_allstar_firefly = {
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_allstar_firefly_decoder,
-    .encoder = &subghz_protocol_allstar_firefly_encoder,
+    .encoder = &subghz_protocol_allstar_firefly_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_allstar_firefly_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderAllstarFirefly* instance =
-        malloc(sizeof(SubGhzProtocolEncoderAllstarFirefly));
-
-    instance->base.protocol = &subghz_protocol_allstar_firefly;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 5;
-    instance->encoder.size_upload = ALLSTAR_FIREFLY_UPLOAD_SIZE;
-    instance->encoder.upload = malloc(ALLSTAR_FIREFLY_UPLOAD_SIZE * sizeof(LevelDuration));
-    instance->encoder.front = 0;
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_allstar_firefly_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderAllstarFirefly* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool
-    subghz_protocol_encoder_allstar_firefly_get_upload(SubGhzProtocolEncoderAllstarFirefly* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-    uint32_t te_short = subghz_protocol_allstar_firefly_const.te_short;
-    uint32_t te_long = subghz_protocol_allstar_firefly_const.te_long;
-    uint32_t gap = te_short * 50 + 400;
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        bool bit = bit_read(instance->generic.data, i - 1);
-        if(bit) {
-            instance->encoder.upload[index++] = level_duration_make(true, te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (i == 1) ? gap : te_short);
-        } else {
-            instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (i == 1) ? gap : te_long);
-        }
-    }
-
-    instance->encoder.size_upload = index;
-    return true;
-}
-
-SubGhzProtocolStatus subghz_protocol_encoder_allstar_firefly_deserialize(
-    void* context,
-    FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderAllstarFirefly* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_allstar_firefly_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) break;
-
-        if(!subghz_protocol_encoder_allstar_firefly_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.front = 0;
-        instance->encoder.is_running = true;
-    } while(false);
-    return ret;
-}
-
-void subghz_protocol_encoder_allstar_firefly_stop(void* context) {
-    SubGhzProtocolEncoderAllstarFirefly* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_allstar_firefly_yield(void* context) {
-    SubGhzProtocolEncoderAllstarFirefly* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_allstar_firefly_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderAllstarFirefly* instance =
-        malloc(sizeof(SubGhzProtocolDecoderAllstarFirefly));
-    instance->base.protocol = &subghz_protocol_allstar_firefly;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_allstar_firefly_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAllstarFirefly* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderAllstarFirefly), &subghz_protocol_allstar_firefly);
 }
 
 void subghz_protocol_decoder_allstar_firefly_reset(void* context) {
@@ -279,22 +175,6 @@ void subghz_protocol_decoder_allstar_firefly_feed(
     }
 }
 
-uint8_t subghz_protocol_decoder_allstar_firefly_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAllstarFirefly* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_allstar_firefly_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAllstarFirefly* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus subghz_protocol_decoder_allstar_firefly_deserialize(
     void* context,
     FlipperFormat* flipper_format) {
@@ -306,25 +186,3 @@ SubGhzProtocolStatus subghz_protocol_decoder_allstar_firefly_deserialize(
         subghz_protocol_allstar_firefly_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_allstar_firefly_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAllstarFirefly* instance = context;
-
-    uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit);
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key:0x%05lX Yek:0x%05lX\r\n"
-        "  +:   " DIP_PATTERN "\r\n"
-        "  o:   " DIP_PATTERN "\r\n"
-        "  -:   " DIP_PATTERN "\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (unsigned long)(instance->generic.data & 0xFFFFF),
-        (unsigned long)(code_found_reverse & 0xFFFFF),
-        SHOW_DIP_P(instance->generic.data, DIP_P),
-        SHOW_DIP_P(instance->generic.data, DIP_O),
-        SHOW_DIP_P(instance->generic.data, DIP_N));
-}

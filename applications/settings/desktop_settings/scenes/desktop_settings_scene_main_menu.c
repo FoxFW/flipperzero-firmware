@@ -1,3 +1,4 @@
+#include <furi.h>
 #include <gui/scene_manager.h>
 #include <gui/modules/submenu.h>
 #include <storage/storage.h>
@@ -8,117 +9,16 @@
 #include "../desktop_settings_app.h"
 #include "desktop_settings_scene.h"
 #include "desktop_settings_scene_i.h"
-
-#define MAIN_MENU_PINS_MAX       12
-#define MAIN_MENU_PINS_PATH_LEN  128
-#define MAIN_MENU_PINS_NAME_LEN  7
-#define MAIN_MENU_PINS_FILE_NAME ".main_menu.pins"
-
-typedef struct {
-    char paths[MAIN_MENU_PINS_MAX][MAIN_MENU_PINS_PATH_LEN];
-    char names[MAIN_MENU_PINS_MAX][MAIN_MENU_PINS_NAME_LEN];
-    uint8_t count;
-} MainMenuPinsUI;
-
-static MainMenuPinsUI s_pins;
+#include "../helpers/main_menu_layout_ui.h"
 
 #define ADD_APP_INDEX (0xFFFF)
+#define RESET_INDEX   (0xFFFE)
 
-static void main_menu_pins_load(MainMenuPinsUI* pins) {
-    pins->count = 0;
-
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* file = storage_file_alloc(storage);
-
-    if(storage_file_open(file, INT_PATH(MAIN_MENU_PINS_FILE_NAME), FSAM_READ, FSOM_OPEN_EXISTING)) {
-        char line[MAIN_MENU_PINS_PATH_LEN];
-        size_t line_len = 0;
-        uint8_t byte;
-
-        while(pins->count < MAIN_MENU_PINS_MAX && storage_file_read(file, &byte, 1) == 1) {
-            if(byte == '\n' || byte == '\r') {
-                if(line_len > 0) {
-                    line[line_len] = '\0';
-                    char* sep = strchr(line, '|');
-                    if(sep) {
-                        *sep = '\0';
-                        strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                        strlcpy(
-                            pins->names[pins->count], sep + 1, sizeof(pins->names[pins->count]));
-                    } else {
-                        strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                        pins->names[pins->count][0] = '\0';
-                    }
-                    pins->count++;
-                    line_len = 0;
-                }
-            } else if(line_len < sizeof(line) - 1) {
-                line[line_len++] = (char)byte;
-            }
-        }
-
-        if(line_len > 0 && pins->count < MAIN_MENU_PINS_MAX) {
-            line[line_len] = '\0';
-            char* sep = strchr(line, '|');
-            if(sep) {
-                *sep = '\0';
-                strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                strlcpy(pins->names[pins->count], sep + 1, sizeof(pins->names[pins->count]));
-            } else {
-                strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                pins->names[pins->count][0] = '\0';
-            }
-            pins->count++;
-        }
-    }
-
-    storage_file_close(file);
-    storage_file_free(file);
-    furi_record_close(RECORD_STORAGE);
-}
-
-static void main_menu_pins_save(const MainMenuPinsUI* pins) {
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* file = storage_file_alloc(storage);
-
-    if(storage_file_open(
-           file, INT_PATH(MAIN_MENU_PINS_FILE_NAME), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        for(uint8_t i = 0; i < pins->count; i++) {
-            storage_file_write(file, pins->paths[i], strlen(pins->paths[i]));
-            if(pins->names[i][0] != '\0') {
-                storage_file_write(file, "|", 1);
-                storage_file_write(file, pins->names[i], strlen(pins->names[i]));
-            }
-            storage_file_write(file, "\n", 1);
-        }
-    }
-
-    storage_file_close(file);
-    storage_file_free(file);
-    furi_record_close(RECORD_STORAGE);
-}
-
-static void main_menu_pin_label_from_filename(const char* path, char* out, size_t out_size) {
-    const char* slash = strrchr(path, '/');
-    const char* base = slash ? slash + 1 : path;
-    strlcpy(out, base, out_size);
-    size_t len = strlen(out);
-    if(len > 4 && strcmp(out + len - 4, ".fap") == 0) {
-        out[len - 4] = '\0';
-    }
-}
-
-static void main_menu_pin_label(
+static void main_menu_derive_label(
     Storage* storage,
     const char* path,
-    const char* custom_name,
     char* out,
     size_t out_size) {
-    if(custom_name && custom_name[0] != '\0') {
-        strlcpy(out, custom_name, out_size);
-        return;
-    }
-
     FuriString* path_str = furi_string_alloc_set_str(path);
     FuriString* name_str = furi_string_alloc();
     uint8_t icon_buf[FAP_MANIFEST_MAX_ICON_SIZE];
@@ -128,7 +28,13 @@ static void main_menu_pin_label(
     if(loaded && !furi_string_empty(name_str)) {
         strlcpy(out, furi_string_get_cstr(name_str), out_size);
     } else {
-        main_menu_pin_label_from_filename(path, out, out_size);
+        const char* slash = strrchr(path, '/');
+        const char* base = slash ? slash + 1 : path;
+        strlcpy(out, base, out_size);
+        size_t len = strlen(out);
+        if(len > 4 && strcmp(out + len - 4, ".fap") == 0) {
+            out[len - 4] = '\0';
+        }
     }
 
     furi_string_free(path_str);
@@ -154,25 +60,45 @@ void desktop_settings_scene_main_menu_on_enter(void* context) {
     Submenu* submenu = app->submenu;
     submenu_reset(submenu);
 
-    main_menu_pins_load(&s_pins);
+    MmLayout* layout = malloc(sizeof(MmLayout));
+    mm_layout_load(layout);
 
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    for(uint8_t i = 0; i < s_pins.count; i++) {
-        char label[MAIN_MENU_PINS_PATH_LEN];
-        main_menu_pin_label(storage, s_pins.paths[i], s_pins.names[i], label, sizeof(label));
+    FuriString* item = furi_string_alloc();
+    for(uint8_t i = 0; i < layout->count; i++) {
+        const MmEntry* e = &layout->entries[i];
+        furi_string_set_str(item, mm_layout_entry_display(e));
+        if(!e->enabled) {
+            furi_string_cat_str(item, " (off)");
+        }
         submenu_add_item(
-            submenu, label, i, desktop_settings_scene_main_menu_submenu_callback, app);
+            submenu,
+            furi_string_get_cstr(item),
+            i,
+            desktop_settings_scene_main_menu_submenu_callback,
+            app);
     }
-    furi_record_close(RECORD_STORAGE);
+    furi_string_free(item);
+
+    uint8_t count = layout->count;
+    free(layout);
 
     submenu_add_item(
+        submenu, "+ Add App", ADD_APP_INDEX, desktop_settings_scene_main_menu_submenu_callback, app);
+    submenu_add_item(
         submenu,
-        "+ Add App",
-        ADD_APP_INDEX,
+        "Reset to Defaults",
+        RESET_INDEX,
         desktop_settings_scene_main_menu_submenu_callback,
         app);
 
     submenu_set_header(submenu, "Main Menu Apps");
+
+    uint32_t saved = scene_manager_get_scene_state(
+        app->scene_manager, DesktopSettingsAppSceneMainMenu);
+    if(saved < count) {
+        submenu_set_selected_item(submenu, saved);
+    }
+
     view_dispatcher_switch_to_view(app->view_dispatcher, DesktopSettingsAppViewMenu);
 }
 
@@ -182,7 +108,10 @@ bool desktop_settings_scene_main_menu_on_event(void* context, SceneManagerEvent 
 
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == ADD_APP_INDEX) {
-            if(s_pins.count < MAIN_MENU_PINS_MAX) {
+            MmLayout* layout = malloc(sizeof(MmLayout));
+            mm_layout_load(layout);
+
+            if(layout->count < MM_LAYOUT_MAX) {
                 FuriString* temp_path = furi_string_alloc_set_str(EXT_PATH("apps"));
                 Storage* storage = furi_record_open(RECORD_STORAGE);
                 const DialogsFileBrowserOptions browser_options = {
@@ -195,44 +124,34 @@ bool desktop_settings_scene_main_menu_on_event(void* context, SceneManagerEvent 
                     .base_path = EXT_PATH("apps"),
                 };
 
-                bool picked_one =
+                bool picked =
                     dialog_file_browser_show(app->dialogs, temp_path, temp_path, &browser_options);
-                furi_record_close(RECORD_STORAGE);
-                if(picked_one) {
-                    const char* picked = furi_string_get_cstr(temp_path);
-                    bool duplicate = false;
-                    for(uint8_t i = 0; i < s_pins.count; i++) {
-                        if(strcmp(s_pins.paths[i], picked) == 0) {
-                            duplicate = true;
-                            break;
-                        }
-                    }
-                    if(!duplicate) {
-                        strlcpy(
-                            s_pins.paths[s_pins.count],
-                            picked,
-                            sizeof(s_pins.paths[s_pins.count]));
-
-                        Storage* name_storage = furi_record_open(RECORD_STORAGE);
-                        char full_name[MAIN_MENU_PINS_PATH_LEN];
-                        main_menu_pin_label(
-                            name_storage, picked, NULL, full_name, sizeof(full_name));
-                        furi_record_close(RECORD_STORAGE);
-                        strlcpy(
-                            s_pins.names[s_pins.count],
-                            full_name,
-                            sizeof(s_pins.names[s_pins.count]));
-
-                        s_pins.count++;
-                        main_menu_pins_save(&s_pins);
-                    }
+                if(picked) {
+                    const char* path = furi_string_get_cstr(temp_path);
+                    char label[MM_LAYOUT_LABEL_LEN];
+                    main_menu_derive_label(storage, path, label, sizeof(label));
+                    mm_layout_add_user(layout, path, label);
+                    mm_layout_save(layout);
                 }
+                furi_record_close(RECORD_STORAGE);
                 furi_string_free(temp_path);
             }
+
+            free(layout);
+            scene_manager_set_scene_state(app->scene_manager, DesktopSettingsAppSceneMainMenu, 0);
             submenu_reset(app->submenu);
             desktop_settings_scene_main_menu_on_enter(app);
             consumed = true;
+        } else if(event.event == RESET_INDEX) {
+            /* Delete the SD layout; the loader regenerates full defaults on its
+             * next menu refresh (after this app exits). */
+            mm_layout_reset_file();
+            scene_manager_set_scene_state(app->scene_manager, DesktopSettingsAppSceneMainMenu, 0);
+            scene_manager_previous_scene(app->scene_manager);
+            consumed = true;
         } else {
+            scene_manager_set_scene_state(
+                app->scene_manager, DesktopSettingsAppSceneMainMenu, event.event);
             scene_manager_set_scene_state(
                 app->scene_manager, DesktopSettingsAppSceneMainMenuActions, event.event);
             scene_manager_next_scene(app->scene_manager, DesktopSettingsAppSceneMainMenuActions);

@@ -25,7 +25,7 @@ void nfc_scene_mf_classic_mfkey_nonces_info_on_enter(void* context) {
 
     mfkey32_logger_get_params_data(instance->mfkey32_logger, temp_str);
     widget_add_text_scroll_element(
-        instance->widget, 0, 22, 128, 42, furi_string_get_cstr(temp_str));
+        instance->widget, 0, 22, 128, 25, furi_string_get_cstr(temp_str));
     widget_add_button_element(
         instance->widget,
         GuiButtonTypeCenter,

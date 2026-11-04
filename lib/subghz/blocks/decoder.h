@@ -26,6 +26,11 @@ void subghz_protocol_blocks_add_to_128_bit(
 
 uint8_t subghz_protocol_blocks_get_hash_data(SubGhzBlockDecoder* decoder, size_t len);
 
+#define SUBGHZ_ASSERT_DECODER_PREFIX(type) \
+    _Static_assert(offsetof(type, base) == 0, #type " must have base as first member")
+
+void subghz_protocol_decoder_generic_free(void* context);
+
 #ifdef __cplusplus
 }
 #endif

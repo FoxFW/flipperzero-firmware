@@ -1,4 +1,7 @@
 #include "keyfinder.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -29,6 +32,9 @@ struct SubGhzProtocolEncoderKeyFinder {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderKeyFinder);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderKeyFinder);
+
 typedef enum {
     KeyFinderDecoderStepReset = 0,
     KeyFinderDecoderStepSaveDuration,
@@ -38,25 +44,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_keyfinder_decoder = {
     .alloc = subghz_protocol_decoder_keyfinder_alloc,
-    .free = subghz_protocol_decoder_keyfinder_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_keyfinder_feed,
-    .reset = subghz_protocol_decoder_keyfinder_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_keyfinder_get_hash_data,
-    .serialize = subghz_protocol_decoder_keyfinder_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_keyfinder_deserialize,
-    .get_string = subghz_protocol_decoder_keyfinder_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_keyfinder_encoder = {
-    .alloc = subghz_protocol_encoder_keyfinder_alloc,
-    .free = subghz_protocol_encoder_keyfinder_free,
-
-    .deserialize = subghz_protocol_encoder_keyfinder_deserialize,
-    .stop = subghz_protocol_encoder_keyfinder_stop,
-    .yield = subghz_protocol_encoder_keyfinder_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_keyfinder_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_keyfinder");
 
 const SubGhzProtocol subghz_protocol_keyfinder = {
     .name = SUBGHZ_PROTOCOL_KEYFINDER_NAME,
@@ -65,138 +64,13 @@ const SubGhzProtocol subghz_protocol_keyfinder = {
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_keyfinder_decoder,
-    .encoder = &subghz_protocol_keyfinder_encoder,
+    .encoder = &subghz_protocol_keyfinder_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_keyfinder_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderKeyFinder* instance = malloc(sizeof(SubGhzProtocolEncoderKeyFinder));
-
-    instance->base.protocol = &subghz_protocol_keyfinder;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 5;
-    instance->encoder.size_upload = 60;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_keyfinder_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderKeyFinder* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static void
-    subghz_protocol_encoder_keyfinder_get_upload(SubGhzProtocolEncoderKeyFinder* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_keyfinder_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_keyfinder_const.te_long);
-
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_keyfinder_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_keyfinder_const.te_short);
-        }
-    }
-
-    for(uint8_t i = 0; i < 3; i++) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_keyfinder_const.te_short);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_keyfinder_const.te_short);
-    }
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_keyfinder_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_keyfinder_const.te_short * 10);
-
-    instance->encoder.size_upload = index;
-    return;
-}
-
-static void subghz_protocol_keyfinder_check_remote_controller(SubGhzBlockGeneric* instance) {
-    instance->serial = instance->data >> 4;
-    instance->btn = instance->data & 0xF;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_keyfinder_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderKeyFinder* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_keyfinder_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        subghz_protocol_keyfinder_check_remote_controller(&instance->generic);
-        subghz_protocol_encoder_keyfinder_get_upload(instance);
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_keyfinder_stop(void* context) {
-    SubGhzProtocolEncoderKeyFinder* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_keyfinder_yield(void* context) {
-    SubGhzProtocolEncoderKeyFinder* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_keyfinder_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderKeyFinder* instance = malloc(sizeof(SubGhzProtocolDecoderKeyFinder));
-    instance->base.protocol = &subghz_protocol_keyfinder;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_keyfinder_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderKeyFinder* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_keyfinder_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderKeyFinder* instance = context;
-    instance->decoder.parser_step = KeyFinderDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderKeyFinder), &subghz_protocol_keyfinder);
 }
 
 void subghz_protocol_decoder_keyfinder_feed(void* context, bool level, volatile uint32_t duration) {
@@ -284,22 +158,6 @@ void subghz_protocol_decoder_keyfinder_feed(void* context, bool level, volatile 
     }
 }
 
-uint8_t subghz_protocol_decoder_keyfinder_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderKeyFinder* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_keyfinder_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderKeyFinder* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_keyfinder_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -310,26 +168,3 @@ SubGhzProtocolStatus
         subghz_protocol_keyfinder_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_keyfinder_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderKeyFinder* instance = context;
-
-    subghz_protocol_keyfinder_check_remote_controller(&instance->generic);
-
-    uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit);
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key: 0x%06lX\r\n"
-        "Yek: 0x%06lX\r\n"
-        "Serial: 0x%05lX\r\n"
-        "ID: 0x%0X",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data & 0xFFFFFF),
-        (uint32_t)(code_found_reverse & 0xFFFFFF),
-        instance->generic.serial,
-        instance->generic.btn);
-}

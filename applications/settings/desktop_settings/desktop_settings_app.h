@@ -53,7 +53,8 @@ typedef struct {
 
     char device_name[64];
     bool save_name;
-    char main_menu_rename_buffer[7];
+    /* Must match MM_LAYOUT_LABEL_LEN in helpers/main_menu_layout_ui.h. */
+    char main_menu_rename_buffer[32];
     uint32_t pin_menu_idx;
     DesktopSettings settings;
     DesktopPinCode pincode_buffer;

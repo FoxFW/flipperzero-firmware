@@ -36,6 +36,14 @@ env.Append(
 libenv = env.Clone(FW_LIB_NAME="subghz")
 libenv.ApplyLibFlags()
 
+# Windows: libsubghz archives many objects - one `ar` command exceeds cmd.exe's ~8191
+# char limit. Use a response file (TEMPFILE), and invoke binutils `ar` directly instead
+# of the `gcc-ar` wrapper, which forwards the @response-file to ar malformed
+# ("invalid option -- @"). LTO is off for these libs, so gcc-ar's plugin is not needed.
+libenv.Replace(AR="arm-none-eabi-ar")
+if "TEMPFILE" not in libenv["ARCOM"]:
+    libenv["ARCOM"] = '${TEMPFILE("' + libenv["ARCOM"] + '","$ARCOMSTR")}'
+
 sources = libenv.GlobRecursive("*.c*")
 
 lib = libenv.StaticLibrary("${FW_LIB_NAME}", sources)

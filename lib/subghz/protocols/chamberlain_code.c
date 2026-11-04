@@ -1,5 +1,8 @@
 #include "chamberlain_code.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -59,6 +62,9 @@ struct SubGhzProtocolEncoderChamb_Code {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderChamb_Code);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderChamb_Code);
+
 typedef enum {
     Chamb_CodeDecoderStepReset = 0,
     Chamb_CodeDecoderStepFoundStartBit,
@@ -68,25 +74,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_chamb_code_decoder = {
     .alloc = subghz_protocol_decoder_chamb_code_alloc,
-    .free = subghz_protocol_decoder_chamb_code_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_chamb_code_feed,
-    .reset = subghz_protocol_decoder_chamb_code_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_chamb_code_get_hash_data,
-    .serialize = subghz_protocol_decoder_chamb_code_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_chamb_code_deserialize,
-    .get_string = subghz_protocol_decoder_chamb_code_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_chamb_code_encoder = {
-    .alloc = subghz_protocol_encoder_chamb_code_alloc,
-    .free = subghz_protocol_encoder_chamb_code_free,
-
-    .deserialize = subghz_protocol_encoder_chamb_code_deserialize,
-    .stop = subghz_protocol_encoder_chamb_code_stop,
-    .yield = subghz_protocol_encoder_chamb_code_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_chamb_code_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_chamberlain_code");
 
 const SubGhzProtocol subghz_protocol_chamb_code = {
     .name = SUBGHZ_PROTOCOL_CHAMB_CODE_NAME,
@@ -95,183 +94,13 @@ const SubGhzProtocol subghz_protocol_chamb_code = {
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_chamb_code_decoder,
-    .encoder = &subghz_protocol_chamb_code_encoder,
+    .encoder = &subghz_protocol_chamb_code_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_chamb_code_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderChamb_Code* instance = malloc(sizeof(SubGhzProtocolEncoderChamb_Code));
-
-    instance->base.protocol = &subghz_protocol_chamb_code;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 24;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_chamb_code_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderChamb_Code* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static uint64_t subghz_protocol_chamb_bit_to_code(uint64_t data, uint8_t size) {
-    uint64_t data_res = 0;
-    for(uint8_t i = 0; i < size; i++) {
-        if(!(bit_read(data, size - i - 1))) {
-            data_res = data_res << 4 | CHAMBERLAIN_CODE_BIT_0;
-        } else {
-            data_res = data_res << 4 | CHAMBERLAIN_CODE_BIT_1;
-        }
-    }
-    return data_res;
-}
-
-static bool
-    subghz_protocol_encoder_chamb_code_get_upload(SubGhzProtocolEncoderChamb_Code* instance) {
-    furi_assert(instance);
-
-    uint64_t data = subghz_protocol_chamb_bit_to_code(
-        instance->generic.data, instance->generic.data_count_bit);
-
-    switch(instance->generic.data_count_bit) {
-    case 7:
-        data = ((data >> 4) << 16) | (data & 0xF) << 4 | CHAMBERLAIN_7_CODE_MASK_CHECK;
-        break;
-    case 8:
-        data = ((data >> 12) << 16) | (data & 0xFF) << 4 | CHAMBERLAIN_8_CODE_MASK_CHECK;
-        break;
-    case 9:
-        data = (data << 4) | CHAMBERLAIN_9_CODE_MASK_CHECK;
-        break;
-
-    default:
-        FURI_LOG_E(TAG, "Invalid bits count");
-        return false;
-        break;
-    }
-#define UPLOAD_HEX_DATA_SIZE 10
-    uint8_t upload_hex_data[UPLOAD_HEX_DATA_SIZE] = {0};
-    size_t upload_hex_count_bit = 0;
-
-    for(uint8_t i = 0; i < 36; i++) {
-        subghz_protocol_blocks_set_bit_array(
-            0, upload_hex_data, upload_hex_count_bit++, UPLOAD_HEX_DATA_SIZE);
-    }
-
-    switch(instance->generic.data_count_bit) {
-    case 7:
-    case 9:
-        for(uint8_t i = 44; i > 0; i--) {
-            if(!bit_read(data, i - 1)) {
-                subghz_protocol_blocks_set_bit_array(
-                    0, upload_hex_data, upload_hex_count_bit++, UPLOAD_HEX_DATA_SIZE);
-            } else {
-                subghz_protocol_blocks_set_bit_array(
-                    1, upload_hex_data, upload_hex_count_bit++, UPLOAD_HEX_DATA_SIZE);
-            }
-        }
-        break;
-    case 8:
-        for(uint8_t i = 40; i > 0; i--) {
-            if(!bit_read(data, i - 1)) {
-                subghz_protocol_blocks_set_bit_array(
-                    0, upload_hex_data, upload_hex_count_bit++, UPLOAD_HEX_DATA_SIZE);
-            } else {
-                subghz_protocol_blocks_set_bit_array(
-                    1, upload_hex_data, upload_hex_count_bit++, UPLOAD_HEX_DATA_SIZE);
-            }
-        }
-        break;
-    }
-
-    instance->encoder.size_upload = subghz_protocol_blocks_get_upload_from_bit_array(
-        upload_hex_data,
-        upload_hex_count_bit,
-        instance->encoder.upload,
-        instance->encoder.size_upload,
-        subghz_protocol_chamb_code_const.te_short,
-        SubGhzProtocolBlockAlignBitLeft);
-
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_chamb_code_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderChamb_Code* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-        if(instance->generic.data_count_bit >
-           subghz_protocol_chamb_code_const.min_count_bit_for_found) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
-            ret = SubGhzProtocolStatusErrorValueBitCount;
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_chamb_code_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_chamb_code_stop(void* context) {
-    SubGhzProtocolEncoderChamb_Code* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_chamb_code_yield(void* context) {
-    SubGhzProtocolEncoderChamb_Code* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_chamb_code_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderChamb_Code* instance = malloc(sizeof(SubGhzProtocolDecoderChamb_Code));
-    instance->base.protocol = &subghz_protocol_chamb_code;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_chamb_code_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderChamb_Code* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_chamb_code_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderChamb_Code* instance = context;
-    instance->decoder.parser_step = Chamb_CodeDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderChamb_Code), &subghz_protocol_chamb_code);
 }
 
 static bool subghz_protocol_chamb_code_to_bit(uint64_t* data, uint8_t size) {
@@ -415,22 +244,6 @@ void subghz_protocol_decoder_chamb_code_feed(void* context, bool level, uint32_t
     }
 }
 
-uint8_t subghz_protocol_decoder_chamb_code_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderChamb_Code* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_chamb_code_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderChamb_Code* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_chamb_code_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -451,48 +264,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_chamb_code_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderChamb_Code* instance = context;
-
-    uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
-
-    uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit);
-
-    uint32_t code_found_reverse_lo = code_found_reverse & 0x00000000ffffffff;
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key:0x%03lX\r\n"
-        "Yek:0x%03lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        code_found_lo,
-        code_found_reverse_lo);
-
-    switch(instance->generic.data_count_bit) {
-    case 7:
-        furi_string_cat_printf(
-            output,
-            "DIP:" CHAMBERLAIN_7_CODE_DIP_PATTERN "\r\n",
-            CHAMBERLAIN_7_CODE_DATA_TO_DIP(code_found_lo));
-        break;
-    case 8:
-        furi_string_cat_printf(
-            output,
-            "DIP:" CHAMBERLAIN_8_CODE_DIP_PATTERN "\r\n",
-            CHAMBERLAIN_8_CODE_DATA_TO_DIP(code_found_lo));
-        break;
-    case 9:
-        furi_string_cat_printf(
-            output,
-            "DIP:" CHAMBERLAIN_9_CODE_DIP_PATTERN "\r\n",
-            CHAMBERLAIN_9_CODE_DATA_TO_DIP(code_found_lo));
-        break;
-
-    default:
-        break;
-    }
-}

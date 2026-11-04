@@ -1,4 +1,7 @@
 #include "alutech_at_4n.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -8,6 +11,8 @@
 #include "../blocks/custom_btn_i.h"
 
 #define TAG "SubGhzProtocoAlutech_at_4n"
+
+static bool alutech_at_4n_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
 
 #define SUBGHZ_NO_ALUTECH_AT_4N_RAINBOW_TABLE         0xFFFFFFFFFFFFFFFF
 #define SUBGHZ_ALUTECH_AT_4N_RAINBOW_TABLE_SIZE_BYTES 32
@@ -42,6 +47,9 @@ struct SubGhzProtocolEncoderAlutech_at_4n {
     uint32_t crc;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderAlutech_at_4n);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderAlutech_at_4n);
+
 typedef enum {
     Alutech_at_4nDecoderStepReset = 0,
     Alutech_at_4nDecoderStepCheckPreambula,
@@ -56,90 +64,37 @@ const SubGhzProtocolDecoder subghz_protocol_alutech_at_4n_decoder = {
     .free = subghz_protocol_decoder_alutech_at_4n_free,
 
     .feed = subghz_protocol_decoder_alutech_at_4n_feed,
-    .reset = subghz_protocol_decoder_alutech_at_4n_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
     .get_hash_data = subghz_protocol_decoder_alutech_at_4n_get_hash_data,
     .serialize = subghz_protocol_decoder_alutech_at_4n_serialize,
     .deserialize = subghz_protocol_decoder_alutech_at_4n_deserialize,
-    .get_string = subghz_protocol_decoder_alutech_at_4n_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_alutech_at_4n_encoder = {
-    .alloc = subghz_protocol_encoder_alutech_at_4n_alloc,
-    .free = subghz_protocol_encoder_alutech_at_4n_free,
-
-    .deserialize = subghz_protocol_encoder_alutech_at_4n_deserialize,
-    .stop = subghz_protocol_encoder_alutech_at_4n_stop,
-    .yield = subghz_protocol_encoder_alutech_at_4n_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    void* alutech_at4n_counter_mode;
+    void* alutech_at_4n_raw_replay;
+    void* bypass;
+} enc_alutech_at_4n_host_t;
+static const enc_alutech_at_4n_host_t enc_alutech_at_4n_host = {
+    .alutech_at4n_counter_mode = (void*)&alutech_at4n_counter_mode,
+    .alutech_at_4n_raw_replay = (void*)&alutech_at_4n_raw_replay,
+    .bypass = (void*)&bypass,
 };
+static const SubGhzEncoderExternal subghz_protocol_alutech_at_4n_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_alutech_at_4n", &enc_alutech_at_4n_host);
 
 const SubGhzProtocol subghz_protocol_alutech_at_4n = {
     .name = SUBGHZ_PROTOCOL_ALUTECH_AT_4N_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
 
     .decoder = &subghz_protocol_alutech_at_4n_decoder,
-    .encoder = &subghz_protocol_alutech_at_4n_encoder,
+    .encoder = &subghz_protocol_alutech_at_4n_encoder_ext.vtable,
 };
 
-static void subghz_protocol_alutech_at_4n_remote_controller(
-    SubGhzBlockGeneric* instance,
-    uint8_t crc,
-    const char* file_name);
-
-void* subghz_protocol_encoder_alutech_at_4n_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderAlutech_at_4n* instance =
-        malloc(sizeof(SubGhzProtocolEncoderAlutech_at_4n));
-
-    instance->base.protocol = &subghz_protocol_alutech_at_4n;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 512;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-
-    instance->alutech_at_4n_rainbow_table_file_name =
-        subghz_environment_get_alutech_at_4n_rainbow_table_file_name(environment);
-    if(instance->alutech_at_4n_rainbow_table_file_name) {
-        FURI_LOG_I(
-            TAG, "Loading rainbow table from %s", instance->alutech_at_4n_rainbow_table_file_name);
-    }
-
-    return instance;
-}
-
-void subghz_protocol_encoder_alutech_at_4n_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderAlutech_at_4n* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_alutech_at_4n_stop(void* context) {
-    SubGhzProtocolEncoderAlutech_at_4n* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_alutech_at_4n_yield(void* context) {
-    SubGhzProtocolEncoderAlutech_at_4n* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 static uint32_t subghz_protocol_alutech_at_4n_get_magic_data_from_buffer(
     uint8_t* buffer,
@@ -293,7 +248,9 @@ static bool subghz_protocol_alutech_at_4n_gen_data(
 
     if((alutech_at4n_counter_mode == 0) || bypass) {
 
-        if((furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) || bypass) {
+        if(alutech_at_4n_raw_replay) {
+            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+        } else if((furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) || bypass) {
             bypass = false;
 
             if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -373,152 +330,6 @@ bool subghz_protocol_alutech_at_4n_create_data(
     return true;
 }
 
-static uint8_t subghz_protocol_alutech_at_4n_get_btn_code(void);
-
-static bool subghz_protocol_encoder_alutech_at_4n_get_upload(
-    SubGhzProtocolEncoderAlutech_at_4n* instance,
-    uint8_t btn) {
-    furi_assert(instance);
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(btn);
-    }
-
-    btn = subghz_protocol_alutech_at_4n_get_btn_code();
-
-    if(subghz_block_generic_global_button_override_get(&btn)) {
-        bypass = true;
-        FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", btn);
-    }
-
-    if(!subghz_protocol_alutech_at_4n_gen_data(instance, btn)) {
-        return false;
-    }
-
-    size_t index = 0;
-
-    for(uint8_t i = 0; i < 12; ++i) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-        instance->encoder.upload[index++] = level_duration_make(
-            false, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-    }
-
-    instance->encoder.upload[index - 1].duration +=
-        (uint32_t)subghz_protocol_alutech_at_4n_const.te_short * 9;
-
-    for(uint8_t i = 64; i > 0; --i) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_alutech_at_4n_const.te_long);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_alutech_at_4n_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-        }
-    }
-
-    for(uint8_t i = 8; i > 0; --i) {
-        if(bit_read(instance->crc, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_alutech_at_4n_const.te_long);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_alutech_at_4n_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_alutech_at_4n_const.te_short);
-        }
-    }
-
-    instance->encoder.upload[index - 1].duration +=
-        (uint32_t)subghz_protocol_alutech_at_4n_const.te_long * 20;
-
-    size_t size_upload = index;
-
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-    return true;
-}
-
-SubGhzProtocolStatus subghz_protocol_encoder_alutech_at_4n_deserialize(
-    void* context,
-    FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderAlutech_at_4n* instance = context;
-    SubGhzProtocolStatus res = SubGhzProtocolStatusError;
-    do {
-        if(SubGhzProtocolStatusOk !=
-           subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-
-        if(!flipper_format_read_uint32(flipper_format, "CRC", (uint32_t*)&instance->crc, 1)) {
-            FURI_LOG_E(TAG, "Missing CRC");
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-
-        uint32_t tmp_counter_mode;
-        if(flipper_format_read_uint32(flipper_format, "CounterMode", &tmp_counter_mode, 1)) {
-            alutech_at4n_counter_mode = (uint8_t)tmp_counter_mode;
-        } else {
-            alutech_at4n_counter_mode = 0;
-        }
-
-        subghz_protocol_alutech_at_4n_remote_controller(
-            &instance->generic, instance->crc, instance->alutech_at_4n_rainbow_table_file_name);
-
-        subghz_protocol_encoder_alutech_at_4n_get_upload(instance, instance->generic.btn);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
-        }
-        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "Unable to add Key");
-            break;
-        }
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        if(!flipper_format_update_uint32(flipper_format, "CRC", &instance->crc, 1)) {
-            FURI_LOG_E(TAG, "Unable to add CRC");
-            break;
-        }
-
-        instance->encoder.is_running = true;
-
-        res = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return res;
-}
 
 void* subghz_protocol_decoder_alutech_at_4n_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderAlutech_at_4n* instance =
@@ -539,12 +350,6 @@ void subghz_protocol_decoder_alutech_at_4n_free(void* context) {
     SubGhzProtocolDecoderAlutech_at_4n* instance = context;
     instance->alutech_at_4n_rainbow_table_file_name = NULL;
     free(instance);
-}
-
-void subghz_protocol_decoder_alutech_at_4n_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAlutech_at_4n* instance = context;
-    instance->decoder.parser_step = Alutech_at_4nDecoderStepReset;
 }
 
 void subghz_protocol_decoder_alutech_at_4n_feed(void* context, bool level, uint32_t duration) {
@@ -652,39 +457,6 @@ void subghz_protocol_decoder_alutech_at_4n_feed(void* context, bool level, uint3
     }
 }
 
-static void subghz_protocol_alutech_at_4n_remote_controller(
-    SubGhzBlockGeneric* instance,
-    uint8_t crc,
-    const char* file_name) {
-
-    bool status = false;
-    uint64_t data = subghz_protocol_blocks_reverse_key(instance->data, 64);
-    crc = subghz_protocol_blocks_reverse_key(crc, 8);
-
-    if(crc == subghz_protocol_alutech_at_4n_crc(data)) {
-        data = subghz_protocol_alutech_at_4n_decrypt(data, file_name);
-        status = true;
-    }
-
-    if(status && ((uint8_t)(data >> 56) ==
-                  subghz_protocol_alutech_at_4n_decrypt_data_crc((uint8_t)((data >> 8) & 0xFF)))) {
-        instance->btn = (uint8_t)data & 0xFF;
-        instance->cnt = (uint16_t)(data >> 8) & 0xFFFF;
-        instance->serial = (uint32_t)(data >> 24) & 0xFFFFFFFF;
-    }
-
-    if(!status) {
-        instance->btn = 0;
-        instance->cnt = 0;
-        instance->serial = 0;
-    }
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(instance->btn);
-    }
-    subghz_custom_btn_set_max(4);
-}
-
 uint8_t subghz_protocol_decoder_alutech_at_4n_get_hash_data(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderAlutech_at_4n* instance = context;
@@ -751,131 +523,3 @@ SubGhzProtocolStatus subghz_protocol_decoder_alutech_at_4n_deserialize(
     return ret;
 }
 
-static uint8_t subghz_protocol_alutech_at_4n_get_btn_code(void) {
-    uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t original_btn_code = subghz_custom_btn_get_original();
-    uint8_t btn = original_btn_code;
-
-    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
-
-        btn = original_btn_code;
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
-        switch(original_btn_code) {
-        case 0x11:
-            btn = 0x22;
-            break;
-        case 0x22:
-            btn = 0x11;
-            break;
-        case 0xFF:
-            btn = 0x11;
-            break;
-        case 0x44:
-            btn = 0x11;
-            break;
-        case 0x33:
-            btn = 0x11;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
-        switch(original_btn_code) {
-        case 0x11:
-            btn = 0x44;
-            break;
-        case 0x22:
-            btn = 0x44;
-            break;
-        case 0xFF:
-            btn = 0x44;
-            break;
-        case 0x44:
-            btn = 0xFF;
-            break;
-        case 0x33:
-            btn = 0x44;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
-        switch(original_btn_code) {
-        case 0x11:
-            btn = 0x33;
-            break;
-        case 0x22:
-            btn = 0x33;
-            break;
-        case 0xFF:
-            btn = 0x33;
-            break;
-        case 0x44:
-            btn = 0x33;
-            break;
-        case 0x33:
-            btn = 0x22;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_RIGHT) {
-        switch(original_btn_code) {
-        case 0x11:
-            btn = 0xFF;
-            break;
-        case 0x22:
-            btn = 0xFF;
-            break;
-        case 0xFF:
-            btn = 0x22;
-            break;
-        case 0x44:
-            btn = 0x22;
-            break;
-        case 0x33:
-            btn = 0xFF;
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    return btn;
-}
-
-void subghz_protocol_decoder_alutech_at_4n_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderAlutech_at_4n* instance = context;
-    subghz_protocol_alutech_at_4n_remote_controller(
-        &instance->generic, instance->crc, instance->alutech_at_4n_rainbow_table_file_name);
-    uint32_t code_found_hi = instance->generic.data >> 32;
-    uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
-
-    subghz_block_generic_global.cnt_is_available = true;
-    subghz_block_generic_global.cnt_length_bit = 16;
-    subghz_block_generic_global.current_cnt = instance->generic.cnt;
-
-    subghz_block_generic_global.btn_is_available = true;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 8;
-
-    furi_string_cat_printf(
-        output,
-        "%s\r\n"
-        "Key:0x%08lX%08lX\nCRC:%02X  %dbit\r\n"
-        "Sn:0x%08lX  Btn:0x%01X\r\n"
-        "Cnt:%04lX\r\n",
-        instance->generic.protocol_name,
-        code_found_hi,
-        code_found_lo,
-        (uint8_t)instance->crc,
-        instance->generic.data_count_bit,
-        instance->generic.serial,
-        instance->generic.btn,
-        instance->generic.cnt);
-}

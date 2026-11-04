@@ -3,6 +3,9 @@
 #include "../subghz_protocol_registry.h"
 
 #include "princeton.h"
+#include "cardin_s508.h"
+#include "prastel.h"
+#include "hormann_bisecur.h"
 #include "keeloq.h"
 #include "nice_flo.h"
 #include "came.h"
@@ -88,7 +91,6 @@
 #include "ford_v2.h"
 #include "ford_v3.h"
 #include "honda_v1.h"
-#include "honda_v2.h"
 #include "fiat_v0.h"
 #include "fiat_v1.h"
 #include "fiat_v2.h"
@@ -98,9 +100,75 @@
 #include "land_rover_v0.h"
 #include "toyota.h"
 #include "x10.h"
+#include "ducato_v0.h"
+// --- FoxFW2.0 2026-10 protocol port batch (decode-only; KeeLoq-RX arke ports) ---
+#include "jeep_v0.h"
+#include "ldv_v0.h"
+#include "renault_v2.h"
+#include "renault_v3.h"
+#include "renault_v4.h"
+#include "audi_v2.h"
+#include "audi_v3.h"
+#include "nissan_v0.h"
+#include "vag_polo.h"
+#include "chevrolet_v0.h"
+#include "mazda_v1.h"
+#include "mazda_v2.h"
+#include "bmw_v2.h"
+#include "bmw_v3.h"
+#include "lexus_v0.h"
+#include "mitsubishi_v1.h"
+#include "honda_v4.h"
+#include "honda_v5.h"
+#include "honda_v6.h"
+#include "honda_v7.h"
+#include "honda_v8.h"
+#include "honda_v9.h"
+#include "honda_v10.h"
 // Dormant decoders ported from ARF (2026-10-03) — headers declared so the
 // commented-out registry entries in protocol_items.c are ready to enable.
 #include "mercedes.h"
 #include "mazda_infinity.h"
 #include "audi.h"
 #include "hundai.h"
+// === FoxFW2.0 v2.1 2026-10-21: formerly-externalized autos brought LIVE ===
+// Moved from applications/main/subghz/protocols_ext/ into lib; the three
+// subghz_ext_auto_g1/g2/g3 .fal groups are DISABLED in application.fam.
+// To re-externalize a brand, see UNEXTERNALIZE_PROCEDURE doc.
+#include "fiat_v2_v3_v5.h"
+#include "toyota_v0.h"
+#include "honda_v2_v3.h"
+#include "hyundai_kia_rio.h"
+#include "santa_fe.h"
+#include "peugot_v0.h"
+#include "audi_v1.h"
+#include "gm_rke.h"
+#include "tesla_charge.h"
+#include "opel_v0.h"
+#include "continental_rke.h"
+#include "nidec_rke.h"
+#include "siemens_vdo.h"
+#include "hitag2.h"
+#include "alps_rke.h"
+#include "mic6sc2.h"
+#include "porsche_touareg.h"
+#include "code_alarm.h"
+#include "astrostart.h"
+#include "audiovox.h"
+#include "compustar.h"
+
+// SubRATT-only protocols promoted into main registry (FoxFW2.0 v2.1 2026-10-21)
+#include "allstar_firefly.h"
+
+// Remaining in-tree protocols brought LIVE (FoxFW2.0 v2.1 2026-10-22): detector internal,
+// decode_*.fal + enc_*.fal on SD. mercedes_fob stays shelved (#if 0 placeholder timings).
+#include "ditec_gol4.h"
+#include "nord_ice.h"
+#include "psa2.h"
+
+// Ported from doctor-firmware (FoxFW2.0 v2.1 2026-10-22): detector internal, decode/encode on SD.
+#include "urmet.h"
+#include "keyfinder2.h"
+#include "doorbell32.h"
+#include "opel_v1.h"
+#include "bmw_cas3.h"

@@ -20,7 +20,7 @@ void nfc_scene_update_initial_wrong_card_on_enter(void* context) {
     widget_add_string_multiline_element(
         widget,
         4,
-        17,
+        13,
         AlignLeft,
         AlignTop,
         FontSecondary,

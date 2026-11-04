@@ -1,0 +1,13 @@
+App(
+    appid="keeloq_keystore_encryptor",
+    name="KeeLoq Keystore Encryptor",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="keystore_encrypt_app",
+    stack_size=8 * 1024,
+    fap_category="Sub-GHz",
+    fap_author="Fox (based on Lechnio's KeeLoq Keystore Decryptor)",
+    fap_weburl="https://github.com/Lechnio/KeeLoq-Keystore-Decryptor",
+    fap_version="1.0",
+    fap_icon="icon.png",
+    fap_description="Re-encrypts a plaintext KeeLoq keystore on-device (inverse of the decryptor).",
+)

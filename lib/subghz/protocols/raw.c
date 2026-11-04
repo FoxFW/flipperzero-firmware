@@ -320,6 +320,15 @@ void subghz_protocol_raw_file_encoder_worker_set_callback_end(
         instance->file_worker_encoder, callback_end, context_end);
 }
 
+uint8_t subghz_protocol_encoder_raw_get_progress(void* context) {
+    SubGhzProtocolEncoderRAW* instance = context;
+    if(instance && instance->is_running && instance->file_worker_encoder &&
+       subghz_file_encoder_worker_is_running(instance->file_worker_encoder)) {
+        return subghz_file_encoder_worker_get_progress(instance->file_worker_encoder);
+    }
+    return 255;
+}
+
 static bool subghz_protocol_encoder_raw_worker_init(SubGhzProtocolEncoderRAW* instance) {
     furi_assert(instance);
     furi_check(!instance->file_worker_encoder);

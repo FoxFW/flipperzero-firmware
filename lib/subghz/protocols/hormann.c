@@ -1,5 +1,8 @@
 #include "hormann.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -31,6 +34,9 @@ struct SubGhzProtocolEncoderHormann {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHormann);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderHormann);
+
 typedef enum {
     HormannDecoderStepReset = 0,
     HormannDecoderStepFoundStartHeader,
@@ -42,25 +48,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_hormann_decoder = {
     .alloc = subghz_protocol_decoder_hormann_alloc,
-    .free = subghz_protocol_decoder_hormann_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_hormann_feed,
-    .reset = subghz_protocol_decoder_hormann_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_hormann_get_hash_data,
-    .serialize = subghz_protocol_decoder_hormann_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_hormann_deserialize,
-    .get_string = subghz_protocol_decoder_hormann_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_hormann_encoder = {
-    .alloc = subghz_protocol_encoder_hormann_alloc,
-    .free = subghz_protocol_encoder_hormann_free,
-
-    .deserialize = subghz_protocol_encoder_hormann_deserialize,
-    .stop = subghz_protocol_encoder_hormann_stop,
-    .yield = subghz_protocol_encoder_hormann_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_hormann_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_hormann");
 
 const SubGhzProtocol subghz_protocol_hormann = {
     .name = SUBGHZ_PROTOCOL_HORMANN_HSM_NAME,
@@ -70,145 +69,17 @@ const SubGhzProtocol subghz_protocol_hormann = {
             SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_hormann_decoder,
-    .encoder = &subghz_protocol_hormann_encoder,
+    .encoder = &subghz_protocol_hormann_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_hormann_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderHormann* instance = malloc(sizeof(SubGhzProtocolEncoderHormann));
-
-    instance->base.protocol = &subghz_protocol_hormann;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 1;
-    instance->encoder.size_upload = 1850;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_hormann_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHormann* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_hormann_get_upload(SubGhzProtocolEncoderHormann* instance) {
-    furi_assert(instance);
-
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2 + 2) * 20 + 1;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    for(size_t repeat = 0; repeat < 20; repeat++) {
-
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_hormann_const.te_short * 24);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_hormann_const.te_short);
-
-        for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-            if(bit_read(instance->generic.data, i - 1)) {
-
-                instance->encoder.upload[index++] =
-                    level_duration_make(true, (uint32_t)subghz_protocol_hormann_const.te_long);
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_hormann_const.te_short);
-            } else {
-
-                instance->encoder.upload[index++] =
-                    level_duration_make(true, (uint32_t)subghz_protocol_hormann_const.te_short);
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_hormann_const.te_long);
-            }
-        }
-    }
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_hormann_const.te_short * 24);
-
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_hormann_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHormann* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_hormann_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_hormann_get_upload(instance)) {
-            instance->encoder.front = 0;
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_hormann_stop(void* context) {
-    SubGhzProtocolEncoderHormann* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_hormann_yield(void* context) {
-    SubGhzProtocolEncoderHormann* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_hormann_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderHormann* instance = malloc(sizeof(SubGhzProtocolDecoderHormann));
-    instance->base.protocol = &subghz_protocol_hormann;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_hormann_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHormann* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderHormann), &subghz_protocol_hormann);
 }
 
 static bool subghz_protocol_decoder_hormann_check_pattern(SubGhzProtocolDecoderHormann* instance) {
     return (instance->decoder.decode_data & HORMANN_HSM_PATTERN) == HORMANN_HSM_PATTERN;
-}
-
-void subghz_protocol_decoder_hormann_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHormann* instance = context;
-    instance->decoder.parser_step = HormannDecoderStepReset;
 }
 
 void subghz_protocol_decoder_hormann_feed(void* context, bool level, uint32_t duration) {
@@ -277,26 +148,6 @@ void subghz_protocol_decoder_hormann_feed(void* context, bool level, uint32_t du
     }
 }
 
-static void subghz_protocol_hormann_check_remote_controller(SubGhzBlockGeneric* instance) {
-    instance->btn = (instance->data >> 8) & 0xF;
-}
-
-uint8_t subghz_protocol_decoder_hormann_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHormann* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_hormann_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHormann* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_hormann_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -305,24 +156,3 @@ SubGhzProtocolStatus
         &instance->generic, flipper_format, subghz_protocol_hormann_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_hormann_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHormann* instance = context;
-    subghz_protocol_hormann_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.btn_is_available = false;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 4;
-
-    furi_string_cat_printf(
-        output,
-        "%s\r\n"
-        "%dbit\r\n"
-        "Key:0x%03lX%08lX\r\n"
-        "Btn:0x%01X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)instance->generic.data,
-        instance->generic.btn);
-}

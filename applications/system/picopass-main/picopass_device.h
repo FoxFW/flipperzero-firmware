@@ -149,6 +149,8 @@ bool picopass_device_save(PicopassDevice* dev, const char* dev_name);
 
 bool picopass_file_select(PicopassDevice* dev);
 
+bool picopass_device_load(PicopassDevice* dev, const char* path);
+
 void picopass_device_data_clear(PicopassDeviceData* dev_data);
 
 void picopass_device_clear(PicopassDevice* dev);

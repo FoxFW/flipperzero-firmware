@@ -1,5 +1,8 @@
 #include "megacode.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -30,6 +33,9 @@ struct SubGhzProtocolEncoderMegaCode {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMegaCode);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderMegaCode);
+
 typedef enum {
     MegaCodeDecoderStepReset = 0,
     MegaCodeDecoderStepFoundStartBit,
@@ -39,25 +45,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_megacode_decoder = {
     .alloc = subghz_protocol_decoder_megacode_alloc,
-    .free = subghz_protocol_decoder_megacode_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_megacode_feed,
-    .reset = subghz_protocol_decoder_megacode_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_megacode_get_hash_data,
-    .serialize = subghz_protocol_decoder_megacode_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_megacode_deserialize,
-    .get_string = subghz_protocol_decoder_megacode_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_megacode_encoder = {
-    .alloc = subghz_protocol_encoder_megacode_alloc,
-    .free = subghz_protocol_encoder_megacode_free,
-
-    .deserialize = subghz_protocol_encoder_megacode_deserialize,
-    .stop = subghz_protocol_encoder_megacode_stop,
-    .yield = subghz_protocol_encoder_megacode_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_megacode_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_megacode");
 
 const SubGhzProtocol subghz_protocol_megacode = {
     .name = SUBGHZ_PROTOCOL_MEGACODE_NAME,
@@ -66,152 +65,13 @@ const SubGhzProtocol subghz_protocol_megacode = {
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_megacode_decoder,
-    .encoder = &subghz_protocol_megacode_encoder,
+    .encoder = &subghz_protocol_megacode_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_megacode_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderMegaCode* instance = malloc(sizeof(SubGhzProtocolEncoderMegaCode));
-
-    instance->base.protocol = &subghz_protocol_megacode;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 52;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_megacode_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderMegaCode* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_megacode_get_upload(SubGhzProtocolEncoderMegaCode* instance) {
-    furi_assert(instance);
-    uint8_t last_bit = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2);
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    size_t index = size_upload - 1;
-
-    instance->encoder.upload[index--] =
-        level_duration_make(true, (uint32_t)subghz_protocol_megacode_const.te_short);
-    if(bit_read(instance->generic.data, 0)) {
-        last_bit = 1;
-    } else {
-        last_bit = 0;
-    }
-
-    for(uint8_t i = 1; i < instance->generic.data_count_bit; i++) {
-        if(bit_read(instance->generic.data, i)) {
-
-            instance->encoder.upload[index--] = level_duration_make(
-                false,
-                last_bit ? (uint32_t)subghz_protocol_megacode_const.te_short * 5 :
-                           (uint32_t)subghz_protocol_megacode_const.te_short * 2);
-            last_bit = 1;
-        } else {
-
-            instance->encoder.upload[index--] = level_duration_make(
-                false,
-                last_bit ? (uint32_t)subghz_protocol_megacode_const.te_short * 8 :
-                           (uint32_t)subghz_protocol_megacode_const.te_short * 5);
-            last_bit = 0;
-        }
-        instance->encoder.upload[index--] =
-            level_duration_make(true, (uint32_t)subghz_protocol_megacode_const.te_short);
-    }
-
-    if(bit_read(instance->generic.data, 0)) {
-
-        instance->encoder.upload[index] =
-            level_duration_make(false, (uint32_t)subghz_protocol_megacode_const.te_short * 11);
-    } else {
-
-        instance->encoder.upload[index] =
-            level_duration_make(false, (uint32_t)subghz_protocol_megacode_const.te_short * 14);
-    }
-
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_megacode_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderMegaCode* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_megacode_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_megacode_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_megacode_stop(void* context) {
-    SubGhzProtocolEncoderMegaCode* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_megacode_yield(void* context) {
-    SubGhzProtocolEncoderMegaCode* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_megacode_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderMegaCode* instance = malloc(sizeof(SubGhzProtocolDecoderMegaCode));
-    instance->base.protocol = &subghz_protocol_megacode;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_megacode_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMegaCode* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_megacode_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMegaCode* instance = context;
-    instance->decoder.parser_step = MegaCodeDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderMegaCode), &subghz_protocol_megacode);
 }
 
 void subghz_protocol_decoder_megacode_feed(void* context, bool level, uint32_t duration) {
@@ -292,35 +152,6 @@ void subghz_protocol_decoder_megacode_feed(void* context, bool level, uint32_t d
     }
 }
 
-static void subghz_protocol_megacode_check_remote_controller(SubGhzBlockGeneric* instance) {
-
-    if((instance->data >> 23) == 1) {
-        instance->serial = (instance->data >> 3) & 0xFFFF;
-        instance->btn = instance->data & 0b111;
-        instance->cnt = (instance->data >> 19) & 0b1111;
-    } else {
-        instance->serial = 0;
-        instance->btn = 0;
-        instance->cnt = 0;
-    }
-}
-
-uint8_t subghz_protocol_decoder_megacode_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMegaCode* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_megacode_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMegaCode* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_megacode_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -331,26 +162,3 @@ SubGhzProtocolStatus
         subghz_protocol_megacode_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_megacode_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMegaCode* instance = context;
-    subghz_protocol_megacode_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.btn_is_available = false;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 3;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%06lX\r\n"
-        "Sn:0x%04lX - %lu\r\n"
-        "Facility:%lX Btn:%X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)instance->generic.data,
-        instance->generic.serial,
-        instance->generic.serial,
-        instance->generic.cnt,
-        instance->generic.btn);
-}

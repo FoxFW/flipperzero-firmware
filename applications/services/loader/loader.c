@@ -273,9 +273,6 @@ static void loader_load_watchdog_disarm(Loader* loader) {
     furi_timer_stop(loader->load_watchdog);
 }
 
-#define LOADER_GARAGE_APPID       "subghz_garage"
-#define LOADER_GARAGE_PROBE_APPID "subghz_garage_cc1101_check"
-
 static void loader_cover_release(Loader* loader) {
     if(loader_menu_settings_return_pending()) {
         view_holder_set_view(loader->view_holder, empty_screen_get_view(loader->empty_screen));
@@ -636,6 +633,8 @@ static void
     if(thread_state == FuriThreadStateStopped) {
         Loader* loader = context;
 
+        furi_hal_power_set_force_light_sleep(false);
+
         LoaderMessage message;
         message.type = LoaderMessageTypeAppClosed;
         furi_message_queue_put(loader->queue, &message, FuriWaitForever);
@@ -721,6 +720,8 @@ static void loader_start_app_thread(Loader* loader, FlipperInternalApplicationFl
 
     furi_thread_set_state_context(loader->app.thread, loader);
     furi_thread_set_state_callback(loader->app.thread, loader_thread_state_callback);
+
+    furi_hal_power_set_force_light_sleep(true);
 
     furi_thread_start(loader->app.thread);
 }
@@ -991,10 +992,11 @@ static bool loader_do_menu_show_settings_if_pending(Loader* loader) {
 }
 
 static void loader_do_menu_closed(Loader* loader) {
-    if(loader->loader_menu) {
-        loader_menu_free(loader->loader_menu);
-        loader->loader_menu = NULL;
-    }
+    /* Anti-fragmentation: do NOT free the menu here. It is built once at boot
+     * and kept for the firmware lifetime. The menu thread has already parked
+     * itself (its view_dispatcher_run returned) and is waiting for the next
+     * show flag; we only need to drop the "shown" state. Freeing/rebuilding on
+     * every close was the main source of heap fragmentation. */
     loader->menu_shown = false;
     if(!loader_do_menu_show_settings_if_pending(loader) && !loader->app.thread) {
         view_holder_set_view(loader->view_holder, NULL);
@@ -1008,11 +1010,12 @@ static void loader_do_ensure_menu_built(Loader* loader) {
 }
 
 static void loader_do_release_hidden_menu(Loader* loader) {
-    if(!loader->loader_menu || loader->menu_shown) {
-        return;
-    }
-    loader_menu_free(loader->loader_menu);
-    loader->loader_menu = NULL;
+    /* Anti-fragmentation: the menu is built once at boot and kept permanently,
+     * so there is nothing to release on qFlipper/CLI disconnect. Freeing it
+     * here (when it happened to not be shown) was a key fragmentation trigger:
+     * the connect-built, disconnect-freed menu stranded a small survivor block
+     * high in the heap and split the contiguous free tail. */
+    UNUSED(loader);
 }
 
 static void loader_do_applications_show(Loader* loader) {
@@ -1224,10 +1227,6 @@ static bool loader_do_deferred_launch(Loader* loader, LoaderDeferredLaunchRecord
     if(was_queued && record->name_or_path && strcmp(record->name_or_path, "subghz") == 0) {
         keep_loading_view = true;
     }
-    if(record->name_or_path &&
-       loader_wheel_name_matches_appid(record->name_or_path, LOADER_GARAGE_PROBE_APPID)) {
-        keep_loading_view = true;
-    }
 
     if(!skip_loading_view) {
         view_holder_set_view(loader->view_holder, loading_get_view(loader->loading));
@@ -1272,12 +1271,8 @@ static void loader_show_loading_for_launch(Loader* loader, const char* app_name)
     loader_load_watchdog_arm(loader, app_name);
 }
 
-static void loader_hide_loading_for_launch(Loader* loader, const char* app_name, bool started) {
+static void loader_hide_loading_for_launch(Loader* loader) {
     loader_load_watchdog_disarm(loader);
-    if(started && app_name &&
-       loader_wheel_name_matches_appid(app_name, LOADER_GARAGE_PROBE_APPID)) {
-        return;
-    }
     loader_cover_release(loader);
 }
 
@@ -1385,6 +1380,27 @@ int32_t loader_srv(void* p) {
         FLIPPER_ON_SYSTEM_START[i]();
     }
 
+    /* Anti-fragmentation: build the main menu ONCE here, at boot, and keep it
+     * for the firmware lifetime (see loader_do_menu_closed /
+     * loader_do_release_hidden_menu, which no longer free it). Building it now
+     * - before any app has loaded and churned the heap - clusters the menu's
+     * thread/view/Menu/Submenu/item allocations LOW, just above the permanent
+     * boot region, leaving the entire upper heap as one contiguous tail.
+     *
+     * The old behaviour built the menu lazily (on qFlipper/CLI connect or on
+     * menu-show) and freed it on every menu close and qFlipper disconnect.
+     * Because those builds happened high in an already-churned heap and were
+     * then freed, each cycle stranded a small survivor block high up, splitting
+     * the free tail and shrinking the max contiguous block over a session
+     * (eventually OOMing Mass Storage). Building once at boot and keeping it
+     * removes that churn entirely. We trade a few KB of permanently-resident
+     * RAM for a stable, large contiguous tail. The menu thread simply parks
+     * waiting for a show flag; it does not attach to the GUI until shown. */
+    loader_wait_for_storage_ready();
+    heap_alloc_guard_lock();
+    loader_do_ensure_menu_built(loader);
+    heap_alloc_guard_unlock();
+
     if((furi_hal_rtc_get_boot_mode() == FuriHalRtcBootModeNormal) && FLIPPER_AUTORUN_APP_NAME &&
        strlen(FLIPPER_AUTORUN_APP_NAME)) {
         FURI_LOG_I(TAG, "Starting autorun app: %s", FLIPPER_AUTORUN_APP_NAME);
@@ -1403,8 +1419,7 @@ int32_t loader_srv(void* p) {
                     message.start.name,
                     message.start.args,
                     message.start.error_message);
-                loader_hide_loading_for_launch(
-                    loader, message.start.name, status.value == LoaderStatusOk);
+                loader_hide_loading_for_launch(loader);
                 *(message.status_value) = status;
                 if(status.value != LoaderStatusOk) loader_do_emit_queue_empty_event(loader);
                 api_lock_unlock(message.api_lock);
@@ -1416,8 +1431,7 @@ int32_t loader_srv(void* p) {
                 loader_show_loading_for_launch(loader, message.start.name);
                 LoaderMessageLoaderStatusResult status = loader_do_start_by_name(
                     loader, message.start.name, message.start.args, error_message);
-                loader_hide_loading_for_launch(
-                    loader, message.start.name, status.value == LoaderStatusOk);
+                loader_hide_loading_for_launch(loader);
                 loader_show_gui_error(status, message.start.name, error_message);
                 if(status.value != LoaderStatusOk) loader_do_emit_queue_empty_event(loader);
                 if(message.start.name) free((void*)message.start.name);
@@ -1496,15 +1510,13 @@ int32_t loader_srv(void* p) {
                                   strstr(p, "subghz_raw");
 
                     bool is_subghz = strcmp(p, "subghz") == 0;
-                    bool is_garage =
-                        loader_wheel_name_matches_appid(p, LOADER_GARAGE_APPID) ||
-                        loader_wheel_name_matches_appid(p, LOADER_GARAGE_PROBE_APPID);
+                    bool is_keeloq_tool = strstr(p, "subghz_keeloq_tool") != NULL;
                     if(is_fap) {
                         view_holder_set_view(
                             loader->view_holder,
                             empty_screen_get_view(loader->empty_screen));
                         view_holder_send_to_front(loader->view_holder);
-                    } else if(is_subghz || is_garage) {
+                    } else if(is_subghz || is_keeloq_tool) {
                         view_holder_set_view(
                             loader->view_holder,
                             loading_get_view(loader->loading));

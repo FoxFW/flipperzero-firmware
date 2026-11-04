@@ -116,6 +116,11 @@ static void updater_build_version_line(
         tag += prefix_len;
     }
 
+    // Drop a leading "v" so the version shows as "2.1", not "v2.1".
+    if(tag[0] == 'v' || tag[0] == 'V') {
+        tag += 1;
+    }
+
     // The RAM-resident updater stage (FURI_RAM_EXEC, active while flash is
     // actually being written) appends " (RAM)" to the version string - strip
     // it here so this screen doesn't briefly overflow off-screen with
@@ -132,13 +137,7 @@ static void updater_build_version_line(
 
     snprintf(origin_out, origin_out_size, "%s ", origin);
 
-    // strlcat instead of snprintf("(%s)", ...) - tag_buf is a stack buffer,
-    // not a literal, so GCC can't statically prove the snprintf fits and
-    // flags it under -Werror=format-truncation.
-    tag_out[0] = '\0';
-    strlcat(tag_out, "(", tag_out_size);
-    strlcat(tag_out, tag_buf, tag_out_size);
-    strlcat(tag_out, ")", tag_out_size);
+    strlcpy(tag_out, tag_buf, tag_out_size);
 }
 
 static void updater_main_spin_timer_callback(void* context) {
@@ -210,9 +209,12 @@ static void updater_main_draw_callback(Canvas* canvas, void* _model) {
         }
 
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str_aligned(canvas, text_center_x, 16, AlignCenter, AlignTop, origin_part);
+        canvas_draw_str_aligned(canvas, text_center_x, 17, AlignCenter, AlignTop, origin_part);
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str_aligned(canvas, text_center_x, 29, AlignCenter, AlignTop, tag_part);
+        // Prefix the bare tag with "Version " so the line reads e.g. "Version 2.1".
+        char version_line[32];
+        snprintf(version_line, sizeof(version_line), "Version %s", tag_part);
+        canvas_draw_str_aligned(canvas, text_center_x, 29, AlignCenter, AlignTop, version_line);
 
         // Same progress number the bar below already shows, e.g.
         // "Extracting resources 34%" - matches Momentum's updater style.

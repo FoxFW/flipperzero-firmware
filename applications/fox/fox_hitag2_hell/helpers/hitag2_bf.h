@@ -49,6 +49,10 @@ uint32_t subghz_hitag2_bf_get_uid(const SubGhzHitag2Bf* instance);
 
 void subghz_hitag2_bf_set_levels(SubGhzHitag2Bf* instance, uint8_t levels_mask);
 
+/* Request the running brute abort. Sets the volatile cancel flag the L5 hot loop polls, so a
+ * long Hitag2Hell sweep stops within ~one inner iteration instead of only at a progress tick. */
+void subghz_hitag2_bf_request_cancel(SubGhzHitag2Bf* instance);
+
 bool subghz_hitag2_bf_run(
     SubGhzHitag2Bf* instance,
     SubGhzHitag2BfProgressCallback progress_cb,

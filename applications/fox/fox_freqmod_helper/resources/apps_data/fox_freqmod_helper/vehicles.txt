@@ -1,0 +1,842 @@
+# FreqMod Helper vehicle data (Protocol rows only)
+# make|model|year_from|year_to|label|freq_hz|preset|launch
+# empty model = direct (no model/year); launch A=Automotive Read G=Garage menu
+# preset 0=AM270 1=AM650 2=FM238 3=FM476 4=FM12K ; year 0|0 = all
+Abarth|124 Spider|0|0|North America|315000000|1|A
+Abarth|124 Spider|0|0|Europe|433920000|1|A
+Abarth|500|0|0|North America|315000000|1|A
+Abarth|500|0|0|Europe|433920000|1|A
+Abarth|595|0|0|North America|315000000|1|A
+Abarth|595|0|0|Europe|433920000|1|A
+Abarth|695|0|0|North America|315000000|1|A
+Abarth|695|0|0|Europe|433920000|1|A
+Acura|CL|0|0|North America|313850000|3|A
+Acura|CL|0|0|Europe|433920000|3|A
+Acura|CSX|0|0|North America|313850000|3|A
+Acura|CSX|0|0|Europe|433920000|3|A
+Acura|ILX|0|0|North America|313850000|3|A
+Acura|ILX|0|0|Europe|433920000|3|A
+Acura|Integra|0|0|North America|313850000|3|A
+Acura|Integra|0|0|Europe|433920000|3|A
+Acura|Legend|0|0|North America|313850000|3|A
+Acura|Legend|0|0|Europe|433920000|3|A
+Acura|MDX|0|0|North America|313850000|3|A
+Acura|MDX|0|0|Europe|433920000|3|A
+Acura|NSX|0|0|North America|313850000|3|A
+Acura|NSX|0|0|Europe|433920000|3|A
+Acura|RDX|0|0|North America|313850000|3|A
+Acura|RDX|0|0|Europe|433920000|3|A
+Acura|RL|0|0|North America|313850000|3|A
+Acura|RL|0|0|Europe|433920000|3|A
+Acura|RLX|0|0|North America|313850000|3|A
+Acura|RLX|0|0|Europe|433920000|3|A
+Acura|RSX|0|0|North America|313850000|3|A
+Acura|RSX|0|0|Europe|433920000|3|A
+Acura|TL|0|0|North America|313850000|3|A
+Acura|TL|0|0|Europe|433920000|3|A
+Acura|TLX|0|0|North America|313850000|3|A
+Acura|TLX|0|0|Europe|433920000|3|A
+Acura|TSX|0|0|North America|313850000|3|A
+Acura|TSX|0|0|Europe|433920000|3|A
+Acura|ZDX|0|0|North America|313850000|3|A
+Acura|ZDX|0|0|Europe|433920000|3|A
+Alfa Romeo|147|0|0|North America|315000000|1|A
+Alfa Romeo|147|0|0|Europe|433920000|1|A
+Alfa Romeo|156|0|0|North America|315000000|1|A
+Alfa Romeo|156|0|0|Europe|433920000|1|A
+Alfa Romeo|159|0|0|North America|315000000|1|A
+Alfa Romeo|159|0|0|Europe|433920000|1|A
+Alfa Romeo|Brera|0|0|North America|315000000|1|A
+Alfa Romeo|Brera|0|0|Europe|433920000|1|A
+Alfa Romeo|Giulia|0|0|North America|315000000|1|A
+Alfa Romeo|Giulia|0|0|Europe|433920000|1|A
+Alfa Romeo|Giulietta|0|0|North America|315000000|1|A
+Alfa Romeo|Giulietta|0|0|Europe|433920000|1|A
+Alfa Romeo|GT|0|0|North America|315000000|1|A
+Alfa Romeo|GT|0|0|Europe|433920000|1|A
+Alfa Romeo|MiTo|0|0|North America|315000000|1|A
+Alfa Romeo|MiTo|0|0|Europe|433920000|1|A
+Alfa Romeo|Spider|0|0|North America|315000000|1|A
+Alfa Romeo|Spider|0|0|Europe|433920000|1|A
+Alfa Romeo|Stelvio|0|0|North America|315000000|1|A
+Alfa Romeo|Stelvio|0|0|Europe|433920000|1|A
+Alfa Romeo|Tonale|0|0|North America|315000000|1|A
+Alfa Romeo|Tonale|0|0|Europe|433920000|1|A
+Audi|A1|0|0|North America|315000000|1|A
+Audi|A1|0|0|Europe|434420000|1|A
+Audi|A3|0|0|North America|315000000|1|A
+Audi|A3|0|0|Europe|434420000|1|A
+Audi|A4|0|0|North America|315000000|1|A
+Audi|A4|0|0|Europe|434420000|1|A
+Audi|A5|0|0|North America|315000000|1|A
+Audi|A5|0|0|Europe|434420000|1|A
+Audi|A6|0|0|North America|315000000|1|A
+Audi|A6|0|0|Europe|434420000|1|A
+Audi|A7|0|0|North America|315000000|1|A
+Audi|A7|0|0|Europe|434420000|1|A
+Audi|A8|0|0|North America|315000000|1|A
+Audi|A8|0|0|Europe|434420000|1|A
+Audi|Q2|0|0|North America|315000000|1|A
+Audi|Q2|0|0|Europe|434420000|1|A
+Audi|Q3|0|0|North America|315000000|1|A
+Audi|Q3|0|0|Europe|434420000|1|A
+Audi|Q5|0|0|North America|315000000|1|A
+Audi|Q5|0|0|Europe|434420000|1|A
+Audi|Q7|0|0|North America|315000000|1|A
+Audi|Q7|0|0|Europe|434420000|1|A
+Audi|Q8|0|0|North America|315000000|1|A
+Audi|Q8|0|0|Europe|434420000|1|A
+Audi|R8|0|0|North America|315000000|1|A
+Audi|R8|0|0|Europe|434420000|1|A
+Audi|RS3|0|0|North America|315000000|1|A
+Audi|RS3|0|0|Europe|434420000|1|A
+Audi|RS6|0|0|North America|315000000|1|A
+Audi|RS6|0|0|Europe|434420000|1|A
+Audi|S3|0|0|North America|315000000|1|A
+Audi|S3|0|0|Europe|434420000|1|A
+Audi|S4|0|0|North America|315000000|1|A
+Audi|S4|0|0|Europe|434420000|1|A
+Audi|S5|0|0|North America|315000000|1|A
+Audi|S5|0|0|Europe|434420000|1|A
+Audi|TT|0|0|North America|315000000|1|A
+Audi|TT|0|0|Europe|434420000|1|A
+Audi|e-tron|0|0|North America|315000000|1|A
+Audi|e-tron|0|0|Europe|434420000|1|A
+Buick|Cascada|0|0|North America|315000000|1|A
+Buick|Cascada|0|0|Europe|433920000|1|A
+Buick|Enclave|0|0|North America|315000000|1|A
+Buick|Enclave|0|0|Europe|433920000|1|A
+Buick|Encore|0|0|North America|315000000|1|A
+Buick|Encore|0|0|Europe|433920000|1|A
+Buick|Envision|0|0|North America|315000000|1|A
+Buick|Envision|0|0|Europe|433920000|1|A
+Buick|LaCrosse|0|0|North America|315000000|1|A
+Buick|LaCrosse|0|0|Europe|433920000|1|A
+Buick|Lucerne|0|0|North America|315000000|1|A
+Buick|Lucerne|0|0|Europe|433920000|1|A
+Buick|Regal|0|0|North America|315000000|1|A
+Buick|Regal|0|0|Europe|433920000|1|A
+Buick|Verano|0|0|North America|315000000|1|A
+Buick|Verano|0|0|Europe|433920000|1|A
+Cadillac|ATS|0|0|North America|315000000|1|A
+Cadillac|ATS|0|0|Europe|433920000|1|A
+Cadillac|CT4|0|0|North America|315000000|1|A
+Cadillac|CT4|0|0|Europe|433920000|1|A
+Cadillac|CT5|0|0|North America|315000000|1|A
+Cadillac|CT5|0|0|Europe|433920000|1|A
+Cadillac|CT6|0|0|North America|315000000|1|A
+Cadillac|CT6|0|0|Europe|433920000|1|A
+Cadillac|CTS|0|0|North America|315000000|1|A
+Cadillac|CTS|0|0|Europe|433920000|1|A
+Cadillac|Escalade|0|0|North America|315000000|1|A
+Cadillac|Escalade|0|0|Europe|433920000|1|A
+Cadillac|SRX|0|0|North America|315000000|1|A
+Cadillac|SRX|0|0|Europe|433920000|1|A
+Cadillac|STS|0|0|North America|315000000|1|A
+Cadillac|STS|0|0|Europe|433920000|1|A
+Cadillac|XT4|0|0|North America|315000000|1|A
+Cadillac|XT4|0|0|Europe|433920000|1|A
+Cadillac|XT5|0|0|North America|315000000|1|A
+Cadillac|XT5|0|0|Europe|433920000|1|A
+Cadillac|XT6|0|0|North America|315000000|1|A
+Cadillac|XT6|0|0|Europe|433920000|1|A
+Cadillac|XTS|0|0|North America|315000000|1|A
+Cadillac|XTS|0|0|Europe|433920000|1|A
+Chevrolet|Aveo|0|0|North America|315000000|1|A
+Chevrolet|Aveo|0|0|Europe|433920000|1|A
+Chevrolet|Blazer|0|0|North America|315000000|1|A
+Chevrolet|Blazer|0|0|Europe|433920000|1|A
+Chevrolet|Bolt|0|0|North America|315000000|1|A
+Chevrolet|Bolt|0|0|Europe|433920000|1|A
+Chevrolet|Camaro|0|0|North America|315000000|1|A
+Chevrolet|Camaro|0|0|Europe|433920000|1|A
+Chevrolet|Captiva|0|0|North America|315000000|1|A
+Chevrolet|Captiva|0|0|Europe|433920000|1|A
+Chevrolet|Colorado|0|0|North America|315000000|1|A
+Chevrolet|Colorado|0|0|Europe|433920000|1|A
+Chevrolet|Corvette|0|0|North America|315000000|1|A
+Chevrolet|Corvette|0|0|Europe|433920000|1|A
+Chevrolet|Cruze|0|0|North America|315000000|1|A
+Chevrolet|Cruze|0|0|Europe|433920000|1|A
+Chevrolet|Equinox|0|0|North America|315000000|1|A
+Chevrolet|Equinox|0|0|Europe|433920000|1|A
+Chevrolet|Impala|0|0|North America|315000000|1|A
+Chevrolet|Impala|0|0|Europe|433920000|1|A
+Chevrolet|Malibu|0|0|North America|315000000|1|A
+Chevrolet|Malibu|0|0|Europe|433920000|1|A
+Chevrolet|Silverado|0|0|North America|315000000|1|A
+Chevrolet|Silverado|0|0|Europe|433920000|1|A
+Chevrolet|Sonic|0|0|North America|315000000|1|A
+Chevrolet|Sonic|0|0|Europe|433920000|1|A
+Chevrolet|Spark|0|0|North America|315000000|1|A
+Chevrolet|Spark|0|0|Europe|433920000|1|A
+Chevrolet|Suburban|0|0|North America|315000000|1|A
+Chevrolet|Suburban|0|0|Europe|433920000|1|A
+Chevrolet|Tahoe|0|0|North America|315000000|1|A
+Chevrolet|Tahoe|0|0|Europe|433920000|1|A
+Chevrolet|Trailblazer|0|0|North America|315000000|1|A
+Chevrolet|Trailblazer|0|0|Europe|433920000|1|A
+Chevrolet|Traverse|0|0|North America|315000000|1|A
+Chevrolet|Traverse|0|0|Europe|433920000|1|A
+Chevrolet|Trax|0|0|North America|315000000|1|A
+Chevrolet|Trax|0|0|Europe|433920000|1|A
+Chevrolet|Volt|0|0|North America|315000000|1|A
+Chevrolet|Volt|0|0|Europe|433920000|1|A
+Chrysler|200|0|0|North America|315000000|1|A
+Chrysler|200|0|0|Europe|433920000|1|A
+Chrysler|300|0|0|North America|315000000|1|A
+Chrysler|300|0|0|Europe|433920000|1|A
+Chrysler|Pacifica|0|0|North America|315000000|1|A
+Chrysler|Pacifica|0|0|Europe|433920000|1|A
+Chrysler|PT Cruiser|0|0|North America|315000000|1|A
+Chrysler|PT Cruiser|0|0|Europe|433920000|1|A
+Chrysler|Sebring|0|0|North America|315000000|1|A
+Chrysler|Sebring|0|0|Europe|433920000|1|A
+Chrysler|Town & Country|0|0|North America|315000000|1|A
+Chrysler|Town & Country|0|0|Europe|433920000|1|A
+Chrysler|Voyager|0|0|North America|315000000|1|A
+Chrysler|Voyager|0|0|Europe|433920000|1|A
+Citroen|Berlingo|0|0|All Regions|433920000|1|A
+Citroen|C1|0|0|All Regions|433920000|1|A
+Citroen|C3|0|0|All Regions|433920000|1|A
+Citroen|C3 Aircross|0|0|All Regions|433920000|1|A
+Citroen|C4|0|0|All Regions|433920000|1|A
+Citroen|C4 Cactus|0|0|All Regions|433920000|1|A
+Citroen|C5|0|0|All Regions|433920000|1|A
+Citroen|C5 Aircross|0|0|All Regions|433920000|1|A
+Citroen|DS3|0|0|All Regions|433920000|1|A
+Citroen|DS4|0|0|All Regions|433920000|1|A
+Citroen|DS5|0|0|All Regions|433920000|1|A
+Citroen|Picasso|0|0|All Regions|433920000|1|A
+Cupra|Ateca|0|0|North America|315000000|1|A
+Cupra|Ateca|0|0|Europe|434420000|1|A
+Cupra|Born|0|0|North America|315000000|1|A
+Cupra|Born|0|0|Europe|434420000|1|A
+Cupra|Formentor|0|0|North America|315000000|1|A
+Cupra|Formentor|0|0|Europe|434420000|1|A
+Cupra|Leon|0|0|North America|315000000|1|A
+Cupra|Leon|0|0|Europe|434420000|1|A
+Dacia|Duster|0|0|All Regions|433920000|1|A
+Dacia|Logan|0|0|All Regions|433920000|1|A
+Dacia|Sandero|0|0|All Regions|433920000|1|A
+Dacia|Spring|0|0|All Regions|433920000|1|A
+Dacia|Jogger|0|0|All Regions|433920000|1|A
+Daewoo|Kalos|0|0|North America|315000000|1|A
+Daewoo|Kalos|0|0|Europe|433920000|1|A
+Daewoo|Lacetti|0|0|North America|315000000|1|A
+Daewoo|Lacetti|0|0|Europe|433920000|1|A
+Daewoo|Lanos|0|0|North America|315000000|1|A
+Daewoo|Lanos|0|0|Europe|433920000|1|A
+Daewoo|Matiz|0|0|North America|315000000|1|A
+Daewoo|Matiz|0|0|Europe|433920000|1|A
+Daewoo|Nubira|0|0|North America|315000000|1|A
+Daewoo|Nubira|0|0|Europe|433920000|1|A
+Dodge|Avenger|0|0|North America|315000000|1|A
+Dodge|Avenger|0|0|Europe|433920000|1|A
+Dodge|Caliber|0|0|North America|315000000|1|A
+Dodge|Caliber|0|0|Europe|433920000|1|A
+Dodge|Challenger|0|0|North America|315000000|1|A
+Dodge|Challenger|0|0|Europe|433920000|1|A
+Dodge|Charger|0|0|North America|315000000|1|A
+Dodge|Charger|0|0|Europe|433920000|1|A
+Dodge|Dart|0|0|North America|315000000|1|A
+Dodge|Dart|0|0|Europe|433920000|1|A
+Dodge|Durango|0|0|North America|315000000|1|A
+Dodge|Durango|0|0|Europe|433920000|1|A
+Dodge|Grand Caravan|0|0|North America|315000000|1|A
+Dodge|Grand Caravan|0|0|Europe|433920000|1|A
+Dodge|Journey|0|0|North America|315000000|1|A
+Dodge|Journey|0|0|Europe|433920000|1|A
+Dodge|Nitro|0|0|North America|315000000|1|A
+Dodge|Nitro|0|0|Europe|433920000|1|A
+Dodge|Ram 1500|0|0|North America|315000000|1|A
+Dodge|Ram 1500|0|0|Europe|433920000|1|A
+Fiat|124 Spider|0|0|North America|315000000|1|A
+Fiat|124 Spider|0|0|Europe|433920000|1|A
+Fiat|500|0|0|North America|315000000|1|A
+Fiat|500|0|0|Europe|433920000|1|A
+Fiat|500L|0|0|North America|315000000|1|A
+Fiat|500L|0|0|Europe|433920000|1|A
+Fiat|500X|0|0|North America|315000000|1|A
+Fiat|500X|0|0|Europe|433920000|1|A
+Fiat|Doblo|0|0|North America|315000000|1|A
+Fiat|Doblo|0|0|Europe|433920000|1|A
+Fiat|Panda|0|0|North America|315000000|1|A
+Fiat|Panda|0|0|Europe|433920000|1|A
+Fiat|Punto|0|0|North America|315000000|1|A
+Fiat|Punto|0|0|Europe|433920000|1|A
+Fiat|Tipo|0|0|North America|315000000|1|A
+Fiat|Tipo|0|0|Europe|433920000|1|A
+Fiat|Freemont|0|0|North America|315000000|1|A
+Fiat|Freemont|0|0|Europe|433920000|1|A
+Ford|B-Max|0|2011|North America|315000000|1|A
+Ford|B-Max|0|2011|Europe|433920000|1|A
+Ford|B-Max|2012|0|North America|315000000|3|A
+Ford|B-Max|2012|0|Europe|433920000|3|A
+Ford|Bronco|0|2011|North America|315000000|1|A
+Ford|Bronco|0|2011|Europe|433920000|1|A
+Ford|Bronco|2012|0|North America|315000000|3|A
+Ford|Bronco|2012|0|Europe|433920000|3|A
+Ford|C-Max|0|2011|North America|315000000|1|A
+Ford|C-Max|0|2011|Europe|433920000|1|A
+Ford|C-Max|2012|0|North America|315000000|3|A
+Ford|C-Max|2012|0|Europe|433920000|3|A
+Ford|EcoSport|0|2011|North America|315000000|1|A
+Ford|EcoSport|0|2011|Europe|433920000|1|A
+Ford|EcoSport|2012|0|North America|315000000|3|A
+Ford|EcoSport|2012|0|Europe|433920000|3|A
+Ford|Edge|0|2011|North America|315000000|1|A
+Ford|Edge|0|2011|Europe|433920000|1|A
+Ford|Edge|2012|0|North America|315000000|3|A
+Ford|Edge|2012|0|Europe|433920000|3|A
+Ford|Escape|0|2011|North America|315000000|1|A
+Ford|Escape|0|2011|Europe|433920000|1|A
+Ford|Escape|2012|0|North America|315000000|3|A
+Ford|Escape|2012|0|Europe|433920000|3|A
+Ford|Escort|0|2011|North America|315000000|1|A
+Ford|Escort|0|2011|Europe|433920000|1|A
+Ford|Escort|2012|0|North America|315000000|3|A
+Ford|Escort|2012|0|Europe|433920000|3|A
+Ford|Expedition|0|2011|North America|315000000|1|A
+Ford|Expedition|0|2011|Europe|433920000|1|A
+Ford|Expedition|2012|0|North America|315000000|3|A
+Ford|Expedition|2012|0|Europe|433920000|3|A
+Ford|Explorer|0|2011|North America|315000000|1|A
+Ford|Explorer|0|2011|Europe|433920000|1|A
+Ford|Explorer|2012|0|North America|315000000|3|A
+Ford|Explorer|2012|0|Europe|433920000|3|A
+Ford|F-150|0|2011|North America|315000000|1|A
+Ford|F-150|0|2011|Europe|433920000|1|A
+Ford|F-150|2012|0|North America|315000000|3|A
+Ford|F-150|2012|0|Europe|433920000|3|A
+Ford|Fiesta|0|2011|North America|315000000|1|A
+Ford|Fiesta|0|2011|Europe|433920000|1|A
+Ford|Fiesta|2012|0|North America|315000000|3|A
+Ford|Fiesta|2012|0|Europe|433920000|3|A
+Ford|Focus|0|2011|North America|315000000|1|A
+Ford|Focus|0|2011|Europe|433920000|1|A
+Ford|Focus|2012|0|North America|315000000|3|A
+Ford|Focus|2012|0|Europe|433920000|3|A
+Ford|Fusion|0|2011|North America|315000000|1|A
+Ford|Fusion|0|2011|Europe|433920000|1|A
+Ford|Fusion|2012|0|North America|315000000|3|A
+Ford|Fusion|2012|0|Europe|433920000|3|A
+Ford|Galaxy|0|2011|North America|315000000|1|A
+Ford|Galaxy|0|2011|Europe|433920000|1|A
+Ford|Galaxy|2012|0|North America|315000000|3|A
+Ford|Galaxy|2012|0|Europe|433920000|3|A
+Ford|Ka|0|2011|North America|315000000|1|A
+Ford|Ka|0|2011|Europe|433920000|1|A
+Ford|Ka|2012|0|North America|315000000|3|A
+Ford|Ka|2012|0|Europe|433920000|3|A
+Ford|Kuga|0|2011|North America|315000000|1|A
+Ford|Kuga|0|2011|Europe|433920000|1|A
+Ford|Kuga|2012|0|North America|315000000|3|A
+Ford|Kuga|2012|0|Europe|433920000|3|A
+Ford|Mondeo|0|2011|North America|315000000|1|A
+Ford|Mondeo|0|2011|Europe|433920000|1|A
+Ford|Mondeo|2012|0|North America|315000000|3|A
+Ford|Mondeo|2012|0|Europe|433920000|3|A
+Ford|Mustang|0|2011|North America|315000000|1|A
+Ford|Mustang|0|2011|Europe|433920000|1|A
+Ford|Mustang|2012|0|North America|315000000|3|A
+Ford|Mustang|2012|0|Europe|433920000|3|A
+Ford|Puma|0|2011|North America|315000000|1|A
+Ford|Puma|0|2011|Europe|433920000|1|A
+Ford|Puma|2012|0|North America|315000000|3|A
+Ford|Puma|2012|0|Europe|433920000|3|A
+Ford|Ranger|0|2011|North America|315000000|1|A
+Ford|Ranger|0|2011|Europe|433920000|1|A
+Ford|Ranger|2012|0|North America|315000000|3|A
+Ford|Ranger|2012|0|Europe|433920000|3|A
+Ford|S-Max|0|2011|North America|315000000|1|A
+Ford|S-Max|0|2011|Europe|433920000|1|A
+Ford|S-Max|2012|0|North America|315000000|3|A
+Ford|S-Max|2012|0|Europe|433920000|3|A
+Ford|Territory|0|2011|North America|315000000|1|A
+Ford|Territory|0|2011|Europe|433920000|1|A
+Ford|Territory|2012|0|North America|315000000|3|A
+Ford|Territory|2012|0|Europe|433920000|3|A
+Ford|Transit|0|2011|North America|315000000|1|A
+Ford|Transit|0|2011|Europe|433920000|1|A
+Ford|Transit|2012|0|North America|315000000|3|A
+Ford|Transit|2012|0|Europe|433920000|3|A
+Genesis|G70|0|0|North America|315000000|3|A
+Genesis|G70|0|0|Europe|433920000|3|A
+Genesis|G80|0|0|North America|315000000|3|A
+Genesis|G80|0|0|Europe|433920000|3|A
+Genesis|G90|0|0|North America|315000000|3|A
+Genesis|G90|0|0|Europe|433920000|3|A
+Genesis|GV70|0|0|North America|315000000|3|A
+Genesis|GV70|0|0|Europe|433920000|3|A
+Genesis|GV80|0|0|North America|315000000|3|A
+Genesis|GV80|0|0|Europe|433920000|3|A
+GMC|Acadia|0|0|North America|315000000|1|A
+GMC|Acadia|0|0|Europe|433920000|1|A
+GMC|Canyon|0|0|North America|315000000|1|A
+GMC|Canyon|0|0|Europe|433920000|1|A
+GMC|Sierra|0|0|North America|315000000|1|A
+GMC|Sierra|0|0|Europe|433920000|1|A
+GMC|Terrain|0|0|North America|315000000|1|A
+GMC|Terrain|0|0|Europe|433920000|1|A
+GMC|Yukon|0|0|North America|315000000|1|A
+GMC|Yukon|0|0|Europe|433920000|1|A
+Holden|Astra|0|0|North America|315000000|1|A
+Holden|Astra|0|0|Europe|433920000|1|A
+Holden|Barina|0|0|North America|315000000|1|A
+Holden|Barina|0|0|Europe|433920000|1|A
+Holden|Captiva|0|0|North America|315000000|1|A
+Holden|Captiva|0|0|Europe|433920000|1|A
+Holden|Colorado|0|0|North America|315000000|1|A
+Holden|Colorado|0|0|Europe|433920000|1|A
+Holden|Commodore|0|0|North America|315000000|1|A
+Holden|Commodore|0|0|Europe|433920000|1|A
+Holden|Cruze|0|0|North America|315000000|1|A
+Holden|Cruze|0|0|Europe|433920000|1|A
+Holden|Trax|0|0|North America|315000000|1|A
+Holden|Trax|0|0|Europe|433920000|1|A
+Holden|Ute|0|0|North America|315000000|1|A
+Holden|Ute|0|0|Europe|433920000|1|A
+Holden|Calais|0|0|North America|315000000|1|A
+Holden|Calais|0|0|Europe|433920000|1|A
+Honda|Accord|0|0|North America|313850000|3|A
+Honda|Accord|0|0|Europe|433920000|3|A
+Honda|City|0|0|North America|313850000|3|A
+Honda|City|0|0|Europe|433920000|3|A
+Honda|Civic|0|0|North America|313850000|3|A
+Honda|Civic|0|0|Europe|433920000|3|A
+Honda|Clarity|0|0|North America|313850000|3|A
+Honda|Clarity|0|0|Europe|433920000|3|A
+Honda|CR-V|0|0|North America|313850000|3|A
+Honda|CR-V|0|0|Europe|433920000|3|A
+Honda|CR-Z|0|0|North America|313850000|3|A
+Honda|CR-Z|0|0|Europe|433920000|3|A
+Honda|Fit|0|0|North America|313850000|3|A
+Honda|Fit|0|0|Europe|433920000|3|A
+Honda|HR-V|0|0|North America|313850000|3|A
+Honda|HR-V|0|0|Europe|433920000|3|A
+Honda|Insight|0|0|North America|313850000|3|A
+Honda|Insight|0|0|Europe|433920000|3|A
+Honda|Jazz|0|0|North America|313850000|3|A
+Honda|Jazz|0|0|Europe|433920000|3|A
+Honda|Legend|0|0|North America|313850000|3|A
+Honda|Legend|0|0|Europe|433920000|3|A
+Honda|Odyssey|0|0|North America|313850000|3|A
+Honda|Odyssey|0|0|Europe|433920000|3|A
+Honda|Pilot|0|0|North America|313850000|3|A
+Honda|Pilot|0|0|Europe|433920000|3|A
+Honda|Ridgeline|0|0|North America|313850000|3|A
+Honda|Ridgeline|0|0|Europe|433920000|3|A
+Honda|S2000|0|0|North America|313850000|3|A
+Honda|S2000|0|0|Europe|433920000|3|A
+Hyundai|Accent|0|0|North America|315000000|3|A
+Hyundai|Accent|0|0|Europe|433920000|3|A
+Hyundai|Elantra|0|0|North America|315000000|3|A
+Hyundai|Elantra|0|0|Europe|433920000|3|A
+Hyundai|Getz|0|0|North America|315000000|3|A
+Hyundai|Getz|0|0|Europe|433920000|3|A
+Hyundai|i10|0|0|North America|315000000|3|A
+Hyundai|i10|0|0|Europe|433920000|3|A
+Hyundai|i20|0|0|North America|315000000|3|A
+Hyundai|i20|0|0|Europe|433920000|3|A
+Hyundai|i30|0|0|North America|315000000|3|A
+Hyundai|i30|0|0|Europe|433920000|3|A
+Hyundai|i40|0|0|North America|315000000|3|A
+Hyundai|i40|0|0|Europe|433920000|3|A
+Hyundai|Ioniq|0|0|North America|315000000|3|A
+Hyundai|Ioniq|0|0|Europe|433920000|3|A
+Hyundai|Kona|0|0|North America|315000000|3|A
+Hyundai|Kona|0|0|Europe|433920000|3|A
+Hyundai|Palisade|0|0|North America|315000000|3|A
+Hyundai|Palisade|0|0|Europe|433920000|3|A
+Hyundai|Santa Fe|0|0|North America|315000000|3|A
+Hyundai|Santa Fe|0|0|Europe|433920000|3|A
+Hyundai|Sonata|0|0|North America|315000000|3|A
+Hyundai|Sonata|0|0|Europe|433920000|3|A
+Hyundai|Tucson|0|0|North America|315000000|3|A
+Hyundai|Tucson|0|0|Europe|433920000|3|A
+Hyundai|Veloster|0|0|North America|315000000|3|A
+Hyundai|Veloster|0|0|Europe|433920000|3|A
+Hyundai|Venue|0|0|North America|315000000|3|A
+Hyundai|Venue|0|0|Europe|433920000|3|A
+Hyundai|iLoad|0|0|North America|315000000|3|A
+Hyundai|iLoad|0|0|Europe|433920000|3|A
+Jeep|Cherokee|0|0|North America|315000000|1|A
+Jeep|Cherokee|0|0|Europe|433920000|1|A
+Jeep|Compass|0|0|North America|315000000|1|A
+Jeep|Compass|0|0|Europe|433920000|1|A
+Jeep|Gladiator|0|0|North America|315000000|1|A
+Jeep|Gladiator|0|0|Europe|433920000|1|A
+Jeep|Grand Cherokee|0|0|North America|315000000|1|A
+Jeep|Grand Cherokee|0|0|Europe|433920000|1|A
+Jeep|Patriot|0|0|North America|315000000|1|A
+Jeep|Patriot|0|0|Europe|433920000|1|A
+Jeep|Renegade|0|0|North America|315000000|1|A
+Jeep|Renegade|0|0|Europe|433920000|1|A
+Jeep|Wrangler|0|0|North America|315000000|1|A
+Jeep|Wrangler|0|0|Europe|433920000|1|A
+Kia|Carnival|0|0|North America|315000000|3|A
+Kia|Carnival|0|0|Europe|433920000|3|A
+Kia|Cerato|0|0|North America|315000000|3|A
+Kia|Cerato|0|0|Europe|433920000|3|A
+Kia|EV6|0|0|North America|315000000|3|A
+Kia|EV6|0|0|Europe|433920000|3|A
+Kia|Forte|0|0|North America|315000000|3|A
+Kia|Forte|0|0|Europe|433920000|3|A
+Kia|Niro|0|0|North America|315000000|3|A
+Kia|Niro|0|0|Europe|433920000|3|A
+Kia|Optima|0|0|North America|315000000|3|A
+Kia|Optima|0|0|Europe|433920000|3|A
+Kia|Picanto|0|0|North America|315000000|3|A
+Kia|Picanto|0|0|Europe|433920000|3|A
+Kia|Rio|0|0|North America|315000000|3|A
+Kia|Rio|0|0|Europe|433920000|3|A
+Kia|Sorento|0|0|North America|315000000|3|A
+Kia|Sorento|0|0|Europe|433920000|3|A
+Kia|Soul|0|0|North America|315000000|3|A
+Kia|Soul|0|0|Europe|433920000|3|A
+Kia|Sportage|0|0|North America|315000000|3|A
+Kia|Sportage|0|0|Europe|433920000|3|A
+Kia|Stinger|0|0|North America|315000000|3|A
+Kia|Stinger|0|0|Europe|433920000|3|A
+Kia|Stonic|0|0|North America|315000000|3|A
+Kia|Stonic|0|0|Europe|433920000|3|A
+Kia|Seltos|0|0|North America|315000000|3|A
+Kia|Seltos|0|0|Europe|433920000|3|A
+Kia|Telluride|0|0|North America|315000000|3|A
+Kia|Telluride|0|0|Europe|433920000|3|A
+Lexus|CT|0|0|North America|315000000|1|A
+Lexus|CT|0|0|Europe|433920000|1|A
+Lexus|ES|0|0|North America|315000000|1|A
+Lexus|ES|0|0|Europe|433920000|1|A
+Lexus|GS|0|0|North America|315000000|1|A
+Lexus|GS|0|0|Europe|433920000|1|A
+Lexus|GX|0|0|North America|315000000|1|A
+Lexus|GX|0|0|Europe|433920000|1|A
+Lexus|IS|0|0|North America|315000000|1|A
+Lexus|IS|0|0|Europe|433920000|1|A
+Lexus|LS|0|0|North America|315000000|1|A
+Lexus|LS|0|0|Europe|433920000|1|A
+Lexus|LX|0|0|North America|315000000|1|A
+Lexus|LX|0|0|Europe|433920000|1|A
+Lexus|NX|0|0|North America|315000000|1|A
+Lexus|NX|0|0|Europe|433920000|1|A
+Lexus|RC|0|0|North America|315000000|1|A
+Lexus|RC|0|0|Europe|433920000|1|A
+Lexus|RX|0|0|North America|315000000|1|A
+Lexus|RX|0|0|Europe|433920000|1|A
+Lexus|UX|0|0|North America|315000000|1|A
+Lexus|UX|0|0|Europe|433920000|1|A
+Lincoln|Aviator|0|2011|North America|315000000|1|A
+Lincoln|Aviator|0|2011|Europe|433920000|1|A
+Lincoln|Aviator|2012|0|North America|315000000|3|A
+Lincoln|Aviator|2012|0|Europe|433920000|3|A
+Lincoln|Corsair|0|2011|North America|315000000|1|A
+Lincoln|Corsair|0|2011|Europe|433920000|1|A
+Lincoln|Corsair|2012|0|North America|315000000|3|A
+Lincoln|Corsair|2012|0|Europe|433920000|3|A
+Lincoln|MKC|0|2011|North America|315000000|1|A
+Lincoln|MKC|0|2011|Europe|433920000|1|A
+Lincoln|MKC|2012|0|North America|315000000|3|A
+Lincoln|MKC|2012|0|Europe|433920000|3|A
+Lincoln|MKX|0|2011|North America|315000000|1|A
+Lincoln|MKX|0|2011|Europe|433920000|1|A
+Lincoln|MKX|2012|0|North America|315000000|3|A
+Lincoln|MKX|2012|0|Europe|433920000|3|A
+Lincoln|MKZ|0|2011|North America|315000000|1|A
+Lincoln|MKZ|0|2011|Europe|433920000|1|A
+Lincoln|MKZ|2012|0|North America|315000000|3|A
+Lincoln|MKZ|2012|0|Europe|433920000|3|A
+Lincoln|Nautilus|0|2011|North America|315000000|1|A
+Lincoln|Nautilus|0|2011|Europe|433920000|1|A
+Lincoln|Nautilus|2012|0|North America|315000000|3|A
+Lincoln|Nautilus|2012|0|Europe|433920000|3|A
+Lincoln|Navigator|0|2011|North America|315000000|1|A
+Lincoln|Navigator|0|2011|Europe|433920000|1|A
+Lincoln|Navigator|2012|0|North America|315000000|3|A
+Lincoln|Navigator|2012|0|Europe|433920000|3|A
+Mazda|2|0|0|North America|315000000|3|A
+Mazda|2|0|0|Europe|433920000|3|A
+Mazda|3|0|0|North America|315000000|3|A
+Mazda|3|0|0|Europe|433920000|3|A
+Mazda|6|0|0|North America|315000000|3|A
+Mazda|6|0|0|Europe|433920000|3|A
+Mazda|BT-50|0|0|North America|315000000|3|A
+Mazda|BT-50|0|0|Europe|433920000|3|A
+Mazda|CX-3|0|0|North America|315000000|3|A
+Mazda|CX-3|0|0|Europe|433920000|3|A
+Mazda|CX-30|0|0|North America|315000000|3|A
+Mazda|CX-30|0|0|Europe|433920000|3|A
+Mazda|CX-5|0|0|North America|315000000|3|A
+Mazda|CX-5|0|0|Europe|433920000|3|A
+Mazda|CX-8|0|0|North America|315000000|3|A
+Mazda|CX-8|0|0|Europe|433920000|3|A
+Mazda|CX-9|0|0|North America|315000000|3|A
+Mazda|CX-9|0|0|Europe|433920000|3|A
+Mazda|MX-30|0|0|North America|315000000|3|A
+Mazda|MX-30|0|0|Europe|433920000|3|A
+Mazda|MX-5|0|0|North America|315000000|3|A
+Mazda|MX-5|0|0|Europe|433920000|3|A
+Mazda|RX-8|0|0|North America|315000000|3|A
+Mazda|RX-8|0|0|Europe|433920000|3|A
+Mitsubishi|ASX|0|0|North America|315000000|3|A
+Mitsubishi|ASX|0|0|Europe|868350000|3|A
+Mitsubishi|Eclipse Cross|0|0|North America|315000000|3|A
+Mitsubishi|Eclipse Cross|0|0|Europe|868350000|3|A
+Mitsubishi|Lancer|0|0|North America|315000000|3|A
+Mitsubishi|Lancer|0|0|Europe|868350000|3|A
+Mitsubishi|Mirage|0|0|North America|315000000|3|A
+Mitsubishi|Mirage|0|0|Europe|868350000|3|A
+Mitsubishi|Outlander|0|0|North America|315000000|3|A
+Mitsubishi|Outlander|0|0|Europe|868350000|3|A
+Mitsubishi|Pajero|0|0|North America|315000000|3|A
+Mitsubishi|Pajero|0|0|Europe|868350000|3|A
+Mitsubishi|Pajero Sport|0|0|North America|315000000|3|A
+Mitsubishi|Pajero Sport|0|0|Europe|868350000|3|A
+Mitsubishi|Triton|0|0|North America|315000000|3|A
+Mitsubishi|Triton|0|0|Europe|868350000|3|A
+Opel|Astra|0|0|All Regions|433920000|1|A
+Opel|Combo|0|0|All Regions|433920000|1|A
+Opel|Corsa|0|0|All Regions|433920000|1|A
+Opel|Crossland|0|0|All Regions|433920000|1|A
+Opel|Grandland|0|0|All Regions|433920000|1|A
+Opel|Insignia|0|0|All Regions|433920000|1|A
+Opel|Mokka|0|0|All Regions|433920000|1|A
+Opel|Zafira|0|0|All Regions|433920000|1|A
+Peugeot|108|0|0|All Regions|433920000|1|A
+Peugeot|208|0|0|All Regions|433920000|1|A
+Peugeot|2008|0|0|All Regions|433920000|1|A
+Peugeot|308|0|0|All Regions|433920000|1|A
+Peugeot|3008|0|0|All Regions|433920000|1|A
+Peugeot|5008|0|0|All Regions|433920000|1|A
+Peugeot|508|0|0|All Regions|433920000|1|A
+Peugeot|Partner|0|0|All Regions|433920000|1|A
+Peugeot|Rifter|0|0|All Regions|433920000|1|A
+Peugeot|Expert|0|0|All Regions|433920000|1|A
+Porsche|718 Boxster|0|0|North America|315000000|1|A
+Porsche|718 Boxster|0|0|Europe|433920000|1|A
+Porsche|718 Cayman|0|0|North America|315000000|1|A
+Porsche|718 Cayman|0|0|Europe|433920000|1|A
+Porsche|911|0|0|North America|315000000|1|A
+Porsche|911|0|0|Europe|433920000|1|A
+Porsche|Cayenne|0|0|North America|315000000|1|A
+Porsche|Cayenne|0|0|Europe|433920000|1|A
+Porsche|Macan|0|0|North America|315000000|1|A
+Porsche|Macan|0|0|Europe|433920000|1|A
+Porsche|Panamera|0|0|North America|315000000|1|A
+Porsche|Panamera|0|0|Europe|433920000|1|A
+Porsche|Taycan|0|0|North America|315000000|1|A
+Porsche|Taycan|0|0|Europe|433920000|1|A
+RAM|1500|0|0|North America|315000000|1|A
+RAM|1500|0|0|Europe|433920000|1|A
+RAM|2500|0|0|North America|315000000|1|A
+RAM|2500|0|0|Europe|433920000|1|A
+RAM|3500|0|0|North America|315000000|1|A
+RAM|3500|0|0|Europe|433920000|1|A
+RAM|ProMaster|0|0|North America|315000000|1|A
+RAM|ProMaster|0|0|Europe|433920000|1|A
+Renault|Captur|0|0|All Regions|433920000|1|A
+Renault|Clio|0|0|All Regions|433920000|1|A
+Renault|Kadjar|0|0|All Regions|433920000|1|A
+Renault|Koleos|0|0|All Regions|433920000|1|A
+Renault|Megane|0|0|All Regions|433920000|1|A
+Renault|Scenic|0|0|All Regions|433920000|1|A
+Renault|Trafic|0|0|All Regions|433920000|1|A
+Renault|Twingo|0|0|All Regions|433920000|1|A
+Renault|Zoe|0|0|All Regions|433920000|1|A
+Renault|Arkana|0|0|All Regions|433920000|1|A
+SEAT|Alhambra|0|0|North America|315000000|1|A
+SEAT|Alhambra|0|0|Europe|434420000|1|A
+SEAT|Arona|0|0|North America|315000000|1|A
+SEAT|Arona|0|0|Europe|434420000|1|A
+SEAT|Ateca|0|0|North America|315000000|1|A
+SEAT|Ateca|0|0|Europe|434420000|1|A
+SEAT|Ibiza|0|0|North America|315000000|1|A
+SEAT|Ibiza|0|0|Europe|434420000|1|A
+SEAT|Leon|0|0|North America|315000000|1|A
+SEAT|Leon|0|0|Europe|434420000|1|A
+SEAT|Tarraco|0|0|North America|315000000|1|A
+SEAT|Tarraco|0|0|Europe|434420000|1|A
+Skoda|Fabia|0|0|North America|315000000|1|A
+Skoda|Fabia|0|0|Europe|434420000|1|A
+Skoda|Kamiq|0|0|North America|315000000|1|A
+Skoda|Kamiq|0|0|Europe|434420000|1|A
+Skoda|Karoq|0|0|North America|315000000|1|A
+Skoda|Karoq|0|0|Europe|434420000|1|A
+Skoda|Kodiaq|0|0|North America|315000000|1|A
+Skoda|Kodiaq|0|0|Europe|434420000|1|A
+Skoda|Octavia|0|0|North America|315000000|1|A
+Skoda|Octavia|0|0|Europe|434420000|1|A
+Skoda|Rapid|0|0|North America|315000000|1|A
+Skoda|Rapid|0|0|Europe|434420000|1|A
+Skoda|Scala|0|0|North America|315000000|1|A
+Skoda|Scala|0|0|Europe|434420000|1|A
+Skoda|Superb|0|0|North America|315000000|1|A
+Skoda|Superb|0|0|Europe|434420000|1|A
+Skoda|Yeti|0|0|North America|315000000|1|A
+Skoda|Yeti|0|0|Europe|434420000|1|A
+Subaru|BRZ|0|0|All Regions|433920000|1|A
+Subaru|Forester|0|0|All Regions|433920000|1|A
+Subaru|Impreza|0|0|All Regions|433920000|1|A
+Subaru|Legacy|0|0|All Regions|433920000|1|A
+Subaru|Levorg|0|0|All Regions|433920000|1|A
+Subaru|Liberty|0|0|All Regions|433920000|1|A
+Subaru|Outback|0|0|All Regions|433920000|1|A
+Subaru|WRX|0|0|All Regions|433920000|1|A
+Subaru|XV|0|0|All Regions|433920000|1|A
+Suzuki|Baleno|0|0|North America|315000000|3|A
+Suzuki|Baleno|0|0|Europe|433920000|3|A
+Suzuki|Celerio|0|0|North America|315000000|3|A
+Suzuki|Celerio|0|0|Europe|433920000|3|A
+Suzuki|Ignis|0|0|North America|315000000|3|A
+Suzuki|Ignis|0|0|Europe|433920000|3|A
+Suzuki|Jimny|0|0|North America|315000000|3|A
+Suzuki|Jimny|0|0|Europe|433920000|3|A
+Suzuki|S-Cross|0|0|North America|315000000|3|A
+Suzuki|S-Cross|0|0|Europe|433920000|3|A
+Suzuki|Swift|0|0|North America|315000000|3|A
+Suzuki|Swift|0|0|Europe|433920000|3|A
+Suzuki|Vitara|0|0|North America|315000000|3|A
+Suzuki|Vitara|0|0|Europe|433920000|3|A
+Suzuki|SX4|0|0|North America|315000000|3|A
+Suzuki|SX4|0|0|Europe|433920000|3|A
+Suzuki|Grand Vitara|0|0|North America|315000000|3|A
+Suzuki|Grand Vitara|0|0|Europe|433920000|3|A
+Toyota|86|0|0|North America|315000000|1|A
+Toyota|86|0|0|Europe|433920000|1|A
+Toyota|4Runner|0|0|North America|315000000|1|A
+Toyota|4Runner|0|0|Europe|433920000|1|A
+Toyota|Avalon|0|0|North America|315000000|1|A
+Toyota|Avalon|0|0|Europe|433920000|1|A
+Toyota|Aygo|0|0|North America|315000000|1|A
+Toyota|Aygo|0|0|Europe|433920000|1|A
+Toyota|C-HR|0|0|North America|315000000|1|A
+Toyota|C-HR|0|0|Europe|433920000|1|A
+Toyota|Camry|0|0|North America|315000000|1|A
+Toyota|Camry|0|0|Europe|433920000|1|A
+Toyota|Corolla|0|0|North America|315000000|1|A
+Toyota|Corolla|0|0|Europe|433920000|1|A
+Toyota|Fortuner|0|0|North America|315000000|1|A
+Toyota|Fortuner|0|0|Europe|433920000|1|A
+Toyota|GR86|0|0|North America|315000000|1|A
+Toyota|GR86|0|0|Europe|433920000|1|A
+Toyota|GR Yaris|0|0|North America|315000000|1|A
+Toyota|GR Yaris|0|0|Europe|433920000|1|A
+Toyota|Highlander|0|0|North America|315000000|1|A
+Toyota|Highlander|0|0|Europe|433920000|1|A
+Toyota|HiLux|0|0|North America|315000000|1|A
+Toyota|HiLux|0|0|Europe|433920000|1|A
+Toyota|Kluger|0|0|North America|315000000|1|A
+Toyota|Kluger|0|0|Europe|433920000|1|A
+Toyota|Land Cruiser|0|0|North America|315000000|1|A
+Toyota|Land Cruiser|0|0|Europe|433920000|1|A
+Toyota|Prado|0|0|North America|315000000|1|A
+Toyota|Prado|0|0|Europe|433920000|1|A
+Toyota|Prius|0|0|North America|315000000|1|A
+Toyota|Prius|0|0|Europe|433920000|1|A
+Toyota|RAV4|0|0|North America|315000000|1|A
+Toyota|RAV4|0|0|Europe|433920000|1|A
+Toyota|Supra|0|0|North America|315000000|1|A
+Toyota|Supra|0|0|Europe|433920000|1|A
+Toyota|Tacoma|0|0|North America|315000000|1|A
+Toyota|Tacoma|0|0|Europe|433920000|1|A
+Toyota|Tundra|0|0|North America|315000000|1|A
+Toyota|Tundra|0|0|Europe|433920000|1|A
+Toyota|Yaris|0|0|North America|315000000|1|A
+Toyota|Yaris|0|0|Europe|433920000|1|A
+Vauxhall|Astra|0|0|All Regions|433920000|1|A
+Vauxhall|Corsa|0|0|All Regions|433920000|1|A
+Vauxhall|Crossland|0|0|All Regions|433920000|1|A
+Vauxhall|Grandland|0|0|All Regions|433920000|1|A
+Vauxhall|Insignia|0|0|All Regions|433920000|1|A
+Vauxhall|Mokka|0|0|All Regions|433920000|1|A
+Vauxhall|Vivaro|0|0|All Regions|433920000|1|A
+Volkswagen|Amarok|0|0|North America|315000000|1|A
+Volkswagen|Amarok|0|0|Europe|434420000|1|A
+Volkswagen|Arteon|0|0|North America|315000000|1|A
+Volkswagen|Arteon|0|0|Europe|434420000|1|A
+Volkswagen|Beetle|0|0|North America|315000000|1|A
+Volkswagen|Beetle|0|0|Europe|434420000|1|A
+Volkswagen|Caddy|0|0|North America|315000000|1|A
+Volkswagen|Caddy|0|0|Europe|434420000|1|A
+Volkswagen|Golf|0|0|North America|315000000|1|A
+Volkswagen|Golf|0|0|Europe|434420000|1|A
+Volkswagen|ID.3|0|0|North America|315000000|1|A
+Volkswagen|ID.3|0|0|Europe|434420000|1|A
+Volkswagen|ID.4|0|0|North America|315000000|1|A
+Volkswagen|ID.4|0|0|Europe|434420000|1|A
+Volkswagen|Jetta|0|0|North America|315000000|1|A
+Volkswagen|Jetta|0|0|Europe|434420000|1|A
+Volkswagen|Passat|0|0|North America|315000000|1|A
+Volkswagen|Passat|0|0|Europe|434420000|1|A
+Volkswagen|Polo|0|0|North America|315000000|1|A
+Volkswagen|Polo|0|0|Europe|434420000|1|A
+Volkswagen|Scirocco|0|0|North America|315000000|1|A
+Volkswagen|Scirocco|0|0|Europe|434420000|1|A
+Volkswagen|T-Cross|0|0|North America|315000000|1|A
+Volkswagen|T-Cross|0|0|Europe|434420000|1|A
+Volkswagen|T-Roc|0|0|North America|315000000|1|A
+Volkswagen|T-Roc|0|0|Europe|434420000|1|A
+Volkswagen|Tiguan|0|0|North America|315000000|1|A
+Volkswagen|Tiguan|0|0|Europe|434420000|1|A
+Volkswagen|Touareg|0|0|North America|315000000|1|A
+Volkswagen|Touareg|0|0|Europe|434420000|1|A
+Volkswagen|Touran|0|0|North America|315000000|1|A
+Volkswagen|Touran|0|0|Europe|434420000|1|A
+Volkswagen|Transporter|0|0|North America|315000000|1|A
+Volkswagen|Transporter|0|0|Europe|434420000|1|A
+Volkswagen|Up|0|0|North America|315000000|1|A
+Volkswagen|Up|0|0|Europe|434420000|1|A
+StarLine||0|0|433 MHz|433920000|1|A
+Scher-Khan||0|0|433 MHz|433920000|3|A
+Sheriff||0|0|433 MHz|433920000|1|A
+KeeLoq||0|0|315 MHz|315000000|1|G
+KeeLoq||0|0|433 MHz|433920000|1|G
+KeeLoq||0|0|868 MHz|868350000|1|G
+Princeton||0|0|315 MHz|315000000|1|G
+Princeton||0|0|433 MHz|433920000|1|G
+CAME||0|0|315 MHz|315000000|1|G
+CAME||0|0|433 MHz|433920000|1|G
+CAME TWEE||0|0|433 MHz|433920000|1|G
+CAME Atomo||0|0|433 MHz|433920000|1|G
+Nice FLO||0|0|433 MHz|433920000|1|G
+Nice FloR-S||0|0|433 MHz|433920000|1|G
+Faac SLH||0|0|433 MHz|433920000|1|G
+Faac SLH||0|0|868 MHz|868350000|1|G
+Hormann HSM||0|0|433 MHz|433920000|1|G
+Hormann HSM||0|0|868 MHz|868350000|1|G
+Somfy Telis||0|0|433 MHz|433920000|1|G
+Somfy Keytis||0|0|433 MHz|433920000|1|G
+Beninca ARC||0|0|433 MHz|433920000|1|G
+KingGates Stylo4k||0|0|433 MHz|433920000|1|G
+Telcoma EDGE||0|0|433 MHz|433920000|1|G
+Clemsa||0|0|433 MHz|433920000|1|G
+Dooya||0|0|315 MHz|315000000|1|G
+Dooya||0|0|433 MHz|433920000|1|G
+Ansonic||0|0|433 MHz|433920000|3|G
+Holtek||0|0|433 MHz|433920000|1|G
+Holtek HT12x||0|0|433 MHz|433920000|1|G
+Alutech AT-4N||0|0|433 MHz|433920000|1|G
+Marantec||0|0|433 MHz|433920000|1|G
+Marantec24||0|0|433 MHz|433920000|1|G
+Dickert MAHS||0|0|433 MHz|433920000|1|G
+Jarolift||0|0|433 MHz|433920000|1|G
+GangQi||0|0|433 MHz|433920000|1|G
+Gate-TX||0|0|433 MHz|433920000|1|G
+Mastercode||0|0|433 MHz|433920000|1|G
+Phoenix V2||0|0|433 MHz|433920000|1|G
+Doitrand||0|0|433 MHz|433920000|1|G
+Hay21||0|0|433 MHz|433920000|1|G
+Revers RB2||0|0|433 MHz|433920000|1|G
+Roger||0|0|433 MHz|433920000|1|G
+SMC5326||0|0|433 MHz|433920000|1|G
+Keyfinder||0|0|433 MHz|433920000|1|G
+Keyfinder2||0|0|433 MHz|433920000|1|G
+Doorbell32||0|0|433 MHz|433920000|1|G
+Linear||0|0|315 MHz|315000000|1|G
+Linear Delta3||0|0|315 MHz|315000000|1|G
+MegaCode||0|0|315 MHz|315000000|1|G
+Security+ 1.0||0|0|315 MHz|315000000|1|G
+Security+ 2.0||0|0|315 MHz|315000000|1|G
+Chamberlain Code||0|0|315 MHz|315000000|1|G
+X10||0|0|310 MHz|310000000|1|G

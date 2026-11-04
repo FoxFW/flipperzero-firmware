@@ -5,6 +5,7 @@
 #include <lib/subghz/subghz_worker.h>
 #include <lib/subghz/subghz_setting.h>
 #include <lib/subghz/receiver.h>
+#include <lib/subghz/registry.h>
 #include <lib/subghz/transmitter.h>
 #include <lib/subghz/protocols/raw.h>
 #include <lib/subghz/devices/devices.h>
@@ -103,6 +104,8 @@ bool subghz_txrx_protocol_is_serializable(SubGhzTxRx* instance);
 
 bool subghz_txrx_protocol_is_transmittable(SubGhzTxRx* instance, bool check_type);
 
+uint8_t subghz_txrx_get_raw_tx_progress(SubGhzTxRx* instance);
+
 void subghz_txrx_receiver_set_filter(SubGhzTxRx* instance, SubGhzProtocolFlag filter);
 
 void subghz_txrx_receiver_apply_modulation_filter(SubGhzTxRx* instance);
@@ -146,6 +149,44 @@ int32_t subghz_txrx_get_frequency_offset(SubGhzTxRx* instance);
 void subghz_txrx_reset_dynamic_and_custom_btns(SubGhzTxRx* instance);
 
 SubGhzReceiver* subghz_txrx_get_receiver(SubGhzTxRx* instance);
+
+SubGhzEnvironment* subghz_txrx_get_environment(SubGhzTxRx* instance);
+
+void subghz_txrx_receiver_release(SubGhzTxRx* instance);
+
+#define SUBGHZ_TXRX_RECEIVER_HEAP_COST 28672u
+
+size_t subghz_txrx_receiver_heap_needed(SubGhzTxRx* instance);
+
+#define SUBGHZ_TXRX_DUAL_EXCLUDE        (SubGhzProtocolFlag_RAW | SubGhzProtocolFlag_BinRAW)
+#define SUBGHZ_TXRX_DUAL_STREAM_SAMPLES 2048u
+#define SUBGHZ_TXRX_DUAL_WORKER_COST    (SUBGHZ_TXRX_DUAL_STREAM_SAMPLES * 4u + 4096u + 512u)
+
+void subghz_txrx_dual_set_ext_preset(
+    SubGhzTxRx* instance,
+    const char* preset_name,
+    uint32_t frequency,
+    uint8_t* preset_data,
+    size_t preset_data_size);
+SubGhzRadioPreset subghz_txrx_dual_get_ext_preset(SubGhzTxRx* instance);
+bool subghz_txrx_dual_is_ext_connected(SubGhzTxRx* instance);
+size_t subghz_txrx_dual_heap_needed(SubGhzTxRx* instance);
+bool subghz_txrx_dual_rx_start(SubGhzTxRx* instance);
+void subghz_txrx_dual_rx_stop(SubGhzTxRx* instance, SubGhzRadioDeviceType main_device);
+bool subghz_txrx_dual_is_ext_receiver(SubGhzTxRx* instance, SubGhzReceiver* receiver);
+float subghz_txrx_dual_get_rssi_ext(SubGhzTxRx* instance);
+void subghz_txrx_dual_lock(SubGhzTxRx* instance);
+void subghz_txrx_dual_unlock(SubGhzTxRx* instance);
+
+/* Rolling capture (bounded ring of recent live-RX samples) for Unknown RAW. */
+void subghz_txrx_rx_ring_reset(SubGhzTxRx* instance);
+void subghz_txrx_rx_ring_set_wanted(SubGhzTxRx* instance, bool wanted);
+/* True when a real burst ended and its window is latched+frozen for capture.
+ * Peek only; subghz_txrx_rx_ring_reset clears it (and unfreezes the ring). */
+bool subghz_txrx_burst_ready(SubGhzTxRx* instance);
+/* Build an in-memory RAW FlipperFormat from the latched burst window (same wire
+ * format as a RAW .sub). Caller owns it (flipper_format_free). */
+FlipperFormat* subghz_txrx_rx_ring_build_raw_ff(SubGhzTxRx* instance);
 
 void subghz_txrx_set_default_preset(SubGhzTxRx* instance, uint32_t frequency);
 

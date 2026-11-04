@@ -3,6 +3,7 @@
 *.swo
 *.gdb_history
 *.old
+*.bak
 
 # Personal dev-machine scripts - hardcoded local paths, not usable by
 # anyone else, not part of the buildable firmware
@@ -13,18 +14,12 @@
 /clean_build.txt
 /clean_build_size_report.ps1
 /fbt_build_size.txt
-/scripts/backup/
-/build_fox_apps_suite.bat
 /clean_git_locks.bat
 
 # Claude-owned working docs moved to D:\CLAUDE\ on 2026-09-29
 # (CLAUDE.md, PROJECT_HANDOVER.md, FOX_RELEASE_PROCESS.md, CLAUDE_COMMENTS,
 #  gap-analysis, outputs). See D:\CLAUDE\README.md. Kept ignored below as a
 # safety net in case one is ever recreated at the repo root by mistake:
-/CLAUDE.md
-/PROJECT_HANDOVER.md
-/FOX_RELEASE_PROCESS.md
-/CLAUDE_COMMENTS/
 /Claude outputs
 
 
@@ -118,17 +113,12 @@ lib/subghz/protocols/honda_rolling.c
 lib/subghz/protocols/honda_rolling.h
 lib/subghz/protocols/honda_pandora.c
 lib/subghz/protocols/honda_pandora.h
-applications/system/picopass-main/videos/NR-MAC.mkv
 scripts/deploy_esp32_boards.py
 scripts/deploy_flipper_docs.py
-build_fox_apps_suite.bat
 clean_build_output.tmp.log
-fbt_build_output.tmp.log
-
 /_to_delete
-UNLEASHED_ARF_GAP_ANALYSIS.md
-verify_garage_plugin_paths.log
-verify_garage_plugin_paths.py
-diff_stat.txt
-diff_full.txt
-assets/OUTPUT.txt
+
+1. FoxFW_Protocol_Tests.zip
+
+# build artifact, never commit
+firmware.zip

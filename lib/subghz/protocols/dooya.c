@@ -1,4 +1,7 @@
 #include "dooya.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -30,6 +33,9 @@ struct SubGhzProtocolEncoderDooya {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderDooya);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderDooya);
+
 typedef enum {
     DooyaDecoderStepReset = 0,
     DooyaDecoderStepFoundStartBit,
@@ -39,25 +45,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_dooya_decoder = {
     .alloc = subghz_protocol_decoder_dooya_alloc,
-    .free = subghz_protocol_decoder_dooya_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_dooya_feed,
-    .reset = subghz_protocol_decoder_dooya_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_dooya_get_hash_data,
-    .serialize = subghz_protocol_decoder_dooya_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_dooya_deserialize,
-    .get_string = subghz_protocol_decoder_dooya_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_dooya_encoder = {
-    .alloc = subghz_protocol_encoder_dooya_alloc,
-    .free = subghz_protocol_encoder_dooya_free,
-
-    .deserialize = subghz_protocol_encoder_dooya_deserialize,
-    .stop = subghz_protocol_encoder_dooya_stop,
-    .yield = subghz_protocol_encoder_dooya_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_dooya_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_dooya");
 
 const SubGhzProtocol subghz_protocol_dooya = {
     .name = SUBGHZ_PROTOCOL_DOOYA_NAME,
@@ -67,145 +66,13 @@ const SubGhzProtocol subghz_protocol_dooya = {
             SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_dooya_decoder,
-    .encoder = &subghz_protocol_dooya_encoder,
+    .encoder = &subghz_protocol_dooya_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_dooya_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderDooya* instance = malloc(sizeof(SubGhzProtocolEncoderDooya));
-
-    instance->base.protocol = &subghz_protocol_dooya;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 128;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_dooya_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderDooya* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_dooya_get_upload(SubGhzProtocolEncoderDooya* instance) {
-    furi_assert(instance);
-
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    if(bit_read(instance->generic.data, 0)) {
-        instance->encoder.upload[index++] = level_duration_make(
-            false,
-            (uint32_t)subghz_protocol_dooya_const.te_long * 12 +
-                subghz_protocol_dooya_const.te_long);
-    } else {
-        instance->encoder.upload[index++] = level_duration_make(
-            false,
-            (uint32_t)subghz_protocol_dooya_const.te_long * 12 +
-                subghz_protocol_dooya_const.te_short);
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_dooya_const.te_short * 13);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_dooya_const.te_long * 2);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_dooya_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_dooya_const.te_short);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_dooya_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_dooya_const.te_long);
-        }
-    }
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_dooya_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderDooya* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_dooya_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_dooya_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_dooya_stop(void* context) {
-    SubGhzProtocolEncoderDooya* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_dooya_yield(void* context) {
-    SubGhzProtocolEncoderDooya* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_dooya_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderDooya* instance = malloc(sizeof(SubGhzProtocolDecoderDooya));
-    instance->base.protocol = &subghz_protocol_dooya;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_dooya_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDooya* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_dooya_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDooya* instance = context;
-    instance->decoder.parser_step = DooyaDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderDooya), &subghz_protocol_dooya);
 }
 
 void subghz_protocol_decoder_dooya_feed(void* context, bool level, uint32_t duration) {
@@ -296,33 +163,6 @@ void subghz_protocol_decoder_dooya_feed(void* context, bool level, uint32_t dura
     }
 }
 
-static void subghz_protocol_dooya_check_remote_controller(SubGhzBlockGeneric* instance) {
-
-    instance->serial = (instance->data >> 16);
-    if((instance->data >> 12) & 0x0F) {
-        instance->cnt = (instance->data >> 8) & 0x0F;
-    } else {
-        instance->cnt = DOYA_SINGLE_CHANNEL;
-    }
-    instance->btn = instance->data & 0xFF;
-}
-
-uint8_t subghz_protocol_decoder_dooya_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDooya* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_dooya_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDooya* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_dooya_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -331,68 +171,3 @@ SubGhzProtocolStatus
         &instance->generic, flipper_format, subghz_protocol_dooya_const.min_count_bit_for_found);
 }
 
-static const char* subghz_protocol_dooya_get_name_button(uint8_t btn) {
-    const char* btn_name;
-    switch(btn) {
-    case 0b00010001:
-        btn_name = "Up_Long";
-        break;
-    case 0b00011110:
-        btn_name = "Up_Short";
-        break;
-    case 0b00110011:
-        btn_name = "Down_Long";
-        break;
-    case 0b00111100:
-        btn_name = "Down_Short";
-        break;
-    case 0b01010101:
-        btn_name = "Stop";
-        break;
-    case 0b01111001:
-        btn_name = "Up+Down";
-        break;
-    case 0b10000000:
-        btn_name = "Up+Stop";
-        break;
-    case 0b10000001:
-        btn_name = "Down+Stop";
-        break;
-    case 0b11001100:
-        btn_name = "P2";
-        break;
-    default:
-        btn_name = "Unknown";
-        break;
-    }
-    return btn_name;
-}
-
-void subghz_protocol_decoder_dooya_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderDooya* instance = context;
-
-    subghz_protocol_dooya_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.btn_is_available = false;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 8;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%010llX\r\n"
-        "Sn:0x%08lX\r\n"
-        "Btn:%X - %s\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->generic.data,
-        instance->generic.serial,
-        instance->generic.btn,
-        subghz_protocol_dooya_get_name_button(instance->generic.btn));
-    if(instance->generic.cnt == DOYA_SINGLE_CHANNEL) {
-        furi_string_cat_printf(output, "Ch:Single\r\n");
-    } else {
-        furi_string_cat_printf(output, "Ch:%lu\r\n", instance->generic.cnt);
-    }
-}

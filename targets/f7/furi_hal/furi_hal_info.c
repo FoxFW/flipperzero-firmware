@@ -1,6 +1,7 @@
 #include <furi_hal_info.h>
 #include <furi_hal_region.h>
 #include <furi_hal_version.h>
+#include <toolbox/version.h>
 #include <furi_hal_bt.h>
 #include <furi_hal_crypto.h>
 #include <furi_hal_rtc.h>
@@ -28,6 +29,12 @@ void furi_hal_info_get(PropertyValueCallback out, char sep, void* context) {
         property_value_out(&property_context, NULL, 3, "device", "info", "major", "2");
         property_value_out(&property_context, NULL, 3, "device", "info", "minor", "4");
     }
+
+    // FoxFW identity + version marker: the FoxFW Android companion gates on this key (presence =
+    // FoxFW, value = version for the >=2.1 check). Sourced from firmware.ver, never hardcoded.
+    property_value_out(
+        &property_context, NULL, 2, "fox", "version",
+        version_get_version(furi_hal_version_get_firmware_version()));
 
     property_value_out(
         &property_context, NULL, 2, "hardware", "model", furi_hal_version_get_model_name());

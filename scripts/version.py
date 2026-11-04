@@ -110,7 +110,7 @@ class GitVersion:
             "GIT_BRANCH": branch,
             "VERSION": version,
             "BUILD_DIRTY": dirty and 1 or 0,
-            "GIT_ORIGIN": "https://github.com/FoxFW/2.0.git",
+            "GIT_ORIGIN": "https://github.com/FoxFW/flipperzero-firmware.git",
             "GIT_COMMIT_DATE": commit_date,
         }
     

@@ -1,5 +1,6 @@
 // scenes/protopirate_scene_emulate.c
 #include "../protopirate_app_i.h"
+#include "../protopirate_lowram_guard.h"
 
 #ifdef ENABLE_EMULATE_FEATURE
 
@@ -20,6 +21,7 @@ void protopirate_scene_emulate_on_enter(void* context) {
         scene_manager_previous_scene(app->scene_manager);
         return;
     } else {
+        protopirate_lowram_mitigate(PROTOPIRATE_LOWRAM_THRESHOLD);
         app->running_plugin.shared_plugin->set_host_api(&protopirate_shared_plugin_host_api);
         app->running_plugin.shared_plugin->on_enter(app);
     }
@@ -42,6 +44,8 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
 
 void protopirate_scene_emulate_on_exit(void* context) {
     ProtoPirateApp* app = context;
+
+    protopirate_lowram_softlock_release();
 
     if(app->running_plugin.shared_plugin && app->running_plugin.shared_plugin->on_exit) {
         app->running_plugin.shared_plugin->on_exit(app);

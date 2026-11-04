@@ -37,7 +37,7 @@ static void tpms_scene_vehicle_steps_show(TPMSApp* app) {
 
     widget_add_string_multiline_element(
         app->widget, 64, 6, AlignCenter, AlignTop, FontPrimary, step->heading);
-    widget_add_text_scroll_element(app->widget, 0, 18, 128, 34, step->body);
+    widget_add_text_scroll_element(app->widget, 0, 18, 128, 29, step->body);
     widget_add_button_element(
         app->widget,
         GuiButtonTypeCenter,

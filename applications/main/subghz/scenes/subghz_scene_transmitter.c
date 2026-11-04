@@ -80,6 +80,11 @@ bool subghz_scene_transmitter_update_data_show(void* context) {
 
                 furi_string_free(proto_str);
 
+                bool u_active = (ul != NULL) && (strcmp(ul, clabel) != 0);
+                bool d_active = (dl != NULL) && (strcmp(dl, clabel) != 0);
+                bool l_active = (ll != NULL) && (strcmp(ll, clabel) != 0);
+                bool r_active = (rl != NULL) && (strcmp(rl, clabel) != 0);
+
                 if(!ul) ul = "^";
                 if(!dl) dl = "v";
                 if(!ll) ll = "<";
@@ -93,10 +98,10 @@ bool subghz_scene_transmitter_update_data_show(void* context) {
                 subghz_view_transmitter_set_btn_labels(
                     subghz->subghz_transmitter,
                     clabel,
-                    ul, u_vis,
-                    dl, d_vis,
-                    ll, l_vis,
-                    rl, r_vis);
+                    ul, u_vis, u_active,
+                    dl, d_vis, d_active,
+                    ll, l_vis, l_active,
+                    rl, r_vis, r_active);
             }
 
         }
@@ -119,7 +124,57 @@ void subghz_scene_transmitter_on_enter(void* context) {
 
     subghz_view_transmitter_reset_labels(subghz->subghz_transmitter);
 
-    if(!subghz_scene_transmitter_update_data_show(subghz)) {
+    char raw_title_override[36] = {0};
+    if(!furi_string_empty(subghz->raw_send_title)) {
+        strlcpy(
+            raw_title_override, furi_string_get_cstr(subghz->raw_send_title),
+            sizeof(raw_title_override));
+    }
+    furi_string_reset(subghz->raw_send_title);
+
+    bool raw_send_mode =
+        (scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneTransmitter) == 1);
+
+    if(raw_send_mode) {
+        /* RAW replay of a decode-only capture: there is no decoder/encoder to
+         * deserialize, so skip update_data_show (which would report "not found").
+         * Show the centre Send d-pad with inert arrows (show_button path, no
+         * custom buttons) and let OK fire subghz_tx_start on the RAW fff_data. */
+        subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_OK);
+        FuriString* frequency_str = furi_string_alloc();
+        FuriString* modulation_str = furi_string_alloc();
+        subghz_txrx_get_frequency_and_modulation(
+            subghz->txrx, frequency_str, modulation_str, true);
+        FuriString* raw_title = furi_string_alloc();
+        if(raw_title_override[0]) {
+            furi_string_set(raw_title, raw_title_override);
+        } else {
+            FlipperFormat* raw_fff = subghz_txrx_get_fff_data(subghz->txrx);
+            flipper_format_rewind(raw_fff);
+            if(!flipper_format_read_string(raw_fff, "Protocol", raw_title) ||
+               furi_string_empty(raw_title)) {
+                furi_string_set(raw_title, "RAW");
+            }
+        }
+        /* Append "RAW" after a real protocol name so the user knows this is a raw
+         * replay, not an encoded send (new: SEND on un-decodable signals). A pure
+         * RAW/BinRAW capture stays just "RAW". */
+        if(furi_string_cmp_str(raw_title, "RAW") != 0 &&
+           furi_string_cmp_str(raw_title, "BinRAW") != 0) {
+            furi_string_cat_str(raw_title, " RAW");
+        }
+        subghz_view_transmitter_add_data_to_show(
+            subghz->subghz_transmitter,
+            furi_string_get_cstr(raw_title),
+            furi_string_get_cstr(frequency_str),
+            furi_string_get_cstr(modulation_str),
+            true);
+        furi_string_free(raw_title);
+        subghz_view_transmitter_set_radio_device_type(
+            subghz->subghz_transmitter, subghz_txrx_radio_device_get(subghz->txrx));
+        furi_string_free(frequency_str);
+        furi_string_free(modulation_str);
+    } else if(!subghz_scene_transmitter_update_data_show(subghz)) {
         view_dispatcher_send_custom_event(
             subghz->view_dispatcher, SubGhzCustomEventViewTransmitterError);
     }
@@ -141,7 +196,10 @@ bool subghz_scene_transmitter_on_event(void* context, SceneManagerEvent event) {
             subghz_block_generic_global.endless_tx = true;
             if(subghz_tx_start(subghz, subghz_txrx_get_fff_data(subghz->txrx))) {
                 subghz->state_notifications = SubGhzNotificationStateTx;
-                subghz_scene_transmitter_update_data_show(subghz);
+                if(scene_manager_get_scene_state(
+                       subghz->scene_manager, SubGhzSceneTransmitter) != 1) {
+                    subghz_scene_transmitter_update_data_show(subghz);
+                }
             }
             return true;
         } else if(event.event == SubGhzCustomEventViewTransmitterSendStop) {
@@ -149,8 +207,14 @@ bool subghz_scene_transmitter_on_event(void* context, SceneManagerEvent event) {
             subghz_block_generic_global.endless_tx = false;
             return true;
         } else if(event.event == SubGhzCustomEventViewTransmitterBack) {
-            scene_manager_search_and_switch_to_previous_scene(
-                subghz->scene_manager, SubGhzSceneStart);
+            if(scene_manager_has_previous_scene(
+                   subghz->scene_manager, SubGhzSceneReceiverInfo)) {
+                scene_manager_search_and_switch_to_previous_scene(
+                    subghz->scene_manager, SubGhzSceneReceiverInfo);
+            } else {
+                scene_manager_search_and_switch_to_previous_scene(
+                    subghz->scene_manager, SubGhzSceneStart);
+            }
             return true;
         } else if(event.event == SubGhzCustomEventViewTransmitterPageChange) {
 
@@ -164,11 +228,15 @@ bool subghz_scene_transmitter_on_event(void* context, SceneManagerEvent event) {
         if(subghz->state_notifications == SubGhzNotificationStateTx) {
 
             if(!subghz_devices_is_async_complete_tx(subghz->txrx->radio_device)) {
+                subghz_view_transmitter_set_send_progress(
+                    subghz->subghz_transmitter,
+                    subghz_txrx_get_raw_tx_progress(subghz->txrx));
                 notification_message(subghz->notifications, &sequence_blink_magenta_10);
                 return true;
 
             } else {
                 subghz->state_notifications = SubGhzNotificationStateIDLE;
+                subghz_view_transmitter_set_send_progress(subghz->subghz_transmitter, 255);
                 subghz_txrx_stop(subghz->txrx);
                 if(subghz_custom_btn_get() != SUBGHZ_CUSTOM_BTN_OK) {
                     subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_OK);
@@ -192,6 +260,11 @@ bool subghz_scene_transmitter_on_event(void* context, SceneManagerEvent event) {
 void subghz_scene_transmitter_on_exit(void* context) {
     SubGhz* subghz = context;
     subghz->state_notifications = SubGhzNotificationStateIDLE;
+    subghz_block_generic_global.endless_tx = false;
+    subghz_txrx_stop(subghz->txrx);
+
+    /* Clear the RAW-send marker so a later normal entry isn't treated as RAW. */
+    scene_manager_set_scene_state(subghz->scene_manager, SubGhzSceneTransmitter, 0);
 
     subghz_txrx_reset_dynamic_and_custom_btns(subghz->txrx);
 }

@@ -206,3 +206,70 @@ SubGhzProtocolStatus subghz_block_generic_deserialize_check_count_bit(
     } while(false);
     return ret;
 }
+
+void subghz_block_generic_advance_counter(uint32_t* cnt, uint32_t max) {
+    furi_assert(cnt);
+    uint32_t override_cnt = 0;
+    if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
+        *cnt = override_cnt;
+    } else {
+        uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
+        if(mult == 0) mult = 1;
+        *cnt += mult;
+    }
+    if(max) *cnt &= max;
+}
+
+void subghz_block_generic_global_publish_cnt(uint32_t cnt, uint8_t length_bit) {
+    subghz_block_generic_global.cnt_is_available = true;
+    subghz_block_generic_global.cnt_length_bit = length_bit;
+    subghz_block_generic_global.current_cnt = cnt;
+}
+
+void subghz_block_generic_global_publish_btn(uint8_t btn, uint8_t length_bit) {
+    subghz_block_generic_global.btn_is_available = true;
+    subghz_block_generic_global.btn_length_bit = length_bit;
+    subghz_block_generic_global.current_btn = btn;
+}
+
+bool subghz_block_read_hex(
+    FlipperFormat* flipper_format, const char* key, void* data, size_t size) {
+    furi_assert(data);
+    if(size == 0 || size > 8) return false;
+    uint8_t buf[8] = {0};
+    if(!flipper_format_read_hex(flipper_format, key, buf, size)) return false;
+    uint64_t value = 0;
+    for(size_t i = 0; i < size; i++) value = (value << 8) | buf[i];
+    switch(size) {
+    case 1:
+        *(uint8_t*)data = (uint8_t)value;
+        break;
+    case 2:
+        *(uint16_t*)data = (uint16_t)value;
+        break;
+    case 4:
+        *(uint32_t*)data = (uint32_t)value;
+        break;
+    case 8:
+        *(uint64_t*)data = value;
+        break;
+    default:
+        return false;
+    }
+    return true;
+}
+
+bool subghz_block_write_hex(
+    FlipperFormat* flipper_format, const char* key, uint64_t data, size_t size) {
+    if(size == 0 || size > 8) return false;
+    uint8_t buf[8] = {0};
+    for(size_t i = 0; i < size; i++) buf[i] = (uint8_t)(data >> (8 * (size - 1 - i)));
+    return flipper_format_write_hex(flipper_format, key, buf, size);
+}
+
+void subghz_block_write_disp(
+    FlipperFormat* flipper_format, const char* protocol_name, const char* button_name) {
+    FuriString* disp = furi_string_alloc_printf("%s - %s", protocol_name, button_name);
+    flipper_format_write_string_cstr(flipper_format, "Disp", furi_string_get_cstr(disp));
+    furi_string_free(disp);
+}

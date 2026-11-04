@@ -1,3 +1,4 @@
+#ifdef FURI_DEBUG
 #include <toolbox/version.h>
 #include <furi.h>
 #include <furi_hal.h>
@@ -141,3 +142,4 @@ void desktop_debug_free(DesktopDebugView* debug_view) {
     view_free(debug_view->view);
     free(debug_view);
 }
+#endif

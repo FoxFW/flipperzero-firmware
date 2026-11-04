@@ -729,15 +729,15 @@ static KeyCopierApp* key_copier_app_alloc() {
     app->widget_qr_code = widget_alloc();
     widget_add_icon_element(app->widget_qr_code, 92, 7, &I_QR_Code);
     widget_add_string_element(
-        app->widget_qr_code, 0, 10, AlignLeft, AlignBottom, FontSecondary, "Check out");
+        app->widget_qr_code, 0, 7, AlignLeft, AlignBottom, FontSecondary, "Check out");
     widget_add_string_element(
-        app->widget_qr_code, 0, 23, AlignLeft, AlignBottom, FontSecondary, "@TalkingSasquach's");
+        app->widget_qr_code, 0, 17, AlignLeft, AlignBottom, FontSecondary, "@TalkingSasquach's");
     widget_add_string_element(
-        app->widget_qr_code, 0, 36, AlignLeft, AlignBottom, FontSecondary, "video from decoding");
+        app->widget_qr_code, 0, 26, AlignLeft, AlignBottom, FontSecondary, "video from decoding");
     widget_add_string_element(
-        app->widget_qr_code, 0, 49, AlignLeft, AlignBottom, FontSecondary, "a key to eventually");
+        app->widget_qr_code, 0, 35, AlignLeft, AlignBottom, FontSecondary, "a key to eventually");
     widget_add_string_element(
-        app->widget_qr_code, 0, 62, AlignLeft, AlignBottom, FontSecondary, "3D-printing a copy!");
+        app->widget_qr_code, 0, 44, AlignLeft, AlignBottom, FontSecondary, "3D-printing a copy!");
     widget_add_button_element(
         app->widget_qr_code, GuiButtonTypeRight, "Back", exit_widget_callback, app);
     view_set_previous_callback(

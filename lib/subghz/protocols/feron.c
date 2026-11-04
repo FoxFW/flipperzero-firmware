@@ -1,4 +1,7 @@
 #include "feron.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -28,6 +31,9 @@ struct SubGhzProtocolEncoderFeron {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderFeron);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderFeron);
+
 typedef enum {
     FeronDecoderStepReset = 0,
     FeronDecoderStepSaveDuration,
@@ -36,25 +42,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_feron_decoder = {
     .alloc = subghz_protocol_decoder_feron_alloc,
-    .free = subghz_protocol_decoder_feron_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_feron_feed,
-    .reset = subghz_protocol_decoder_feron_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_feron_get_hash_data,
-    .serialize = subghz_protocol_decoder_feron_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_feron_deserialize,
-    .get_string = subghz_protocol_decoder_feron_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_feron_encoder = {
-    .alloc = subghz_protocol_encoder_feron_alloc,
-    .free = subghz_protocol_encoder_feron_free,
-
-    .deserialize = subghz_protocol_encoder_feron_deserialize,
-    .stop = subghz_protocol_encoder_feron_stop,
-    .yield = subghz_protocol_encoder_feron_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_feron_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_feron");
 
 const SubGhzProtocol subghz_protocol_feron = {
     .name = SUBGHZ_PROTOCOL_FERON_NAME,
@@ -64,146 +63,13 @@ const SubGhzProtocol subghz_protocol_feron = {
             SubGhzProtocolFlag_Sensors,
 
     .decoder = &subghz_protocol_feron_decoder,
-    .encoder = &subghz_protocol_feron_encoder,
+    .encoder = &subghz_protocol_feron_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_feron_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFeron* instance = malloc(sizeof(SubGhzProtocolEncoderFeron));
-
-    instance->base.protocol = &subghz_protocol_feron;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 256;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_feron_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFeron* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static void subghz_protocol_encoder_feron_get_upload(SubGhzProtocolEncoderFeron* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_feron_const.te_long);
-            if(i == 1) {
-
-                instance->encoder.upload[index++] = level_duration_make(
-                    false, (uint32_t)subghz_protocol_feron_const.te_short + 150);
-                instance->encoder.upload[index++] = level_duration_make(
-                    true, (uint32_t)subghz_protocol_feron_const.te_short + 150);
-
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_feron_const.te_long * 6);
-            } else {
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_feron_const.te_short);
-            }
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_feron_const.te_short);
-            if(i == 1) {
-
-                instance->encoder.upload[index++] = level_duration_make(
-                    false, (uint32_t)subghz_protocol_feron_const.te_short + 150);
-                instance->encoder.upload[index++] = level_duration_make(
-                    true, (uint32_t)subghz_protocol_feron_const.te_short + 150);
-
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_feron_const.te_long * 6);
-            } else {
-                instance->encoder.upload[index++] =
-                    level_duration_make(false, (uint32_t)subghz_protocol_feron_const.te_long);
-            }
-        }
-    }
-
-    instance->encoder.size_upload = index;
-    return;
-}
-
-static void subghz_protocol_feron_check_remote_controller(SubGhzBlockGeneric* instance) {
-    instance->serial = instance->data >> 16;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_feron_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFeron* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_feron_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        subghz_protocol_feron_check_remote_controller(&instance->generic);
-        subghz_protocol_encoder_feron_get_upload(instance);
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_feron_stop(void* context) {
-    SubGhzProtocolEncoderFeron* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_feron_yield(void* context) {
-    SubGhzProtocolEncoderFeron* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_feron_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderFeron* instance = malloc(sizeof(SubGhzProtocolDecoderFeron));
-    instance->base.protocol = &subghz_protocol_feron;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_feron_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFeron* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_feron_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFeron* instance = context;
-    instance->decoder.parser_step = FeronDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderFeron), &subghz_protocol_feron);
 }
 
 void subghz_protocol_decoder_feron_feed(void* context, bool level, volatile uint32_t duration) {
@@ -279,22 +145,6 @@ void subghz_protocol_decoder_feron_feed(void* context, bool level, volatile uint
     }
 }
 
-uint8_t subghz_protocol_decoder_feron_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFeron* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_feron_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFeron* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_feron_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -303,21 +153,3 @@ SubGhzProtocolStatus
         &instance->generic, flipper_format, subghz_protocol_feron_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_feron_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderFeron* instance = context;
-
-    subghz_protocol_feron_check_remote_controller(&instance->generic);
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key: 0x%08lX\r\n"
-        "Serial: 0x%04lX\r\n"
-        "Command: 0x%04lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data & 0xFFFFFFFF),
-        instance->generic.serial,
-        (uint32_t)(instance->generic.data & 0xFFFF));
-}

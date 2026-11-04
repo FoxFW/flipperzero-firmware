@@ -7,6 +7,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <m-array.h>
+#include <string.h>
 #include "../../desktop/desktop_settings.h"
 #include "fox_theme.h"
 
@@ -84,12 +85,31 @@ static size_t tiny_last_row_in_col(size_t col, size_t count) {
     return rows_here - 1;
 }
 
+/* Max visible characters for a label in the Fox theme's small boxes. Other
+ * themes draw item->label in full (they don't call this helper), so this cap
+ * applies ONLY to the Fox theme. "Sub-GHz" (7) is a protected default that must
+ * fit, so 7 is the proven box width. */
+#define FOX_LABEL_MAX 7
+
+static uint8_t s_menu_theme = 1;
+
 static const char* menu_fox_label(const char* label) {
     if(!label) return label;
+    if(s_menu_theme != 1) return label;
     if(strcmp(label, "Sub-GHz") == 0)             return "SubGhz";
     if(strcmp(label, "125 kHz RFID") == 0)        return "RFID";
     if(strcmp(label, "Fox Settings") == 0)         return "Fox";
     if(strcmp(label, "Sub-GHz Bruteforcer") == 0) return "S-Brute";
+    if(strcmp(label, "Infrared") == 0)            return "IR";
+    /* Hard-cap anything longer than the box (renamed / user-added / unmapped
+     * long names) so it can't spill. Static scratch is safe: the Fox-theme draw
+     * paths consume the returned string synchronously before the next call. */
+    if(strlen(label) > FOX_LABEL_MAX) {
+        static char buf[FOX_LABEL_MAX + 1];
+        memcpy(buf, label, FOX_LABEL_MAX);
+        buf[FOX_LABEL_MAX] = '\0';
+        return buf;
+    }
     return label;
 }
 
@@ -123,6 +143,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
     }
 
     uint8_t theme = fox_theme_get_style();
+    s_menu_theme = theme;
 
     model->cached_theme = theme;
 

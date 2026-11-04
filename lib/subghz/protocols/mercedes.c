@@ -8,6 +8,9 @@
 #include "../blocks/custom_btn_i.h"
 #include <furi.h>
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 // ============================================================================
 // Mercedes / Maybach SubGHz keyfob protocol (decoder + encoder)
@@ -96,10 +99,12 @@ struct SubGhzProtocolEncoderMercedes {
 
     uint8_t raw_data[MERCEDES_WIRE_BYTES];
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderMercedes);
+
 
 const SubGhzProtocolDecoder subghz_protocol_mercedes_decoder = {
     .alloc = subghz_protocol_decoder_mercedes_alloc,
-    .free = subghz_protocol_decoder_mercedes_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_mercedes_feed,
     .reset = subghz_protocol_decoder_mercedes_reset,
     .get_hash_data = subghz_protocol_decoder_mercedes_get_hash_data,
@@ -108,13 +113,7 @@ const SubGhzProtocolDecoder subghz_protocol_mercedes_decoder = {
     .get_string = subghz_protocol_decoder_mercedes_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_mercedes_encoder = {
-    .alloc = subghz_protocol_encoder_mercedes_alloc,
-    .free = subghz_protocol_encoder_mercedes_free,
-    .deserialize = subghz_protocol_encoder_mercedes_deserialize,
-    .stop = subghz_protocol_encoder_mercedes_stop,
-    .yield = subghz_protocol_encoder_mercedes_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_mercedes_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_mercedes");
 
 const SubGhzProtocol subghz_protocol_mercedes = {
     .name = MERCEDES_PROTOCOL_NAME,
@@ -123,20 +122,12 @@ const SubGhzProtocol subghz_protocol_mercedes = {
             SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mercedes_decoder,
-    .encoder = &subghz_protocol_mercedes_encoder,
+    .encoder = &subghz_protocol_mercedes_encoder_ext.vtable,
 };
 
 // ---------------------------------------------------------------------------
 // Shared field helpers
 // ---------------------------------------------------------------------------
-
-static uint8_t mercedes_checksum(const uint8_t raw[MERCEDES_WIRE_BYTES]) {
-    uint32_t sum = 0U;
-    for(size_t i = 0U; i < 7U; i++) {
-        sum += raw[i];
-    }
-    return (uint8_t)(sum & 0xFFU);
-}
 
 static uint32_t mercedes_uid(const uint8_t raw[MERCEDES_WIRE_BYTES]) {
     return ((uint32_t)raw[0] << 24U) | ((uint32_t)raw[1] << 16U) | ((uint32_t)raw[2] << 8U) |
@@ -252,11 +243,7 @@ void* subghz_protocol_decoder_mercedes_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_mercedes_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderMercedes* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_mercedes_reset(void* context) {
     furi_check(context);
@@ -394,41 +381,17 @@ SubGhzProtocolStatus
 }
 
 void subghz_protocol_decoder_mercedes_get_string(void* context, FuriString* output) {
-    furi_check(context);
     SubGhzProtocolDecoderMercedes* instance = context;
-
-    const uint8_t cs = instance->raw_data[7];
-    const uint8_t cs_calc = mercedes_checksum(instance->raw_data);
-
-    furi_string_cat_printf(
-        output,
-        "%s %ubit\r\n"
-        "SN:%08lX Btn:%02X\r\n"
-        "Cnt:%04lX CS:%02X[%s]\r\n"
-        "Data:%02X%02X%02X%02X%02X%02X%02X\r\n"
-        "     %02X%02X%02X%02X%02X%02X%02X\r\n",
-        instance->generic.protocol_name,
-        MERCEDES_WIRE_BITS,
-        (unsigned long)instance->generic.serial,
-        instance->generic.btn,
-        (unsigned long)instance->generic.cnt,
-        cs,
-        (cs == cs_calc) ? "OK" : "opaque",
-        instance->raw_data[0],
-        instance->raw_data[1],
-        instance->raw_data[2],
-        instance->raw_data[3],
-        instance->raw_data[4],
-        instance->raw_data[5],
-        instance->raw_data[6],
-        instance->raw_data[7],
-        instance->raw_data[8],
-        instance->raw_data[9],
-        instance->raw_data[10],
-        instance->raw_data[11],
-        instance->raw_data[12],
-        instance->raw_data[13]);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+
 
 // ---------------------------------------------------------------------------
 // Encoder: rebuild the exact TX wire.
@@ -442,181 +405,3 @@ void subghz_protocol_decoder_mercedes_get_string(void* context, FuriString* outp
 // Replay-based (rolling code / no key). D-pad only re-stamps b4.
 // ---------------------------------------------------------------------------
 
-static bool mercedes_encoder_build_upload(SubGhzProtocolEncoderMercedes* instance) {
-    furi_check(instance);
-    LevelDuration* upload = instance->encoder.upload;
-    if(!upload) return false;
-
-    size_t index = 0U;
-    const uint32_t te = MERCEDES_TE_SHORT;
-
-    // Lead gap (LOW).
-    upload[index++] = level_duration_make(false, MERCEDES_LEAD_GAP_US);
-
-    // 55 preamble cycles { HIGH 500 / LOW 500 }.
-    for(uint32_t i = 0U; i < MERCEDES_PREAMBLE_PAIRS; i++) {
-        upload[index++] = level_duration_make(true, te);
-        upload[index++] = level_duration_make(false, te);
-    }
-
-    // Sync boundary: extra LOW 500 then HIGH 500.
-    upload[index++] = level_duration_make(false, te);
-    upload[index++] = level_duration_make(true, te);
-
-    // 112 Manchester data bits, MSB-first.
-    for(uint8_t bit_index = 0U; bit_index < MERCEDES_WIRE_BITS; bit_index++) {
-        const bool bit =
-            ((instance->raw_data[bit_index >> 3U] >> (7U - (bit_index & 7U))) & 1U) != 0U;
-        if(bit) {
-            // bit1 = LOW then HIGH
-            upload[index++] = level_duration_make(false, te);
-            upload[index++] = level_duration_make(true, te);
-        } else {
-            // bit0 = HIGH then LOW
-            upload[index++] = level_duration_make(true, te);
-            upload[index++] = level_duration_make(false, te);
-        }
-    }
-
-    // Trailing gap so consecutive repeats are separable.
-    upload[index++] = level_duration_make(false, MERCEDES_LEAD_GAP_US);
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0U;
-    return true;
-}
-
-void* subghz_protocol_encoder_mercedes_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderMercedes* instance = calloc(1, sizeof(SubGhzProtocolEncoderMercedes));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_mercedes;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = MERCEDES_DEFAULT_REPEAT;
-    instance->encoder.size_upload = 0U;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-    return instance;
-}
-
-void subghz_protocol_encoder_mercedes_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderMercedes* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_mercedes_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderMercedes* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-}
-
-LevelDuration subghz_protocol_encoder_mercedes_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderMercedes* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        // Endless/breakless TX: while OK is held do not consume repeats.
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0U;
-    }
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_mercedes_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    furi_check(flipper_format);
-    SubGhzProtocolEncoderMercedes* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-
-    flipper_format_rewind(flipper_format);
-    FuriString* protocol_name = furi_string_alloc();
-    bool protocol_ok = flipper_format_read_string(flipper_format, "Protocol", protocol_name) &&
-                       furi_string_equal(protocol_name, instance->base.protocol->name);
-    furi_string_free(protocol_name);
-    if(!protocol_ok) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    uint32_t bit_count = 0U;
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_uint32(flipper_format, "Bit", &bit_count, 1) ||
-       bit_count != MERCEDES_WIRE_BITS) {
-        return SubGhzProtocolStatusErrorValueBitCount;
-    }
-    instance->generic.data_count_bit = (uint16_t)bit_count;
-
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_hex(
-           flipper_format, MERCEDES_DATA_FIELD, instance->raw_data, MERCEDES_WIRE_BYTES) ||
-       !mercedes_frame_valid(instance->raw_data)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    instance->generic.serial = mercedes_uid(instance->raw_data);
-    instance->generic.btn = instance->raw_data[4];
-    instance->generic.cnt = mercedes_counter(instance->raw_data);
-
-    // [PROTOPIRATE_PORT] custom_btn support (replay-safe).
-    // Mercedes button codes are not precisely known, so only OK is guaranteed to
-    // replay the captured b4 byte-identically. The D-pad re-stamps b4 with a
-    // best-effort code and refreshes the checksum b7 so the emitted frame still
-    // round-trips through this decoder. set_max(4).
-    const uint8_t original_btn = instance->raw_data[4];
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(original_btn);
-    }
-    subghz_custom_btn_set_max(4);
-    const uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t new_btn = original_btn;
-    switch(custom_btn_id) {
-    case SUBGHZ_CUSTOM_BTN_UP:    new_btn = 0x01U; break; // best-effort: Lock
-    case SUBGHZ_CUSTOM_BTN_DOWN:  new_btn = 0x02U; break; // best-effort: Unlock
-    case SUBGHZ_CUSTOM_BTN_LEFT:  new_btn = 0x03U; break; // best-effort: Trunk
-    case SUBGHZ_CUSTOM_BTN_RIGHT: new_btn = 0x04U; break; // best-effort: Aux
-    case SUBGHZ_CUSTOM_BTN_OK:
-    default:                      new_btn = original_btn; break; // exact replay
-    }
-
-    if(new_btn != original_btn) {
-        instance->raw_data[4] = new_btn;
-        // Refresh the sum-type checksum so the modified frame stays consistent.
-        instance->raw_data[7] = mercedes_checksum(instance->raw_data);
-        instance->generic.btn = new_btn;
-    }
-
-    instance->generic.data =
-        ((uint64_t)instance->generic.serial << 16U) | instance->generic.cnt;
-    instance->generic.data_count_bit = MERCEDES_WIRE_BITS;
-
-    uint32_t repeat = MERCEDES_DEFAULT_REPEAT;
-    flipper_format_rewind(flipper_format);
-    flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
-    instance->encoder.repeat = (repeat == 0U) ? MERCEDES_DEFAULT_REPEAT : (size_t)repeat;
-
-    if(instance->encoder.upload == NULL) {
-        instance->encoder.upload = malloc(MERCEDES_UPLOAD_CAPACITY * sizeof(LevelDuration));
-        furi_check(instance->encoder.upload);
-    }
-    if(!mercedes_encoder_build_upload(instance)) {
-        return SubGhzProtocolStatusErrorEncoderGetUpload;
-    }
-
-    instance->encoder.is_running = true;
-    return SubGhzProtocolStatusOk;
-}

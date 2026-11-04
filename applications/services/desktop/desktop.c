@@ -1,10 +1,12 @@
 #include "desktop_i.h"
 
 #include <furi/core/memmgr.h>
+#include <furi/core/memmgr_heap.h>
 #include <cli/cli_vcp.h>
 #include <bt/bt_service/bt.h>
 #include <furi_hal_serial_control.h>
 #include <furi_hal.h>
+#include <furi_hal_usb_cdc.h> /* CdcCtrlLineDTR: defrag USB-connected gate */
 #include <expansion/expansion.h>
 #include <gui/gui_i.h>
 #include <locale/locale.h>
@@ -66,6 +68,20 @@ static void desktop_cli_vcp_session_lock_release(void) {
 
 #define RAM_WATCHDOG_TRIP_HEAP_PERCENT      1
 #define RAM_WATCHDOG_RECOVER_HEAP_PERCENT   2
+
+#define RAM_DEFRAG_WEDGE_GAP 20480u
+#define RAM_DEFRAG_HEALTHY_BLOCK 102400u
+/* AfterAppFinished can fire before the just-exited app's heap has finished freeing/
+ * coalescing, so a reading taken right then can look fragmented when it isn't (it
+ * recovers within <0.5s). When the first reading looks non-healthy, re-measure a few
+ * times to let it settle before acting, so neither the low-RAM banner nor (critically)
+ * the USB reseat fires on a transient false reading. */
+#define RAM_DEFRAG_SETTLE_STEP_MS 100u
+#define RAM_DEFRAG_SETTLE_TRIES   5u
+/* USB-off gap in the reseat: teardown slack so the RPC/CLI session frees before USB
+ * comes back. (COM stability on renamed units is handled at boot by namechanger
+ * rebuilding the CDC serial with the custom name -- see namechanger.c -- not here.) */
+#define RAM_DEFRAG_RESEAT_GAP_MS 300u
 
 #define DESKTOP_STORAGE_WATCHDOG_TIMEOUT_MS 4000
 
@@ -348,6 +364,18 @@ static void fox_sd_pubsub_callback(const void* message, void* context) {
     }
 }
 
+static void fox_sd_mount_eventflag_callback(const void* message, void* context) {
+    const StorageEvent* evt = message;
+    FuriEventFlag* ev = context;
+    if(evt->type == StorageEventTypeCardMount) furi_event_flag_set(ev, 1);
+}
+
+static volatile bool s_desktop_boot_ready = true;
+
+bool desktop_boot_is_ready(void) {
+    return s_desktop_boot_ready;
+}
+
 static void fox_no_sd_draw_callback(Canvas* canvas, void* context) {
     UNUSED(context);
     canvas_clear(canvas);
@@ -373,10 +401,12 @@ static void fox_desktop_show_no_sd_blocking(Desktop* desktop) {
     gui_add_view_port(desktop->gui, vp, GuiLayerFullscreen);
 
     while(true) {
-        furi_delay_ms(1200);
+        furi_delay_ms(200);
         if(s_sd_mounted_event || storage_sd_status(desktop->storage) == FSE_OK) {
             furi_pubsub_unsubscribe(storage_get_pubsub(desktop->storage), sub);
-            furi_hal_power_reset();
+            gui_remove_view_port(desktop->gui, vp);
+            view_port_free(vp);
+            return;
         }
     }
 }
@@ -497,16 +527,18 @@ static void desktop_init_settings_with_watchdog(Desktop* desktop) {
 
 #define FOX_SETUP_FAP_PATH EXT_PATH("apps/Fox/fox_setup.fap")
 
-static FuriThread* s_fox_setup_launch_thread = NULL;
-
-static int32_t desktop_fox_setup_launch_thread_fn(void* context) {
+/* Launch the fox_setup wizard (first boot only -- gated on the internal
+ * /int/fox_setup.done flag). Runs from a one-shot timer, NOT a dedicated thread:
+ * the old thread was fire-and-forget and never joined/freed, so its 1024-byte
+ * stack leaked every boot, and on first boot it stranded high (created after
+ * qFlipper's CLI/RPC had filled the low heap). The timer is a normal permanent
+ * desktop resource allocated low in desktop_alloc -- no stack, no leak. */
+static void desktop_fox_setup_launch_timer_cb(void* context) {
     Desktop* desktop = context;
 
     if(storage_file_exists(desktop->storage, FOX_SETUP_FLAG_PATH)) {
-        return 0;
+        return;
     }
-
-    furi_delay_ms(200);
 
     if(!storage_file_exists(desktop->storage, FOX_SETUP_FAP_PATH)) {
         FURI_LOG_E("FoxSetup", "fox_setup.fap not found at %s — wizard cannot launch",
@@ -516,7 +548,7 @@ static int32_t desktop_fox_setup_launch_thread_fn(void* context) {
             view_dispatcher_send_custom_event(
                 desktop->view_dispatcher, DesktopGlobalAfterAppFinished);
         }
-        return 0;
+        return;
     }
 
     FURI_LOG_I("FoxSetup", "Flag /int/fox_setup.done absent — launching %s", FOX_SETUP_FAP_PATH);
@@ -528,7 +560,45 @@ static int32_t desktop_fox_setup_launch_thread_fn(void* context) {
                    furi_string_get_cstr(err), (int)status);
     }
     furi_string_free(err);
+}
+
+#define FOX_IMPORT_FAP_PATH  EXT_PATH("apps/System/fox_android_companion.fap")
+#define FOX_IMPORT_FLAG_PATH EXT_PATH("apps_data/fox_companion/request.flag")
+#define FOX_IMPORT_POLL_MS   2000
+
+// Launch thread: runs loader_start off the timer thread so a busy loader can
+// never stall the shared timer service.
+static FuriThread* s_fox_import_launch_thread = NULL;
+
+static int32_t desktop_fox_import_launch_thread_fn(void* context) {
+    Desktop* desktop = context;
+    FuriString* err = furi_string_alloc();
+    loader_start(desktop->loader, FOX_IMPORT_FAP_PATH, "SETTINGS", err);
+    furi_string_free(err);
     return 0;
+}
+
+// Periodic flag-watch: when the companion app (over BLE/USB) drops the request
+// flag, launch the external Import Companion Settings app to apply it.
+static void desktop_fox_import_timer_callback(void* context) {
+    Desktop* desktop = context;
+    if(s_fox_import_launch_thread &&
+       furi_thread_get_state(s_fox_import_launch_thread) == FuriThreadStateStopped) {
+        furi_thread_join(s_fox_import_launch_thread);
+        furi_thread_free(s_fox_import_launch_thread);
+        s_fox_import_launch_thread = NULL;
+    }
+    if(s_fox_import_launch_thread != NULL) return;
+    if(desktop->app_running || desktop->locked || loader_is_locked(desktop->loader)) return;
+    if(!storage_file_exists(desktop->storage, FOX_IMPORT_FLAG_PATH)) return;
+    if(!storage_file_exists(desktop->storage, FOX_IMPORT_FAP_PATH)) return;
+
+    s_fox_import_launch_thread = furi_thread_alloc();
+    furi_thread_set_name(s_fox_import_launch_thread, "FoxImportLaunch");
+    furi_thread_set_stack_size(s_fox_import_launch_thread, 1024);
+    furi_thread_set_callback(s_fox_import_launch_thread, desktop_fox_import_launch_thread_fn);
+    furi_thread_set_context(s_fox_import_launch_thread, desktop);
+    furi_thread_start(s_fox_import_launch_thread);
 }
 
 static void desktop_loader_callback(const void* message, void* context) {
@@ -923,6 +993,192 @@ static void desktop_wallpaper_draw_callback(Canvas* canvas, void* model) {
     furi_mutex_release(desktop->wallpaper_mutex);
 }
 
+#define RAM_DEFRAG_BANNER_ROWS 12 /* full status-bar strip (rows 1..12) */
+#define RAM_DEFRAG_SLIDE_MS     15
+
+#define RAM_FREE_BANNER_MAX 92160u /* 90 KB: only warn "Free RAM" below this */
+
+/* Desktop notification priority, filtered by the Fox "Notification Text" setting
+ * (All / Critical / None): Critical banners show unless None; Info banners show only
+ * on All. Give any future banner a priority and the filtering is automatic. */
+typedef enum {
+    FoxBannerPrioCritical, /* warnings, failures, in-progress */
+    FoxBannerPrioInfo,     /* success / FYI */
+} FoxBannerPrio;
+
+/* Last "RAM FRAGMENTED x%" and "Free RAM Block xxKB" values shown. RAM-only (.data,
+ * reset on every boot -- never persisted) so each re-shows once after a fresh boot
+ * and then only when its value changes. */
+static uint8_t s_ram_frag_last_pct = 0xFF;
+static uint8_t s_ram_free_last_kb  = 0xFF;
+
+/* Should a banner of this priority show, per the Fox "Notification Text" setting?
+ * Read lazily -- only when a banner is about to show (rare + deduped) -- so there is
+ * no per-app-exit settings-file read. */
+static bool desktop_banner_allowed(FoxBannerPrio prio) {
+    uint8_t mode = fox_settings_get_notification_text();
+    if(mode == FOX_NOTIFY_TEXT_NONE) return false;
+    if(mode == FOX_NOTIFY_TEXT_CRITICAL && prio == FoxBannerPrioInfo) return false;
+    return true;
+}
+
+/* Async, cancellable desktop banner (Fox). On request we wait a non-blocking
+ * pre-delay, then drop at full height, hold, slide up, clear. Driven by
+ * desktop->banner_timer (one-shot, restarted per phase); the timer callback only
+ * posts DesktopGlobalBannerTick so every GUI call + state change runs on the
+ * desktop thread. Opening an app cancels it (desktop_banner_cancel): during the
+ * pre-delay it never shows; while visible it is cleared. Nothing is persisted --
+ * each banner is recomputed fresh on the next app exit, so a condition that has
+ * resolved by then simply produces no banner. Gated by the Fox "Notification
+ * Text" setting. No heap alloc (text -> fixed buffer). */
+#define FOX_BANNER_PREDELAY_MS 750u  /* non-blocking wait before a banner appears */
+#define FOX_BANNER_HOLD_MS     2000u /* full-height dwell (visible time) */
+
+typedef enum {
+    FoxBannerPhaseIdle = 0,
+    FoxBannerPhasePredelay,
+    FoxBannerPhaseHold,
+    FoxBannerPhaseSlide,
+} FoxBannerPhase;
+
+static FoxBannerPhase s_banner_phase = FoxBannerPhaseIdle;
+static uint8_t s_banner_slide_row = 0;
+static GuiDesktopNotifyIcon s_banner_icon = GuiDesktopNotifyIconInfo;
+static char s_banner_text[28];
+
+static void desktop_banner_timer_callback(void* context) {
+    Desktop* desktop = context;
+    view_dispatcher_send_custom_event(desktop->view_dispatcher, DesktopGlobalBannerTick);
+}
+
+/* Cancel any in-flight banner. If already visible, clear it. Desktop-thread only. */
+static void desktop_banner_cancel(Desktop* desktop) {
+    if(s_banner_phase == FoxBannerPhaseIdle) return;
+    furi_timer_stop(desktop->banner_timer);
+    if(s_banner_phase == FoxBannerPhaseHold || s_banner_phase == FoxBannerPhaseSlide) {
+        gui_desktop_notification_clear(desktop->gui);
+    }
+    s_banner_phase = FoxBannerPhaseIdle;
+}
+
+/* Queue a banner (non-blocking). Replaces any in-flight one. Desktop-thread only. */
+static void desktop_banner_request(
+    Desktop* desktop, const char* text, GuiDesktopNotifyIcon icon, FoxBannerPrio prio) {
+    if(!desktop_banner_allowed(prio)) return;
+    desktop_banner_cancel(desktop);
+    snprintf(s_banner_text, sizeof(s_banner_text), "%s", text);
+    s_banner_icon = icon;
+    s_banner_phase = FoxBannerPhasePredelay;
+    furi_timer_start(desktop->banner_timer, furi_ms_to_ticks(FOX_BANNER_PREDELAY_MS));
+}
+
+/* Advance the banner state machine one step. Desktop-thread only (event loop). */
+static void desktop_banner_tick(Desktop* desktop) {
+    switch(s_banner_phase) {
+    case FoxBannerPhasePredelay:
+        gui_desktop_notification_set(
+            desktop->gui, s_banner_text, (int8_t)RAM_DEFRAG_BANNER_ROWS, s_banner_icon);
+        s_banner_phase = FoxBannerPhaseHold;
+        furi_timer_start(desktop->banner_timer, furi_ms_to_ticks(FOX_BANNER_HOLD_MS));
+        break;
+    case FoxBannerPhaseHold:
+        s_banner_slide_row = RAM_DEFRAG_BANNER_ROWS;
+        s_banner_phase = FoxBannerPhaseSlide;
+        furi_timer_start(desktop->banner_timer, furi_ms_to_ticks(RAM_DEFRAG_SLIDE_MS));
+        break;
+    case FoxBannerPhaseSlide:
+        if(s_banner_slide_row >= 1) {
+            gui_desktop_notification_set(
+                desktop->gui, s_banner_text, (int8_t)s_banner_slide_row, s_banner_icon);
+            s_banner_slide_row--;
+            furi_timer_start(desktop->banner_timer, furi_ms_to_ticks(RAM_DEFRAG_SLIDE_MS));
+        } else {
+            gui_desktop_notification_clear(desktop->gui);
+            s_banner_phase = FoxBannerPhaseIdle;
+        }
+        break;
+    default:
+        break; /* stale tick after cancel -- ignore */
+    }
+}
+
+
+void desktop_ram_defrag_if_wedged(Desktop* desktop) {
+    if(!desktop_boot_is_ready()) return;
+    if(desktop->ram_watchdog_tripped) return;
+    if(desktop->pending_slideshow || desktop->alarm_ringing || desktop->locked) return;
+
+    size_t max_block = memmgr_heap_get_max_free_block();
+
+    /* Let the heap settle: the exited app's memory may not be fully freed/coalesced yet
+     * at this instant. Re-measure until healthy or the short budget elapses. Only waits
+     * on a non-healthy-looking exit (breaks out early as soon as it recovers), never on a
+     * clean one -- so a false "wedged" reading no longer triggers the USB reseat. */
+    if(max_block < RAM_DEFRAG_HEALTHY_BLOCK) {
+        for(uint8_t i = 0; i < RAM_DEFRAG_SETTLE_TRIES; i++) {
+            furi_delay_ms(RAM_DEFRAG_SETTLE_STEP_MS);
+            max_block = memmgr_heap_get_max_free_block();
+            if(max_block >= RAM_DEFRAG_HEALTHY_BLOCK) break;
+        }
+    }
+
+    if(max_block >= RAM_DEFRAG_HEALTHY_BLOCK) {
+        s_ram_free_last_kb = 0xFF; /* healthy: reset so low-RAM banner re-shows on next drop */
+        return;
+    }
+    size_t free_heap = memmgr_get_free_heap();
+
+    if((free_heap - max_block) < RAM_DEFRAG_WEDGE_GAP) {
+        /* Under HEALTHY but NOT fragmented (max ~= free) -- just low total free. Only
+         * warn when GENUINELY low (< RAM_FREE_BANNER_MAX, 90 KB): with the trace stripped
+         * a connected host sits ~104 KB, so this is a true low-RAM heads-up, not a
+         * qFlipper indicator. Deduped by rounded KB (reset when healthy); RAM-only. */
+        if(max_block < RAM_FREE_BANNER_MAX) {
+            uint8_t kb = (uint8_t)((max_block + 512U) / 1024U);
+            if(kb != s_ram_free_last_kb) {
+                s_ram_free_last_kb = kb;
+                char buf[28];
+                snprintf(buf, sizeof(buf), "Free RAM: %uk", (unsigned)kb);
+                desktop_banner_request(desktop, buf, GuiDesktopNotifyIconInfo, FoxBannerPrioInfo);
+            }
+        }
+        return;
+    }
+
+    if(furi_hal_cdc_get_ctrl_line_state(0 /*VCP_IF_NUM*/) & CdcCtrlLineDTR) {
+        /* Host (qFlipper) on the VCP and the heap is fragmented: reseat USB so the
+         * allocator can coalesce. Tear the RPC/CLI session down (frees its ~15-20 KB),
+         * wait the gap, then restore. The footprint returns on reconnect, but freeing +
+         * re-allocating contiguously raises the largest free block (the defrag). Same
+         * furi_hal_usb sequence as the ram-watchdog / lock-screen reseats; blocks the
+         * desktop thread for the gap (USB stays down the whole time, so no RAM churn).
+         * COM stability on renamed units is handled at boot by namechanger, not here. */
+        desktop_banner_request(
+            desktop, "Defragmenting RAM", GuiDesktopNotifyIconInfo, FoxBannerPrioInfo);
+        desktop_cli_vcp_session_lock_acquire();
+        FuriHalUsbInterface* saved_usb = furi_hal_usb_get_config();
+        furi_hal_usb_unlock();
+        furi_hal_usb_set_config(NULL, NULL);
+        furi_delay_ms(RAM_DEFRAG_RESEAT_GAP_MS);
+        furi_hal_usb_set_config(saved_usb, NULL);
+        desktop_cli_vcp_session_lock_release();
+        return;
+    } else {
+        /* Wedged, but no host on the VCP -- nothing for the reseat to free. Report it
+         * instead of pretending to defrag with a plain "Fragmentation" banner (no numbers).
+         * pct (= 100 - largest free block as a %% of total free; higher = worse) is kept only
+         * as the de-dupe key so the desktop shows the banner once per fragmentation level and
+         * doesn't nag on every app exit. No heap alloc, and this runs on the bare desktop with
+         * USB off, so it can't re-fragment the heap. */
+        uint8_t pct = (uint8_t)(100U - ((max_block * 100U) / free_heap));
+        if(pct != s_ram_frag_last_pct) {
+            s_ram_frag_last_pct = pct;
+            desktop_banner_request(
+                desktop, "Fragmentation", GuiDesktopNotifyIconWarning, FoxBannerPrioCritical);
+        }
+    }
+}
+
 static bool desktop_custom_event_callback(void* context, uint32_t event) {
     furi_assert(context);
     Desktop* desktop = (Desktop*)context;
@@ -930,6 +1186,10 @@ static bool desktop_custom_event_callback(void* context, uint32_t event) {
     if(event == DesktopGlobalBeforeAppStarted) {
         desktop_auto_lock_inhibit(desktop);
         desktop->app_running = true;
+        desktop_banner_cancel(desktop);
+
+    } else if(event == DesktopGlobalBannerTick) {
+        desktop_banner_tick(desktop);
 
     } else if(event == DesktopGlobalAfterAppFinished) {
 
@@ -937,6 +1197,8 @@ static bool desktop_custom_event_callback(void* context, uint32_t event) {
         desktop->app_running = false;
         desktop_check_wallpaper_updates(desktop);
         desktop_refresh_wifi_icon(desktop);
+
+        desktop_ram_defrag_if_wedged(desktop);
 
         if(desktop->pending_slideshow) {
             desktop->pending_slideshow = false;
@@ -1322,6 +1584,13 @@ void desktop_cycle_wallpaper(Desktop* desktop) {
     free(names);
     desktop_settings_save(&desktop->settings);
     desktop_load_wallpaper(desktop);
+
+    // Repaint the wallpaper view right away so the new image shows instantly — without this the
+    // change only appeared after the desktop was left and reloaded. The draw callback reads
+    // desktop->wallpaper_data (already swapped above); committing the model with update=true asks
+    // the GUI to redraw the view now.
+    with_view_model(
+        desktop->wallpaper_view, Desktop** model, { *model = desktop; }, true);
 }
 
 static void desktop_load_wallpaper(Desktop* desktop) {
@@ -1347,7 +1616,7 @@ static void desktop_load_wallpaper(Desktop* desktop) {
 
     if(!ok) {
         furi_mutex_acquire(desktop->wallpaper_mutex, FuriWaitForever);
-        desktop->wallpaper_data = NULL;
+        desktop->wallpaper_data = (uint8_t*)s_sample_wallpaper_xbm;
         furi_mutex_release(desktop->wallpaper_mutex);
         storage_simply_remove(desktop->storage, WALLPAPER_CURRENT_MARKER);
         return;
@@ -1581,7 +1850,7 @@ static void desktop_init_settings(Desktop* desktop) {
 static Desktop* desktop_alloc(void) {
     Desktop* desktop = malloc(sizeof(Desktop));
 
-    desktop->wallpaper_data  = NULL;
+    desktop->wallpaper_data  = (uint8_t*)s_sample_wallpaper_xbm;
     desktop->wallpaper_buf[0] = malloc(WALLPAPER_SIZE);
     desktop->wallpaper_buf[1] = malloc(WALLPAPER_SIZE);
     desktop->wallpaper_scratch = desktop->wallpaper_buf[0];
@@ -1615,7 +1884,9 @@ static Desktop* desktop_alloc(void) {
         desktop->view_dispatcher, desktop_back_event_callback);
 
     desktop->lock_menu = desktop_lock_menu_alloc();
+#ifdef FURI_DEBUG
     desktop->debug_view = desktop_debug_alloc();
+#endif
     desktop->popup = popup_alloc();
     desktop->locked_view = desktop_view_locked_alloc();
     desktop->pin_input_view = desktop_view_pin_input_alloc();
@@ -1654,8 +1925,10 @@ static Desktop* desktop_alloc(void) {
         desktop->view_dispatcher,
         DesktopViewIdLockMenu,
         desktop_lock_menu_get_view(desktop->lock_menu));
+#ifdef FURI_DEBUG
     view_dispatcher_add_view(
         desktop->view_dispatcher, DesktopViewIdDebug, desktop_debug_get_view(desktop->debug_view));
+#endif
     view_dispatcher_add_view(
         desktop->view_dispatcher, DesktopViewIdPopup, popup_get_view(desktop->popup));
     view_dispatcher_add_view(
@@ -1729,6 +2002,13 @@ static Desktop* desktop_alloc(void) {
 
     desktop->ram_watchdog_timer =
         furi_timer_alloc(desktop_ram_watchdog_timer_callback, FuriTimerTypePeriodic, desktop);
+
+    desktop->fox_import_timer =
+        furi_timer_alloc(desktop_fox_import_timer_callback, FuriTimerTypePeriodic, desktop);
+    desktop->fox_setup_timer =
+        furi_timer_alloc(desktop_fox_setup_launch_timer_cb, FuriTimerTypeOnce, desktop);
+    desktop->banner_timer =
+        furi_timer_alloc(desktop_banner_timer_callback, FuriTimerTypeOnce, desktop);
 
     desktop->app_running = loader_is_locked(desktop->loader);
 
@@ -1921,37 +2201,40 @@ int32_t desktop_srv(void* p) {
         return 0;
     }
 
+    s_desktop_boot_ready = false;
+
     Desktop* desktop = desktop_alloc();
 
     {
-        furi_delay_ms(200);
-        bool sd_ok = false;
-        for(uint8_t i = 0; i < 8 && !sd_ok; i++) {
-            sd_ok = (storage_sd_status(desktop->storage) == FSE_OK);
-            if(!sd_ok) furi_delay_ms(100);
+        if(storage_sd_status(desktop->storage) != FSE_OK) {
+            FuriEventFlag* sd_ev = furi_event_flag_alloc();
+            FuriPubSubSubscription* sub = furi_pubsub_subscribe(
+                storage_get_pubsub(desktop->storage), fox_sd_mount_eventflag_callback, sd_ev);
+            if(storage_sd_status(desktop->storage) != FSE_OK) {
+                furi_event_flag_wait(sd_ev, 1, FuriFlagWaitAny, 5000);
+            }
+            furi_pubsub_unsubscribe(storage_get_pubsub(desktop->storage), sub);
+            furi_event_flag_free(sd_ev);
         }
-        if(!sd_ok) {
+        if(storage_sd_status(desktop->storage) != FSE_OK) {
             fox_desktop_show_no_sd_blocking(desktop);
-
         }
     }
 
     {
-
         FileInfo file_info;
         bool sd_settled = false;
-        for(uint8_t i = 0; i < 10 && !sd_settled; i++) {
+        for(uint8_t i = 0; i < 50 && !sd_settled; i++) {
             sd_settled =
                 (storage_common_stat(desktop->storage, STORAGE_EXT_PATH_PREFIX, &file_info) ==
                  FSE_OK);
-            if(!sd_settled) furi_delay_ms(100);
+            if(!sd_settled) furi_delay_ms(20);
         }
         if(!sd_settled) {
             FURI_LOG_W(
                 TAG,
-                "SD card mounted but not answering a real stat() yet after %dms - "
-                "proceeding anyway, boot-time storage watchdog will catch a real hang",
-                200 + 10 * 100);
+                "SD card mounted but not answering a real stat() yet - "
+                "proceeding anyway, boot-time storage watchdog will catch a real hang");
         }
     }
 
@@ -1972,6 +2255,8 @@ int32_t desktop_srv(void* p) {
     }
 
     desktop_init_settings_with_watchdog(desktop);
+
+    s_desktop_boot_ready = true;
 
     desktop_pin_code_load_from_storage();
 
@@ -2044,6 +2329,7 @@ int32_t desktop_srv(void* p) {
     scene_manager_next_scene(desktop->scene_manager, DesktopSceneMain);
 
     furi_timer_start(desktop->ram_watchdog_timer, furi_ms_to_ticks(RAM_WATCHDOG_POLL_MS));
+    furi_timer_start(desktop->fox_import_timer, furi_ms_to_ticks(FOX_IMPORT_POLL_MS));
 
     bool wiper_screen_active = false;
     if(desktop_pin_code_is_set()) {
@@ -2063,14 +2349,10 @@ int32_t desktop_srv(void* p) {
         }
     }
 
-    {
-        s_fox_setup_launch_thread = furi_thread_alloc();
-        furi_thread_set_name(s_fox_setup_launch_thread, "FoxSetupLaunch");
-        furi_thread_set_stack_size(s_fox_setup_launch_thread, 1024);
-        furi_thread_set_context(s_fox_setup_launch_thread, desktop);
-        furi_thread_set_callback(s_fox_setup_launch_thread, desktop_fox_setup_launch_thread_fn);
-        furi_thread_start(s_fox_setup_launch_thread);
-    }
+    /* Fire the one-shot wizard-launch timer (200 ms, so the desktop UI settles
+     * first). The callback re-checks the internal setup flag, so starting it
+     * unconditionally is harmless on an already-configured device. */
+    furi_timer_start(desktop->fox_setup_timer, furi_ms_to_ticks(200));
 
     if(!furi_hal_version_do_i_belong_here()) {
         scene_manager_next_scene(desktop->scene_manager, DesktopSceneHwMismatch);
@@ -2089,6 +2371,11 @@ int32_t desktop_srv(void* p) {
             keys_valid);
         scene_manager_next_scene(desktop->scene_manager, DesktopSceneSecureEnclave);
     }
+
+    /* FoxFW: all permanent desktop allocations are now placed; let the VCP
+     * service enumerate so qFlipper's RPC lands above them (high/transient)
+     * instead of wedging the low heap on first boot. */
+    furi_hal_usb_boot_gate_release();
 
     view_dispatcher_run(desktop->view_dispatcher);
 

@@ -83,14 +83,12 @@ typedef enum {
     SubGhzViewIdVariableItemList,
     SubGhzViewIdReadRAW,
     SubGhzViewIdPsaDecrypt,
-    SubGhzViewIdKeeloqDecrypt,
+    SubGhzViewIdSeedBf,
     SubGhzViewIdFiatV1Recover,
     SubGhzViewIdSignalVisualizer,
     SubGhzViewIdStartGrid,
-    SubGhzViewIdGarageGrid,
-    SubGhzViewIdGarageProtocolGroups,
-    SubGhzViewIdModePicker,
     SubGhzViewIdNumberInput,
+    SubGhzViewIdReceiverInfoBar,
 
 } SubGhzViewId;
 

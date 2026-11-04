@@ -498,6 +498,7 @@ static void browser_list_item_cb(
                                 break;
                             }
                         }
+                        furi_string_free(selected); /* FoxFW: was leaked -> stranded heap high, split free block */
                     }
                 }
                 model->list_loading = false;

@@ -9,7 +9,7 @@
 
 #define DEFAULT_INDEX         (0)
 #define EXTERNAL_BROWSER_NAME ("Apps Menu (Default)")
-#define PASSPORT_NAME         ("Passport (Default)")
+#define FFB_DEFAULT_NAME      ("FFB (Default)") /* RightShort empty-default launches ffb.fap */
 
 #define NONE_APPLICATION_INDEX (1)
 #define NONE_APPLICATION_NAME  "None (disable)"
@@ -61,11 +61,12 @@ void desktop_settings_scene_favorite_on_enter(void* context) {
     uint32_t pre_select_item = PRESELECTED_SPECIAL;
     furi_assert(favorite_id < FavoriteAppNumber);
     FavoriteApp* curr_favorite_app = &app->settings.favorite_apps[favorite_id];
-    bool default_passport = (favorite_id == FavoriteAppRightShort);
+    bool default_ffb =
+        (favorite_id == FavoriteAppRightShort) || (favorite_id == FavoriteAppRightLong);
 
     submenu_add_item(
         submenu,
-        default_passport ? (PASSPORT_NAME) : (EXTERNAL_BROWSER_NAME),
+        default_ffb ? (FFB_DEFAULT_NAME) : (EXTERNAL_BROWSER_NAME),
         DEFAULT_INDEX,
         desktop_settings_scene_favorite_submenu_callback,
         app);

@@ -4,29 +4,53 @@
 #include "subghz_scene_start.h"
 #include <loader/loader.h>
 #include <storage/storage.h>
+#include <string.h>
 
 #include <lib/subghz/protocols/raw.h>
 
 #define SUBGHZ_MOD_ANALYZER_FAP_PATH  EXT_PATH("apps/Sub-GHz/subghz_modulation_analyzer.fap")
 #define SUBGHZ_FREQ_ANALYZER_FAP_PATH EXT_PATH("apps/Sub-GHz/subghz_frequency_analyzer.fap")
-#define SUBGHZ_GDR_FAP_PATH           EXT_PATH("apps/Sub-GHz/garage_door_remote.fap")
+#define SUBGHZ_RF_JAMMER_FAP_PATH     EXT_PATH("apps/Fox/fox_rf_jammer.fap")
+#define SUBGHZ_TPMS_FAP_PATH          EXT_PATH("apps/Fox/fox_tpms.fap")
+#define SUBGHZ_RANDOMATTACK_FAP_PATH  EXT_PATH("apps/Sub-GHz/subghz_randomattack.fap")
 
 void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
     canvas_clear(canvas);
 }
 
-static void subghz_scene_start_launch_and_exit(
-    SubGhz* subghz, const char* fap_path, const char* args) {
+void subghz_scene_start_launch_and_exit(
+    SubGhz* subghz, const char* fap_path, const char* args, bool show_blank) {
+    /* Pre-write the grid-focus marker so the return lands on the right button
+     * even for stock apps (e.g. subghz_randomattack) that don't write it
+     * themselves. Strip a leading "core:" to match subghz_app's exact checks. */
+    if(args && args[0]) {
+        const char* focus = args;
+        if(strncmp(focus, "core:", 5) == 0) focus += 5;
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        File* f = storage_file_alloc(storage);
+        if(storage_file_open(f, "/ext/subghz/.focus_menu", FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+            storage_file_write(f, focus, strlen(focus));
+        }
+        storage_file_close(f);
+        storage_file_free(f);
+        furi_record_close(RECORD_STORAGE);
+    }
+
     Loader* loader = furi_record_open(RECORD_LOADER);
     loader_enqueue_launch(loader, fap_path, args, LoaderDeferredLaunchFlagNone);
     furi_record_close(RECORD_LOADER);
 
-    subghz->blank_transition_viewport = view_port_alloc();
-    view_port_draw_callback_set(
-        subghz->blank_transition_viewport, subghz_blank_transition_draw_cb, NULL);
-    gui_add_view_port(subghz->gui, subghz->blank_transition_viewport, GuiLayerFullscreen);
-    view_port_update(subghz->blank_transition_viewport);
+    if(show_blank) {
+        /* Hide the frozen grid during the handoff for apps with NO loader wheel.
+         * Apps that DO show the wheel skip this (the wheel covers the load; the
+         * extra blank otherwise flashes). */
+        subghz->blank_transition_viewport = view_port_alloc();
+        view_port_draw_callback_set(
+            subghz->blank_transition_viewport, subghz_blank_transition_draw_cb, NULL);
+        gui_add_view_port(subghz->gui, subghz->blank_transition_viewport, GuiLayerFullscreen);
+        view_port_update(subghz->blank_transition_viewport);
+    }
 
     scene_manager_stop(subghz->scene_manager);
     view_dispatcher_stop(subghz->view_dispatcher);
@@ -52,20 +76,26 @@ void subghz_scene_start_on_enter(void* context) {
     if(subghz->state_notifications == SubGhzNotificationStateStarting) {
         subghz->state_notifications = SubGhzNotificationStateIDLE;
     }
+    subghz_txrx_receiver_release(subghz->txrx);
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     bool has_freq_analyzer = storage_file_exists(storage, SUBGHZ_FREQ_ANALYZER_FAP_PATH);
     bool has_mod_analyzer  = storage_file_exists(storage, SUBGHZ_MOD_ANALYZER_FAP_PATH);
-    bool has_gdr           = storage_file_exists(storage, SUBGHZ_GDR_FAP_PATH);
+    bool has_jammer        = storage_file_exists(storage, SUBGHZ_RF_JAMMER_FAP_PATH);
+    bool has_tpms          = storage_file_exists(storage, SUBGHZ_TPMS_FAP_PATH);
+    bool has_subratt       = storage_file_exists(storage, SUBGHZ_RANDOMATTACK_FAP_PATH);
+    bool has_keeloq        = storage_file_exists(storage, SUBGHZ_KEELOQ_TOOL_FAP_PATH);
     furi_record_close(RECORD_STORAGE);
 
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_FREQANA, has_freq_analyzer);
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_MODANA,  has_mod_analyzer);
-    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_GDR,     has_gdr);
 
-    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_RADIOSETTINGS, false);
-    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_JAMMER, false);
-    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_TPMS, false);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_RADIOSETTINGS, true);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_JAMMER,  has_jammer);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_SUBRATT, has_subratt);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_TPMS,    has_tpms);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_KEELOQ,   has_keeloq);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_KEELOQBF, has_keeloq);
 
     subghz_start_grid_set_callback(
         subghz->start_grid,
@@ -83,9 +113,13 @@ void subghz_scene_start_on_enter(void* context) {
         else if(focus == SubmenuIndexModulationAnalyzer)   grid_btn = SGRID_IDX_MODANA;
         else if(focus == SubmenuIndexProtocolList)         grid_btn = SGRID_IDX_PROTOCOLS;
         else if(focus == SubmenuIndexModulationList)       grid_btn = SGRID_IDX_MODLIST;
-        else if(focus == SubmenuIndexGarageDoorRemote)     grid_btn = SGRID_IDX_GDR;
+        else if(focus == SubmenuIndexExtSettings)          grid_btn = SGRID_IDX_RADIOSETTINGS;
+        else if(focus == SubmenuIndexRFJammer)             grid_btn = SGRID_IDX_JAMMER;
+        else if(focus == SubmenuIndexSubRATT)              grid_btn = SGRID_IDX_SUBRATT;
+        else if(focus == SubmenuIndexTpmsReader)           grid_btn = SGRID_IDX_TPMS;
         else if(focus == SubmenuIndexKeeloqKeys)           grid_btn = SGRID_IDX_KEELOQ;
         else if(focus == SubmenuIndexKeeloqBf2)            grid_btn = SGRID_IDX_KEELOQBF;
+        else if(focus == SubmenuIndexReadDual)             grid_btn = SGRID_IDX_READDUAL;
         subghz_start_grid_set_selected(subghz->start_grid, grid_btn);
     }
 
@@ -98,6 +132,8 @@ void subghz_scene_start_on_enter(void* context) {
             scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneStart);
         submenu_reset(subghz->submenu);
         submenu_add_item(subghz->submenu, "Read", SubmenuIndexRead,
+            subghz_scene_start_submenu_callback, subghz);
+        submenu_add_item(subghz->submenu, "Read Int/Ext", SubmenuIndexReadDual,
             subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Read RAW", SubmenuIndexReadRAW,
             subghz_scene_start_submenu_callback, subghz);
@@ -115,8 +151,16 @@ void subghz_scene_start_on_enter(void* context) {
             subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Modulations", SubmenuIndexModulationList,
             subghz_scene_start_submenu_callback, subghz);
-        if(has_gdr)
-            submenu_add_item(subghz->submenu, "Garage Remote", SubmenuIndexGarageDoorRemote,
+        submenu_add_item(subghz->submenu, "Radio Settings", SubmenuIndexExtSettings,
+            subghz_scene_start_submenu_callback, subghz);
+        if(has_jammer)
+            submenu_add_item(subghz->submenu, "RF Jammer", SubmenuIndexRFJammer,
+                subghz_scene_start_submenu_callback, subghz);
+        if(has_subratt)
+            submenu_add_item(subghz->submenu, "SubRATT", SubmenuIndexSubRATT,
+                subghz_scene_start_submenu_callback, subghz);
+        if(has_tpms)
+            submenu_add_item(subghz->submenu, "TPMS Reader", SubmenuIndexTpmsReader,
                 subghz_scene_start_submenu_callback, subghz);
         submenu_set_selected_item(subghz->submenu, focus);
         view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdMenu);
@@ -145,6 +189,16 @@ bool subghz_scene_start_on_event(void* context, SceneManagerEvent event) {
                 subghz->scene_manager, SubGhzSceneStart, SubmenuIndexRead);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiver);
             return true;
+        } else if(event.event == SubmenuIndexReadDual) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexReadDual);
+            if(!subghz_txrx_dual_is_ext_connected(subghz->txrx)) {
+                subghz_dialog_message_no_ext_module(subghz);
+                return true;
+            }
+            subghz_rx_key_state_set(subghz, SubGhzRxKeyStateIDLE);
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiverDual);
+            return true;
         } else if(event.event == SubmenuIndexSaved) {
             scene_manager_set_scene_state(
                 subghz->scene_manager, SubGhzSceneStart, SubmenuIndexSaved);
@@ -158,12 +212,12 @@ bool subghz_scene_start_on_event(void* context, SceneManagerEvent event) {
         } else if(event.event == SubmenuIndexFrequencyAnalyzer) {
 
             subghz_scene_start_launch_and_exit(
-                subghz, SUBGHZ_FREQ_ANALYZER_FAP_PATH, "core:menu:freq");
+                subghz, SUBGHZ_FREQ_ANALYZER_FAP_PATH, "core:menu:freq", true);
             return true;
         } else if(event.event == SubmenuIndexModulationAnalyzer) {
 
             subghz_scene_start_launch_and_exit(
-                subghz, SUBGHZ_MOD_ANALYZER_FAP_PATH, "core:menu:mod");
+                subghz, SUBGHZ_MOD_ANALYZER_FAP_PATH, "core:menu:mod", true);
             return true;
         } else if(event.event == SubmenuIndexProtocolList) {
             scene_manager_set_scene_state(
@@ -174,20 +228,34 @@ bool subghz_scene_start_on_event(void* context, SceneManagerEvent event) {
                 subghz->scene_manager, SubGhzSceneStart, SubmenuIndexModulationList);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneModulationList);
             return true;
-        } else if(event.event == SubmenuIndexGarageDoorRemote) {
+        } else if(event.event == SubmenuIndexExtSettings) {
             scene_manager_set_scene_state(
-                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexGarageDoorRemote);
-            subghz_scene_start_launch_and_exit(subghz, SUBGHZ_GDR_FAP_PATH, NULL);
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexExtSettings);
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneExtModuleSettings);
+            return true;
+        } else if(event.event == SubmenuIndexRFJammer) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexRFJammer);
+            subghz_scene_start_launch_and_exit(subghz, SUBGHZ_RF_JAMMER_FAP_PATH, "menu:jammer", true);
+            return true;
+        } else if(event.event == SubmenuIndexSubRATT) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexSubRATT);
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_RANDOMATTACK_FAP_PATH, "core:menu:bruteforcer", true);
+            return true;
+        } else if(event.event == SubmenuIndexTpmsReader) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexTpmsReader);
+            subghz_scene_start_launch_and_exit(subghz, SUBGHZ_TPMS_FAP_PATH, "core:menu:tpms", true);
             return true;
         } else if(event.event == SubmenuIndexKeeloqKeys) {
-            scene_manager_set_scene_state(
-                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexKeeloqKeys);
-            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneKeeloqKeys);
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_KEELOQ_TOOL_FAP_PATH, "core:menu:keeloq_keys", true);
             return true;
         } else if(event.event == SubmenuIndexKeeloqBf2) {
-            scene_manager_set_scene_state(
-                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexKeeloqBf2);
-            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneKeeloqBf2);
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_KEELOQ_TOOL_FAP_PATH, "core:menu:keeloq_bf", true);
             return true;
         }
     }

@@ -20,7 +20,12 @@
 #define CSW_STATUS_NOK         (1)
 #define CSW_STATUS_PHASE_ERROR (2)
 
-#define USB_MSC_BUF_MAX (0x10000UL - SCSI_BLOCK_SIZE)
+/* FoxFW: cap the SCSI transfer buffer at 32 KB (was ~64 KB). It is malloc'd
+   CONTIGUOUSLY and grows to this size on the first large host transfer; a ~64 KB
+   contiguous demand OOMs on a fragmented heap (e.g. after heavy app use) even with
+   100+ KB free. 16 KB fits any lightly-fragmented heap; the host transfer is just
+   chunked into more rounds via MIN(cbw.len, USB_MSC_BUF_MAX) -- negligible on FS USB. */
+#define USB_MSC_BUF_MAX (0x8000UL - SCSI_BLOCK_SIZE)
 
 static usbd_respond usb_ep_config(usbd_device* dev, uint8_t cfg);
 static usbd_respond usb_control(usbd_device* dev, usbd_ctlreq* req, usbd_rqc_callback* callback);

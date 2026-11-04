@@ -56,7 +56,7 @@ static void nfc_scene_read_success_on_enter_iso14443_4a(NfcApp* instance) {
     nfc_render_iso14443_4a_info(data, NfcProtocolFormatTypeShort, temp_str);
 
     widget_add_text_scroll_element(
-        instance->widget, 0, 0, 128, 52, furi_string_get_cstr(temp_str));
+        instance->widget, 0, 0, 128, 47, furi_string_get_cstr(temp_str));
 
     furi_string_free(temp_str);
 }

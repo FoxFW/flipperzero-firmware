@@ -26,13 +26,11 @@ typedef enum {
 } SubmenuIndex;
 
 static void protopirate_scene_start_submenu_callback(void* context, uint32_t index) {
-    furi_check(context);
     ProtoPirateApp* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, index);
 }
 
 void protopirate_scene_start_on_enter(void* context) {
-    furi_check(context);
     ProtoPirateApp* app = context;
 
     protopirate_release_shared_radio_state(app);
@@ -104,13 +102,11 @@ void protopirate_scene_start_on_enter(void* context) {
 
     view_dispatcher_switch_to_view(app->view_dispatcher, ProtoPirateViewSubmenu);
 
-    //Kill Config if it exists now to save memory.
-    protopirate_variable_item_list_free(app);
+    //Kill Widget if it exists now to save memory.
     protopirate_widget_free(app);
 }
 
 bool protopirate_scene_start_on_event(void* context, SceneManagerEvent event) {
-    furi_check(context);
     ProtoPirateApp* app = context;
     bool consumed = false;
 

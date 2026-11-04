@@ -529,4 +529,10 @@ void nfc_felica_listener_timer_anticol_stop(Nfc* instance) {
     furi_check(instance);
 }
 
+NfcError nfc_texkom_poller_rx(Nfc* instance, BitBuffer* rx_buffer) {
+    furi_check(instance);
+    furi_check(rx_buffer);
+    return NfcErrorTimeout;
+}
+
 #endif

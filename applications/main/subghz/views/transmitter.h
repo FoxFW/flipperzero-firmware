@@ -13,6 +13,10 @@ void subghz_view_transmitter_set_callback(
     SubGhzViewTransmitterCallback callback,
     void* context);
 
+void subghz_view_transmitter_set_send_progress(
+    SubGhzViewTransmitter* subghz_transmitter,
+    uint8_t progress);
+
 void subghz_view_transmitter_set_radio_device_type(
     SubGhzViewTransmitter* subghz_transmitter,
     SubGhzRadioDeviceType device_type);
@@ -33,10 +37,10 @@ void subghz_view_transmitter_add_data_to_show(
 void subghz_view_transmitter_set_btn_labels(
     SubGhzViewTransmitter* subghz_transmitter,
     const char* center,
-    const char* up,    bool up_vis,
-    const char* down,  bool down_vis,
-    const char* left,  bool left_vis,
-    const char* right, bool right_vis);
+    const char* up,    bool up_vis,    bool up_active,
+    const char* down,  bool down_vis,  bool down_active,
+    const char* left,  bool left_vis,  bool left_active,
+    const char* right, bool right_vis, bool right_active);
 
 void subghz_view_transmitter_reset_labels(SubGhzViewTransmitter* subghz_transmitter);
 

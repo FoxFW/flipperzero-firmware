@@ -43,7 +43,7 @@ static SubGhzDeviceRegistry* subghz_device_registry_alloc_manager(void) {
 void subghz_device_registry_init(void) {
     SubGhzDeviceRegistry* subghz_device = subghz_device_registry_alloc_manager();
 
-    if(plugin_manager_load_all(subghz_device->manager, EXT_PATH("apps_data/subghz/plugins")) !=
+    if(plugin_manager_load_all_ex(subghz_device->manager, EXT_PATH("apps_data/subghz/plugins"), "radio_device_") !=
        PluginManagerErrorNone) {
         FURI_LOG_E(TAG, "Failed to load all libs");
     }
@@ -62,8 +62,7 @@ bool subghz_device_registry_load_external(void) {
     furi_assert(subghz_device_registry);
 
     bool ok =
-        plugin_manager_load_all(
-            subghz_device_registry->manager, EXT_PATH("apps_data/subghz/plugins")) ==
+        plugin_manager_load_all_ex(subghz_device_registry->manager, EXT_PATH("apps_data/subghz/plugins"), "radio_device_") ==
         PluginManagerErrorNone;
     if(!ok) {
         FURI_LOG_E(TAG, "Failed to load all libs");

@@ -20,6 +20,7 @@ typedef enum {
     ViewMenu       = 3,
     ViewTextInput  = 4,
     ViewImage      = 5,
+    ViewText       = 6,
 } FFVViewId;
 
 typedef enum { MenuRun=0, MenuPin=1, MenuRename=2, MenuDelete=3 } FFVMenuAction;
@@ -32,8 +33,8 @@ typedef enum { TextInputRename=0, TextInputSearch=1 } FFVTextInputMode;
 
 typedef enum {
     TypeFolder, TypeSubGhz, TypeSubGhzRemote, TypeNfc, TypeInfrared,
-    TypeLFRFID, TypeBadUsb, TypeIButton, TypeU2F, TypeApp, TypeUpdate,
-    TypeScript, TypeSettings, TypeMusic, TypeFile, TypeImage, TypeBmp, TypeUnknown,
+    TypeLFRFID, TypeT5577, TypeProtoPirate, TypePicopass, TypeBadUsb, TypeIButton, TypeU2F, TypeApp, TypeUpdate,
+    TypeScript, TypeSettings, TypeMusic, TypeFile, TypeText, TypeImage, TypeBmp, TypeUnknown,
 } FFVFileType;
 
 #define ROW_HEADER_H  14
@@ -52,6 +53,11 @@ typedef enum {
 #define IMG_W     128
 #define IMG_H     64
 #define IMG_BYTES ((IMG_W / 8) * IMG_H)
+
+#define TXT_CAP        16384
+#define TXT_MAX_LINES  1200
+#define TXT_WRAP_COLS  24
+#define TXT_ROWS_VIS   6
 
 typedef struct {
     Gui*            gui;
@@ -106,6 +112,14 @@ typedef struct {
     bool            image_loaded;
     bool            image_from_favs;
     uint8_t         image_bitmap[IMG_BYTES];
+
+    View*           text_view;
+    char*           text_buf;
+    size_t          text_len;
+    size_t*         text_lines;
+    size_t          text_line_count;
+    size_t          text_top;
+    bool            text_from_favs;
 } FFVApp;
 
 static FFVApp* s_ffv_ctx = NULL;
@@ -125,6 +139,8 @@ static bool ffv_favorites_non_empty(FFVApp* app);
 static void ffv_search_done(void* ctx);
 static void ffv_go_image_view(FFVApp* app);
 static void ffv_image_list_free(FFVApp* app);
+static void ffv_go_text_view(FFVApp* app);
+static void ffv_text_free(FFVApp* app);
 
 static FFVFileType ffv_type_from_path(const char* path) {
     const char* s = strrchr(path, '/');
@@ -136,6 +152,9 @@ static FFVFileType ffv_type_from_path(const char* path) {
     if(!strcmp(d,".nfc"))                              return TypeNfc;
     if(!strcmp(d,".ir"))                               return TypeInfrared;
     if(!strcmp(d,".rfid")||!strcmp(d,".lfrfid"))       return TypeLFRFID;
+    if(!strcmp(d,".t5577"))                            return TypeT5577;
+    if(!strcmp(d,".psf"))                              return TypeProtoPirate;
+    if(!strcmp(d,".picopass")||!strcmp(d,".pas"))      return TypePicopass;
     if(!strcmp(d,".bad"))                              return TypeBadUsb;
     if(!strcmp(d,".ibtn")||!strcmp(d,".ibutton"))      return TypeIButton;
     if(!strcmp(d,".u2f"))                              return TypeU2F;
@@ -147,6 +166,13 @@ static FFVFileType ffv_type_from_path(const char* path) {
     if(!strcmp(d,".xbm"))                              return TypeImage;
     if(!strcmp(d,".bmp"))                              return TypeBmp;
     if(!strcmp(d,".txt")||!strcmp(d,".csv"))           return TypeFile;
+    if(!strcmp(d,".md")||!strcmp(d,".log")||!strcmp(d,".json")||
+       !strcmp(d,".ini")||!strcmp(d,".cfg")||!strcmp(d,".conf")||
+       !strcmp(d,".xml")||!strcmp(d,".yml")||!strcmp(d,".yaml")||
+       !strcmp(d,".toml")||!strcmp(d,".c")||!strcmp(d,".h")||
+       !strcmp(d,".cpp")||!strcmp(d,".hpp")||!strcmp(d,".py")||
+       !strcmp(d,".sh")||!strcmp(d,".ver")||!strcmp(d,".nfo")||
+       !strcmp(d,".info"))                              return TypeText;
     return TypeUnknown;
 }
 
@@ -158,6 +184,10 @@ static const uint8_t* ffv_icon(FFVFileType t) {
     case TypeNfc:          return I_Nfc_10px.frames[0];
     case TypeInfrared:     return I_ir_10px.frames[0];
     case TypeLFRFID:       return I_125_10px.frames[0];
+    case TypeT5577:        return I_125_10px.frames[0];
+    case TypeProtoPirate:  return I_sub1_10px.frames[0];
+    case TypePicopass:     return I_Nfc_10px.frames[0];
+    case TypeText:         return I_file_10px.frames[0];
     case TypeBadUsb:       return I_badusb_10px.frames[0];
     case TypeIButton:      return I_ibutt_10px.frames[0];
     case TypeU2F:          return I_u2f_10px.frames[0];
@@ -186,6 +216,9 @@ static const FFVAppMapping ffv_app_mapping[] = {
     {TypeNfc,          {"NFC"},             1},
     {TypeInfrared,     {"Infrared"},        1},
     {TypeLFRFID,       {"125 kHz RFID"},    1},
+    {TypeT5577,        {"T5577"},           1},
+    {TypeProtoPirate,  {"ProtoPirate (Fox Edition)"}, 1},
+    {TypePicopass,     {"PicoPass"},         1},
     {TypeBadUsb,       {"Bad USB"},         1},
     {TypeIButton,      {"iButton"},         1},
     {TypeU2F,          {"U2F"},             1},
@@ -839,6 +872,137 @@ static void ffv_go_image_view(FFVApp* app){
     view_dispatcher_switch_to_view(app->view_dispatcher, ViewImage);
 }
 
+static void ffv_text_free(FFVApp* app){
+    if(app->text_buf){ free(app->text_buf); app->text_buf=NULL; }
+    if(app->text_lines){ free(app->text_lines); app->text_lines=NULL; }
+    app->text_len=0; app->text_line_count=0; app->text_top=0;
+}
+
+static void ffv_text_load(FFVApp* app, const char* path){
+    ffv_text_free(app);
+    app->text_lines = malloc(sizeof(size_t) * TXT_MAX_LINES);
+    if(!app->text_lines) return;
+    app->text_buf = malloc(TXT_CAP + 1);
+    if(!app->text_buf){ free(app->text_lines); app->text_lines=NULL; return; }
+
+    File* file = storage_file_alloc(app->storage);
+    size_t rd = 0;
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)){
+        while(rd < TXT_CAP){
+            size_t got = storage_file_read(file, app->text_buf + rd, TXT_CAP - rd);
+            if(got == 0) break;
+            rd += got;
+        }
+    }
+    storage_file_close(file);
+    storage_file_free(file);
+    app->text_buf[rd] = '\0';
+
+    /* normalise in place: drop CR, TAB -> space, other control bytes -> '.' so a
+       stray binary byte cannot corrupt the glyph run; keep LF as the line break */
+    size_t w = 0;
+    for(size_t r = 0; r < rd; r++){
+        unsigned char c = (unsigned char)app->text_buf[r];
+        if(c == '\r') continue;
+        else if(c == '\t') app->text_buf[w++] = ' ';
+        else if(c == '\n') app->text_buf[w++] = '\n';
+        else if(c < 0x20 || c == 0x7f) app->text_buf[w++] = '.';
+        else app->text_buf[w++] = (char)c;
+    }
+    app->text_buf[w] = '\0';
+    app->text_len = w;
+
+    /* wrapped line-start index: break on LF or every TXT_WRAP_COLS chars */
+    size_t lc = 0;
+    app->text_lines[lc++] = 0;
+    size_t col = 0;
+    for(size_t i = 0; i < w && lc < TXT_MAX_LINES; i++){
+        if(app->text_buf[i] == '\n'){
+            app->text_lines[lc++] = i + 1;
+            col = 0;
+        } else {
+            col++;
+            if(col >= TXT_WRAP_COLS && (i + 1) < w && app->text_buf[i+1] != '\n'){
+                app->text_lines[lc++] = i + 1;
+                col = 0;
+            }
+        }
+    }
+    app->text_line_count = lc;
+    app->text_top = 0;
+}
+
+static void ffv_text_draw_cb(Canvas* canvas, void* model){
+    UNUSED(model);
+    FFVApp* app = s_ffv_ctx; if(!app) return;
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontSecondary);
+
+    if(!app->text_buf || app->text_line_count == 0){
+        canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter,
+            app->text_buf ? "(empty)" : "Can't open file");
+        return;
+    }
+
+    char line[TXT_WRAP_COLS + 1];
+    int y = 10;
+    for(size_t row = 0; row < TXT_ROWS_VIS; row++){
+        size_t li = app->text_top + row;
+        if(li >= app->text_line_count) break;
+        size_t start = app->text_lines[li];
+        size_t end = (li + 1 < app->text_line_count) ? app->text_lines[li+1] : app->text_len;
+        if(end > start && app->text_buf[end-1] == '\n') end--;
+        size_t n = end - start;
+        if(n > TXT_WRAP_COLS) n = TXT_WRAP_COLS;
+        memcpy(line, app->text_buf + start, n);
+        line[n] = '\0';
+        canvas_draw_str(canvas, 0, y, line);
+        y += 10;
+    }
+
+    if(app->text_line_count > TXT_ROWS_VIS){
+        size_t max_top = app->text_line_count - TXT_ROWS_VIS;
+        int track = 64;
+        int knob = (int)((uint32_t)app->text_top * (track - 6) / (max_top ? max_top : 1));
+        canvas_draw_frame(canvas, 125, 0, 3, track);
+        canvas_draw_box(canvas, 125, knob, 3, 6);
+    }
+}
+
+static bool ffv_text_input_cb(InputEvent* ev, void* ctx){
+    FFVApp* app = (FFVApp*)ctx;
+    if(ev->key == InputKeyBack) return false;
+    if(ev->type != InputTypeShort && ev->type != InputTypeRepeat) return false;
+    if(app->text_line_count == 0) return false;
+    size_t max_top = (app->text_line_count > TXT_ROWS_VIS) ? app->text_line_count - TXT_ROWS_VIS : 0;
+    switch(ev->key){
+    case InputKeyUp:
+        if(app->text_top > 0) app->text_top--;
+        break;
+    case InputKeyDown:
+        if(app->text_top < max_top) app->text_top++;
+        break;
+    case InputKeyLeft:
+        app->text_top = (app->text_top > TXT_ROWS_VIS) ? app->text_top - TXT_ROWS_VIS : 0;
+        break;
+    case InputKeyRight:
+        app->text_top = (app->text_top + TXT_ROWS_VIS < max_top) ? app->text_top + TXT_ROWS_VIS : max_top;
+        break;
+    default:
+        return false;
+    }
+    with_view_model(app->text_view, uint8_t* _m, { UNUSED(_m); }, true);
+    return true;
+}
+
+static void ffv_go_text_view(FFVApp* app){
+    const char* path = furi_string_get_cstr(app->selected_path);
+    ffv_text_load(app, path);
+    app->text_from_favs = app->menu_from_favs;
+    app->current_view = ViewText;
+    view_dispatcher_switch_to_view(app->view_dispatcher, ViewText);
+}
+
 static bool ffv_nav_callback(void* ctx){
     FFVApp* app=(FFVApp*)ctx;
     switch(app->current_view){
@@ -862,6 +1026,20 @@ static bool ffv_nav_callback(void* ctx){
                 }
             }
 
+            ffv_fav_scroll_start(app);
+            app->current_view = ViewFavourites;
+            view_dispatcher_switch_to_view(app->view_dispatcher, ViewFavourites);
+        } else {
+            file_browser_stop(app->browser);
+            file_browser_start(app->browser, app->selected_path);
+            app->current_view = ViewBrowser;
+            view_dispatcher_switch_to_view(app->view_dispatcher, ViewBrowser);
+        }
+        return true;
+    }
+    case ViewText: {
+        ffv_text_free(app);
+        if(app->text_from_favs) {
             ffv_fav_scroll_start(app);
             app->current_view = ViewFavourites;
             view_dispatcher_switch_to_view(app->view_dispatcher, ViewFavourites);
@@ -1045,12 +1223,17 @@ static void ffv_do_action(FFVApp* app, FFVMenuAction action){
         if(app->menu_is_app_picker) {
 
             if(app->app_picker_targets[app->menu_selected][0] == '\0') {
-                if(ffv_type_from_path(path) == TypeBmp) {
+                FFVFileType vt = ffv_type_from_path(path);
+                if(vt == TypeBmp) {
                     ffv_show_menu_toast(app);
                     break;
                 }
                 app->menu_is_app_picker = false;
-                ffv_go_image_view(app);
+                if(vt == TypeText || vt == TypeFile) {
+                    ffv_go_text_view(app);
+                } else {
+                    ffv_go_image_view(app);
+                }
                 break;
             }
             app->menu_is_app_picker = false;
@@ -1098,6 +1281,21 @@ static void ffv_do_action(FFVApp* app, FFVMenuAction action){
                 app->menu_is_app_picker = true;
                 with_view_model(app->menu_view, uint8_t* _m, { UNUSED(_m); }, true);
             }
+        } else if(t == TypeText) {
+            ffv_go_text_view(app);
+        } else if(t == TypeFile) {
+            app->menu_count = 0;
+            strlcpy(app->menu_labels[app->menu_count], "View", 24);
+            app->app_picker_targets[app->menu_count][0] = '\0';
+            app->menu_actions[app->menu_count] = MenuRun;
+            app->menu_count++;
+            strlcpy(app->menu_labels[app->menu_count], "FlipNote", 24);
+            strlcpy(app->app_picker_targets[app->menu_count], "FlipNote", 24);
+            app->menu_actions[app->menu_count] = MenuRun;
+            app->menu_count++;
+            app->menu_selected = 0;
+            app->menu_is_app_picker = true;
+            with_view_model(app->menu_view, uint8_t* _m, { UNUSED(_m); }, true);
         } else {
             const char* candidates[FFV_MAX_APPS_PER_TYPE];
             uint8_t n = ffv_apps_for(t, candidates);
@@ -1233,6 +1431,13 @@ static FFVApp* ffv_alloc(void){
     view_allocate_model(app->image_view,ViewModelTypeLocking,sizeof(uint8_t));
     view_dispatcher_add_view(app->view_dispatcher,ViewImage,app->image_view);
 
+    app->text_view=view_alloc();
+    view_set_draw_callback(app->text_view,ffv_text_draw_cb);
+    view_set_input_callback(app->text_view,ffv_text_input_cb);
+    view_set_context(app->text_view,app);
+    view_allocate_model(app->text_view,ViewModelTypeLocking,sizeof(uint8_t));
+    view_dispatcher_add_view(app->view_dispatcher,ViewText,app->text_view);
+
     return app;
 }
 
@@ -1240,6 +1445,7 @@ static void ffv_free(FFVApp* app){
     s_ffv_ctx=NULL;
     ffv_favs_free(app);
     ffv_image_list_free(app);
+    ffv_text_free(app);
 
     if(app->browser_started) file_browser_stop(app->browser);
     view_dispatcher_remove_view(app->view_dispatcher,ViewStart);
@@ -1248,6 +1454,7 @@ static void ffv_free(FFVApp* app){
     view_dispatcher_remove_view(app->view_dispatcher,ViewMenu);
     view_dispatcher_remove_view(app->view_dispatcher,ViewTextInput);
     view_dispatcher_remove_view(app->view_dispatcher,ViewImage);
+    view_dispatcher_remove_view(app->view_dispatcher,ViewText);
     view_free(app->start_view);
     file_browser_free(app->browser);
     furi_timer_stop(app->fav_scroll_timer);
@@ -1258,6 +1465,7 @@ static void ffv_free(FFVApp* app){
     view_free(app->menu_view);
     text_input_free(app->text_input);
     view_free(app->image_view);
+    view_free(app->text_view);
     view_dispatcher_free(app->view_dispatcher);
     furi_string_free(app->selected_path);
     furi_string_free(app->current_dir);

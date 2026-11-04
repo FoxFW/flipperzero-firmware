@@ -101,6 +101,7 @@ void subghz_read_raw_set_start_countdown(SubGhzReadRAW* instance, uint8_t second
         true);
 }
 
+
 SubGhzReadRAWStatus subghz_read_raw_get_status(SubGhzReadRAW* instance) {
     furi_assert(instance);
     SubGhzReadRAWStatus status = SubGhzReadRAWStatusIDLE;

@@ -21,6 +21,7 @@ static void bt_cli_command_hci_info(PipeSide* pipe, FuriString* args, void* cont
     furi_string_free(buffer);
 }
 
+#ifdef FURI_DEBUG
 static void bt_cli_command_carrier_tx(PipeSide* pipe, FuriString* args, void* context) {
     UNUSED(context);
     int channel = 0;
@@ -167,11 +168,14 @@ static void bt_cli_command_packet_rx(PipeSide* pipe, FuriString* args, void* con
     } while(false);
 }
 
+#endif
+
 static void bt_cli_print_usage(void) {
     printf("Usage:\r\n");
     printf("bt <cmd> <args>\r\n");
     printf("Cmd list:\r\n");
     printf("\thci_info\t - HCI info\r\n");
+#ifdef FURI_DEBUG
     if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug) && furi_hal_bt_is_testing_supported()) {
         printf("\ttx_carrier <channel:0-39> <power:0-6>\t - start tx carrier test\r\n");
         printf("\trx_carrier <channel:0-39>\t - start rx carrier test\r\n");
@@ -179,6 +183,7 @@ static void bt_cli_print_usage(void) {
             "\ttx_packet <channel:0-39> <pattern:0-5> <datarate:1-2>\t - start tx packet test\r\n");
         printf("\trx_packet <channel:0-39> <datarate:1-2>\t - start rx packer test\r\n");
     }
+#endif
 }
 
 static void bt_cli(PipeSide* pipe, FuriString* args, void* context) {
@@ -199,6 +204,7 @@ static void bt_cli(PipeSide* pipe, FuriString* args, void* context) {
             bt_cli_command_hci_info(pipe, args, NULL);
             break;
         }
+#ifdef FURI_DEBUG
         if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug) && furi_hal_bt_is_testing_supported()) {
             if(furi_string_cmp_str(cmd, "tx_carrier") == 0) {
                 bt_cli_command_carrier_tx(pipe, args, NULL);
@@ -217,6 +223,7 @@ static void bt_cli(PipeSide* pipe, FuriString* args, void* context) {
                 break;
             }
         }
+#endif
 
         bt_cli_print_usage();
     } while(false);

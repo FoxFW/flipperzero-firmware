@@ -6,6 +6,8 @@
 #include "../blocks/generic.h"
 #include "../blocks/math.h"
 #include <lib/toolbox/manchester_decoder.h>
+#include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "BmwCas4"
 
@@ -35,12 +37,16 @@ struct SubGhzProtocolDecoderBmwCas4 {
     uint8_t bit_count;
     uint32_t te_last;
 };
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderBmwCas4);
+
 
 struct SubGhzProtocolEncoderBmwCas4 {
     SubGhzProtocolEncoderBase base;
     SubGhzProtocolBlockEncoder encoder;
     SubGhzBlockGeneric generic;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderBmwCas4);
+
 
 typedef enum {
     BmwCas4DecoderStepReset = 0,
@@ -50,22 +56,16 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_bmw_cas4_decoder = {
     .alloc = subghz_protocol_decoder_bmw_cas4_alloc,
-    .free = subghz_protocol_decoder_bmw_cas4_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_bmw_cas4_feed,
     .reset = subghz_protocol_decoder_bmw_cas4_reset,
     .get_hash_data = subghz_protocol_decoder_bmw_cas4_get_hash_data,
-    .serialize = subghz_protocol_decoder_bmw_cas4_serialize,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_bmw_cas4_deserialize,
-    .get_string = subghz_protocol_decoder_bmw_cas4_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_bmw_cas4_encoder = {
-    .alloc = subghz_protocol_encoder_bmw_cas4_alloc,
-    .free = subghz_protocol_encoder_bmw_cas4_free,
-    .deserialize = subghz_protocol_encoder_bmw_cas4_deserialize,
-    .stop = subghz_protocol_encoder_bmw_cas4_stop,
-    .yield = subghz_protocol_encoder_bmw_cas4_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_bmw_cas4_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_bmw_cas4");
 
 const SubGhzProtocol subghz_protocol_bmw_cas4 = {
     .name = BMW_CAS4_PROTOCOL_NAME,
@@ -74,46 +74,8 @@ const SubGhzProtocol subghz_protocol_bmw_cas4 = {
             SubGhzProtocolFlag_Decodable |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
     .decoder = &subghz_protocol_bmw_cas4_decoder,
-    .encoder = &subghz_protocol_bmw_cas4_encoder,
+    .encoder = &subghz_protocol_bmw_cas4_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_bmw_cas4_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderBmwCas4* instance = calloc(1, sizeof(SubGhzProtocolEncoderBmwCas4));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_bmw_cas4;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.is_running = false;
-    instance->encoder.size_upload = 1;
-    instance->encoder.upload = malloc(sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-    return instance;
-}
-
-void subghz_protocol_encoder_bmw_cas4_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderBmwCas4* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_bmw_cas4_deserialize(void* context, FlipperFormat* flipper_format) {
-    UNUSED(context);
-    UNUSED(flipper_format);
-    return SubGhzProtocolStatusError;
-}
-
-void subghz_protocol_encoder_bmw_cas4_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderBmwCas4* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_bmw_cas4_yield(void* context) {
-    UNUSED(context);
-    return level_duration_reset();
-}
 
 static void bmw_cas4_rebuild_raw_data(SubGhzProtocolDecoderBmwCas4* instance) {
     memset(instance->raw_data, 0, sizeof(instance->raw_data));
@@ -133,10 +95,7 @@ void* subghz_protocol_decoder_bmw_cas4_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_bmw_cas4_free(void* context) {
-    furi_check(context);
-    free(context);
-}
+
 
 void subghz_protocol_decoder_bmw_cas4_reset(void* context) {
     furi_check(context);
@@ -262,14 +221,7 @@ uint8_t subghz_protocol_decoder_bmw_cas4_get_hash_data(void* context) {
     return subghz_protocol_blocks_get_hash_data(&dec, (dec.decode_count_bit / 8) + 1);
 }
 
-SubGhzProtocolStatus subghz_protocol_decoder_bmw_cas4_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_check(context);
-    SubGhzProtocolDecoderBmwCas4* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
+
 
 SubGhzProtocolStatus
     subghz_protocol_decoder_bmw_cas4_deserialize(void* context, FlipperFormat* flipper_format) {
@@ -283,19 +235,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_bmw_cas4_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderBmwCas4* instance = context;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Raw:%02X %02X%02X%02X%02X%02X %02X %02X\r\n",
-        instance->generic.protocol_name,
-        (int)instance->generic.data_count_bit,
-        instance->raw_data[0],
-        instance->raw_data[1], instance->raw_data[2],
-        instance->raw_data[3], instance->raw_data[4], instance->raw_data[5],
-        instance->raw_data[6],
-        instance->raw_data[7]);
-}

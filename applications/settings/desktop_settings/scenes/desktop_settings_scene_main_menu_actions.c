@@ -1,133 +1,21 @@
+#include <furi.h>
 #include <gui/scene_manager.h>
 #include <gui/modules/submenu.h>
-#include <storage/storage.h>
-#include <flipper_application/flipper_application.h>
 #include <string.h>
 
 #include "../desktop_settings_app.h"
 #include "desktop_settings_scene.h"
 #include "desktop_settings_scene_i.h"
-
-#define MAIN_MENU_PINS_MAX       12
-#define MAIN_MENU_PINS_PATH_LEN  128
-#define MAIN_MENU_PINS_NAME_LEN  7
-#define MAIN_MENU_PINS_FILE_NAME ".main_menu.pins"
-
-typedef struct {
-    char paths[MAIN_MENU_PINS_MAX][MAIN_MENU_PINS_PATH_LEN];
-    char names[MAIN_MENU_PINS_MAX][MAIN_MENU_PINS_NAME_LEN];
-    uint8_t count;
-} MainMenuPinsUI;
+#include "../helpers/main_menu_layout_ui.h"
 
 typedef enum {
+    MainMenuActionToggle,
     MainMenuActionMoveUp,
     MainMenuActionMoveDown,
     MainMenuActionRename,
-    MainMenuActionRemove,
+    MainMenuActionDelete,
     MainMenuActionCancel,
 } MainMenuAction;
-
-static void main_menu_pins_load(MainMenuPinsUI* pins) {
-    pins->count = 0;
-
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* file = storage_file_alloc(storage);
-
-    if(storage_file_open(file, INT_PATH(MAIN_MENU_PINS_FILE_NAME), FSAM_READ, FSOM_OPEN_EXISTING)) {
-        char line[MAIN_MENU_PINS_PATH_LEN];
-        size_t line_len = 0;
-        uint8_t byte;
-
-        while(pins->count < MAIN_MENU_PINS_MAX && storage_file_read(file, &byte, 1) == 1) {
-            if(byte == '\n' || byte == '\r') {
-                if(line_len > 0) {
-                    line[line_len] = '\0';
-                    char* sep = strchr(line, '|');
-                    if(sep) {
-                        *sep = '\0';
-                        strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                        strlcpy(
-                            pins->names[pins->count], sep + 1, sizeof(pins->names[pins->count]));
-                    } else {
-                        strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                        pins->names[pins->count][0] = '\0';
-                    }
-                    pins->count++;
-                    line_len = 0;
-                }
-            } else if(line_len < sizeof(line) - 1) {
-                line[line_len++] = (char)byte;
-            }
-        }
-
-        if(line_len > 0 && pins->count < MAIN_MENU_PINS_MAX) {
-            line[line_len] = '\0';
-            char* sep = strchr(line, '|');
-            if(sep) {
-                *sep = '\0';
-                strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                strlcpy(pins->names[pins->count], sep + 1, sizeof(pins->names[pins->count]));
-            } else {
-                strlcpy(pins->paths[pins->count], line, sizeof(pins->paths[pins->count]));
-                pins->names[pins->count][0] = '\0';
-            }
-            pins->count++;
-        }
-    }
-
-    storage_file_close(file);
-    storage_file_free(file);
-    furi_record_close(RECORD_STORAGE);
-}
-
-static void main_menu_pins_save(const MainMenuPinsUI* pins) {
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* file = storage_file_alloc(storage);
-
-    if(storage_file_open(
-           file, INT_PATH(MAIN_MENU_PINS_FILE_NAME), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        for(uint8_t i = 0; i < pins->count; i++) {
-            storage_file_write(file, pins->paths[i], strlen(pins->paths[i]));
-            if(pins->names[i][0] != '\0') {
-                storage_file_write(file, "|", 1);
-                storage_file_write(file, pins->names[i], strlen(pins->names[i]));
-            }
-            storage_file_write(file, "\n", 1);
-        }
-    }
-
-    storage_file_close(file);
-    storage_file_free(file);
-    furi_record_close(RECORD_STORAGE);
-}
-
-static void main_menu_pin_label_from_filename(const char* path, char* out, size_t out_size) {
-    const char* slash = strrchr(path, '/');
-    const char* base = slash ? slash + 1 : path;
-    strlcpy(out, base, out_size);
-    size_t len = strlen(out);
-    if(len > 4 && strcmp(out + len - 4, ".fap") == 0) {
-        out[len - 4] = '\0';
-    }
-}
-
-static void
-    main_menu_pin_label(Storage* storage, const char* path, char* out, size_t out_size) {
-    FuriString* path_str = furi_string_alloc_set_str(path);
-    FuriString* name_str = furi_string_alloc();
-    uint8_t icon_buf[FAP_MANIFEST_MAX_ICON_SIZE];
-    uint8_t* icon_ptr = icon_buf;
-
-    bool loaded = flipper_application_load_name_and_icon(path_str, storage, &icon_ptr, name_str);
-    if(loaded && !furi_string_empty(name_str)) {
-        strlcpy(out, furi_string_get_cstr(name_str), out_size);
-    } else {
-        main_menu_pin_label_from_filename(path, out, out_size);
-    }
-
-    furi_string_free(path_str);
-    furi_string_free(name_str);
-}
 
 static void desktop_settings_scene_main_menu_actions_submenu_callback(
     void* context,
@@ -141,23 +29,33 @@ void desktop_settings_scene_main_menu_actions_on_enter(void* context) {
     Submenu* submenu = app->submenu;
     submenu_reset(submenu);
 
-    uint32_t pin_index = scene_manager_get_scene_state(
-        app->scene_manager, DesktopSettingsAppSceneMainMenuActions);
+    uint32_t index =
+        scene_manager_get_scene_state(app->scene_manager, DesktopSettingsAppSceneMainMenuActions);
 
-    MainMenuPinsUI* pins = malloc(sizeof(MainMenuPinsUI));
-    main_menu_pins_load(pins);
+    MmLayout* layout = malloc(sizeof(MmLayout));
+    mm_layout_load(layout);
 
-    char header[MAIN_MENU_PINS_PATH_LEN + 8] = "App";
-    if(pin_index < pins->count) {
-        Storage* storage = furi_record_open(RECORD_STORAGE);
-        char* label = malloc(MAIN_MENU_PINS_PATH_LEN);
-        main_menu_pin_label(storage, pins->paths[pin_index], label, MAIN_MENU_PINS_PATH_LEN);
-        furi_record_close(RECORD_STORAGE);
-        strlcpy(header, label, sizeof(header));
-        free(label);
+    char header[MM_LAYOUT_LABEL_LEN + 4] = "App";
+    bool protect = false;
+    bool deletable = false;
+    bool enabled = true;
+    if(index < layout->count) {
+        const MmEntry* e = &layout->entries[index];
+        strlcpy(header, mm_layout_entry_display(e), sizeof(header));
+        protect = mm_layout_entry_protected(e);
+        deletable = mm_layout_entry_deletable(e);
+        enabled = e->enabled;
     }
-    free(pins);
+    free(layout);
 
+    if(!protect) {
+        submenu_add_item(
+            submenu,
+            enabled ? "Hide" : "Show",
+            MainMenuActionToggle,
+            desktop_settings_scene_main_menu_actions_submenu_callback,
+            app);
+    }
     submenu_add_item(
         submenu,
         "Move Up",
@@ -176,12 +74,14 @@ void desktop_settings_scene_main_menu_actions_on_enter(void* context) {
         MainMenuActionRename,
         desktop_settings_scene_main_menu_actions_submenu_callback,
         app);
-    submenu_add_item(
-        submenu,
-        "Remove",
-        MainMenuActionRemove,
-        desktop_settings_scene_main_menu_actions_submenu_callback,
-        app);
+    if(deletable) {
+        submenu_add_item(
+            submenu,
+            "Delete",
+            MainMenuActionDelete,
+            desktop_settings_scene_main_menu_actions_submenu_callback,
+            app);
+    }
     submenu_add_item(
         submenu,
         "Cancel",
@@ -198,66 +98,49 @@ bool desktop_settings_scene_main_menu_actions_on_event(void* context, SceneManag
     bool consumed = false;
 
     if(event.type == SceneManagerEventTypeCustom) {
-        uint32_t pin_index = scene_manager_get_scene_state(
+        uint32_t index = scene_manager_get_scene_state(
             app->scene_manager, DesktopSettingsAppSceneMainMenuActions);
 
         if(event.event == MainMenuActionRename) {
             scene_manager_set_scene_state(
-                app->scene_manager, DesktopSettingsAppSceneMainMenuRename, pin_index);
+                app->scene_manager, DesktopSettingsAppSceneMainMenuRename, index);
             scene_manager_next_scene(app->scene_manager, DesktopSettingsAppSceneMainMenuRename);
             return true;
         }
 
-        MainMenuPinsUI* pins = malloc(sizeof(MainMenuPinsUI));
-        main_menu_pins_load(pins);
+        if(event.event != MainMenuActionCancel) {
+            MmLayout* layout = malloc(sizeof(MmLayout));
+            mm_layout_load(layout);
 
-        if(pin_index < pins->count) {
-            if(event.event == MainMenuActionMoveUp) {
-                if(pin_index > 0) {
-                    char tmp_path[MAIN_MENU_PINS_PATH_LEN];
-                    char tmp_name[MAIN_MENU_PINS_NAME_LEN];
-                    strlcpy(tmp_path, pins->paths[pin_index], sizeof(tmp_path));
-                    strlcpy(tmp_name, pins->names[pin_index], sizeof(tmp_name));
-                    strlcpy(
-                        pins->paths[pin_index],
-                        pins->paths[pin_index - 1],
-                        sizeof(pins->paths[pin_index]));
-                    strlcpy(
-                        pins->names[pin_index],
-                        pins->names[pin_index - 1],
-                        sizeof(pins->names[pin_index]));
-                    strlcpy(pins->paths[pin_index - 1], tmp_path, sizeof(pins->paths[pin_index - 1]));
-                    strlcpy(pins->names[pin_index - 1], tmp_name, sizeof(pins->names[pin_index - 1]));
-                    main_menu_pins_save(pins);
+            if(index < layout->count) {
+                MmEntry* e = &layout->entries[index];
+                switch(event.event) {
+                case MainMenuActionToggle:
+                    if(!mm_layout_entry_protected(e)) {
+                        e->enabled = !e->enabled;
+                        mm_layout_save(layout);
+                    }
+                    break;
+                case MainMenuActionMoveUp:
+                    mm_layout_move(layout, (uint8_t)index, -1);
+                    mm_layout_save(layout);
+                    break;
+                case MainMenuActionMoveDown:
+                    mm_layout_move(layout, (uint8_t)index, +1);
+                    mm_layout_save(layout);
+                    break;
+                case MainMenuActionDelete:
+                    if(mm_layout_entry_deletable(e)) {
+                        mm_layout_remove(layout, (uint8_t)index);
+                        mm_layout_save(layout);
+                    }
+                    break;
+                default:
+                    break;
                 }
-            } else if(event.event == MainMenuActionMoveDown) {
-                if(pin_index + 1 < pins->count) {
-                    char tmp_path[MAIN_MENU_PINS_PATH_LEN];
-                    char tmp_name[MAIN_MENU_PINS_NAME_LEN];
-                    strlcpy(tmp_path, pins->paths[pin_index], sizeof(tmp_path));
-                    strlcpy(tmp_name, pins->names[pin_index], sizeof(tmp_name));
-                    strlcpy(
-                        pins->paths[pin_index],
-                        pins->paths[pin_index + 1],
-                        sizeof(pins->paths[pin_index]));
-                    strlcpy(
-                        pins->names[pin_index],
-                        pins->names[pin_index + 1],
-                        sizeof(pins->names[pin_index]));
-                    strlcpy(pins->paths[pin_index + 1], tmp_path, sizeof(pins->paths[pin_index + 1]));
-                    strlcpy(pins->names[pin_index + 1], tmp_name, sizeof(pins->names[pin_index + 1]));
-                    main_menu_pins_save(pins);
-                }
-            } else if(event.event == MainMenuActionRemove) {
-                for(uint8_t i = pin_index; i + 1 < pins->count; i++) {
-                    strlcpy(pins->paths[i], pins->paths[i + 1], sizeof(pins->paths[i]));
-                    strlcpy(pins->names[i], pins->names[i + 1], sizeof(pins->names[i]));
-                }
-                pins->count--;
-                main_menu_pins_save(pins);
             }
+            free(layout);
         }
-        free(pins);
 
         scene_manager_previous_scene(app->scene_manager);
         consumed = true;

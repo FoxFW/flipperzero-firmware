@@ -99,18 +99,12 @@ static void protopirate_receiver_info_build_normal_widget(ProtoPirateApp* app) {
             }
             if(*current == '\0') break;
         }
-        widget_add_string_multiline_element(
-            app->widget,
-            0,
-            11,
-            AlignLeft,
-            AlignTop,
-            FontSecondary,
-            furi_string_get_cstr(reformatted));
+        widget_add_text_scroll_element(
+            app->widget, 0, 11, 128, 36, furi_string_get_cstr(reformatted));
         furi_string_free(reformatted);
     } else {
-        widget_add_string_multiline_element(
-            app->widget, 0, 11, AlignLeft, AlignTop, FontSecondary, text_str);
+        widget_add_text_scroll_element(
+            app->widget, 0, 11, 128, 36, text_str);
     }
 
     bool needs_bf = false;

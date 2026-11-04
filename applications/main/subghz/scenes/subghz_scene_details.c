@@ -21,8 +21,11 @@ void subghz_scene_details_on_enter(void* context) {
     widget_add_string_element(
         subghz->widget, 64, 2, AlignCenter, AlignTop, FontPrimary, proto);
 
+    FuriString* body_str = furi_string_alloc_set_str(body);
+    furi_string_trim(body_str);
     widget_add_text_scroll_element(
-        subghz->widget, 0, 14, 128, 50, body);
+        subghz->widget, 0, 14, 128, 50, furi_string_get_cstr(body_str));
+    furi_string_free(body_str);
 
     view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdWidget);
 }

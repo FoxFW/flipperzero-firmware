@@ -9,7 +9,7 @@ void nfc_scene_supported_card_on_enter(void* context) {
 
     if(nfc_supported_cards_parse(instance->nfc_supported_cards, instance->nfc_device, temp_str)) {
         widget_add_text_scroll_element(
-            instance->widget, 0, 0, 128, 52, furi_string_get_cstr(temp_str));
+            instance->widget, 0, 0, 128, 47, furi_string_get_cstr(temp_str));
         widget_add_button_element(
             instance->widget,
             GuiButtonTypeRight,

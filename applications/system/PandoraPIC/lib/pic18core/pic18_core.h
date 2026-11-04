@@ -72,6 +72,29 @@ typedef void (*Pic18PortWrite)(struct Pic18Cpu* cpu, uint16_t addr, uint8_t val,
  * decides whether to filter by pc. */
 typedef void (*Pic18CodeHook)(struct Pic18Cpu* cpu, uint32_t pc, void* ctx);
 
+/* Interrupt-poll hook: lets the frontend model an interrupt source the core
+ * does not (e.g. a board whose firmware dispatches its timer tick through its
+ * own software flags rather than INTCON/PIE). Called between instructions,
+ * only while the global interrupt enable is set and no on-chip interrupt is
+ * already pending. Return the vector address to take (e.g. 0x000008), or a
+ * negative value for "nothing to service". The core performs the actual
+ * vectoring (push PC, shadow WREG/STATUS/BSR, clear GIE, jump), so RETFIE
+ * returns and re-enables interrupts exactly as for a hardware interrupt. */
+typedef int32_t (*Pic18IrqPoll)(struct Pic18Cpu* cpu, void* ctx);
+
+/* Program-memory read hook: lets the frontend demand-page the code image from
+ * external storage instead of holding all of it in RAM. When set, every code
+ * fetch (instruction fetch and TBLRD of code addresses < 0x300000) is routed
+ * here instead of indexing prog[]. Must return the byte at absolute code
+ * address a (0xFF for addresses the firmware does not populate). Config words
+ * (>= 0x300000) are NOT routed here - they stay in the config table. */
+typedef uint8_t (*Pic18ProgRead)(struct Pic18Cpu* cpu, uint32_t a, void* ctx);
+
+/* Program-memory write hook (TBLWT). When set, flash writes are routed here
+ * instead of into prog[]. These keyfob firmwares do not self-program flash;
+ * the frontend's paged image is read-only and simply drops writes. */
+typedef void (*Pic18ProgWrite)(struct Pic18Cpu* cpu, uint32_t a, uint8_t v, void* ctx);
+
 /* ----------------------------------------------------------------- state --- */
 typedef struct Pic18Cpu {
     /* Program memory: pointer owned by the caller (see header). */
@@ -100,6 +123,17 @@ typedef struct Pic18Cpu {
     uint8_t  halted;
     uint8_t  sleeping;
 
+    /* Timer + interrupt subsystem (see pic18_core.c "timers_advance" and
+     * "service_interrupt"). The timer registers themselves live in ram[] at
+     * their SFR addresses; these are the prescaler/postscaler accumulators and
+     * the TMR0 16-bit write buffer that the register model needs on the side. */
+    uint32_t t0_presc;   /* TMR0 prescaler cycle accumulator            */
+    uint8_t  t0_wrbuf;   /* TMR0 16-bit write buffer (written via TMR0H) */
+    uint32_t t1_presc;   /* TMR1 prescaler cycle accumulator            */
+    uint32_t t2_presc;   /* TMR2 prescaler cycle accumulator            */
+    uint8_t  t2_postsc;  /* TMR2 postscaler accumulator                 */
+    uint32_t t3_presc;   /* TMR3 prescaler cycle accumulator            */
+
     /* Default value for non-intercepted PORT reads */
     uint8_t  default_port;
 
@@ -112,6 +146,16 @@ typedef struct Pic18Cpu {
     void*          port_write_ctx;
     Pic18CodeHook  on_code;      /* address trace/hook (optional) */
     void*          code_ctx;
+    Pic18IrqPoll   on_irq;       /* frontend interrupt source (optional) */
+    void*          irq_ctx;
+
+    /* Optional program-memory paging hooks (see typedefs above). When on_prog
+     * is set, prog[] is not used for code reads; when on_prog_write is set,
+     * TBLWT is routed to it. Both default to NULL (direct prog[] access). */
+    Pic18ProgRead  on_prog;      /* code-read hook (paging)            */
+    void*          prog_ctx;
+    Pic18ProgWrite on_prog_write;/* code-write hook (TBLWT; optional)  */
+    void*          progw_ctx;
 } Pic18Cpu;
 
 /* ---------------------------------------------------------------- API ------- */

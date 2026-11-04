@@ -75,3 +75,20 @@ WidgetElement* widget_element_button_create(
 
     return gui_button;
 }
+
+bool widget_element_is_button(WidgetElement* element) {
+    return element && element->input == gui_button_input;
+}
+
+void widget_element_button_get(WidgetElement* element, GuiButtonType* type, const char** text) {
+    GuiButtonModel* model = element->model;
+    if(type) *type = model->button_type;
+    if(text) *text = furi_string_get_cstr(model->text);
+}
+
+void widget_element_button_invoke(WidgetElement* element, InputType input_type) {
+    GuiButtonModel* model = element->model;
+    if(model->callback) {
+        model->callback(model->button_type, input_type, model->context);
+    }
+}

@@ -390,12 +390,9 @@ static void build_card_info_widget(CcidEmulatorApp* app) {
     char rules_str[32];
     snprintf(rules_str, sizeof(rules_str), "Rules: %u", app->card->rule_count);
     widget_add_string_element(
-        app->card_info, 0, 40, AlignLeft, AlignTop, FontSecondary, rules_str);
+        app->card_info, 0, 38, AlignLeft, AlignTop, FontSecondary, rules_str);
 
     /* Instruction */
-    widget_add_string_element(
-        app->card_info, 64, 55, AlignCenter, AlignBottom, FontSecondary, "Press OK to activate");
-
     /* Re-add button element (widget_reset clears all elements) */
     widget_add_button_element(
         app->card_info, GuiButtonTypeCenter, "Activate", card_info_button_callback, app);

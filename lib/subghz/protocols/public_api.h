@@ -74,6 +74,19 @@ bool subghz_protocol_nice_flor_s_create_data(
     SubGhzRadioPreset* preset,
     bool nice_one);
 
+bool subghz_protocol_nice_flor_s_create_data_ic(
+    void* context,
+    FlipperFormat* flipper_format,
+    uint32_t serial,
+    uint8_t btn,
+    uint16_t cnt,
+    SubGhzRadioPreset* preset,
+    bool nice_one,
+    bool o_code,
+    uint16_t ic);
+
+bool subghz_protocol_decoder_nice_flor_s_is_o_code_no_ic(void* context);
+
 bool subghz_protocol_somfy_telis_create_data(
     void* context,
     FlipperFormat* flipper_format,

@@ -107,6 +107,9 @@ struct Desktop {
     bool clock_lock_backlight_manually_off;
 
     FuriTimer* ram_watchdog_timer;
+    FuriTimer* fox_import_timer;
+    FuriTimer* fox_setup_timer;
+    FuriTimer* banner_timer;
     bool ram_watchdog_tripped;
 
     bool usb_msc_active;
@@ -115,5 +118,7 @@ struct Desktop {
 void desktop_lock(Desktop* desktop);
 void desktop_unlock(Desktop* desktop);
 void desktop_set_stealth_mode_state(Desktop* desktop, bool enabled);
+
+void desktop_ram_defrag_if_wedged(Desktop* desktop);
 void desktop_alarm_dismiss(Desktop* desktop);
 void desktop_cycle_wallpaper(Desktop* desktop);

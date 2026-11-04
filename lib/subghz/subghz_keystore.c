@@ -27,10 +27,37 @@ typedef enum {
     SubGhzKeystoreEncryptionAES256,
 } SubGhzKeystoreEncryption;
 
+typedef struct {
+    FlipperFormat* flipper_format;
+    Stream* stream;
+    bool encrypted;
+    bool stop;
+    bool pending_reset;
+    uint8_t buffer[FILE_BUFFER_SIZE];
+    size_t buffer_len;
+    size_t buffer_pos;
+    char* line;
+    char* decrypted;
+    size_t cursor;
+} SubGhzKeystoreReader;
+
+struct SubGhzKeystoreIter {
+    SubGhzKeystore* keystore;
+    Storage* storage;
+    size_t file_idx;
+    size_t ram_idx;
+    bool reader_open;
+    SubGhzKeystoreReader reader;
+    SubGhzKey current;
+};
+
 SubGhzKeystore* subghz_keystore_alloc(void) {
     SubGhzKeystore* instance = malloc(sizeof(SubGhzKeystore));
+    memset(instance, 0, sizeof(SubGhzKeystore));
 
     SubGhzKeyArray_init(instance->data);
+    SubGhzKeystoreNameArray_init(instance->names);
+    instance->names_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
     subghz_keystore_reset_kl(instance);
 
@@ -54,29 +81,29 @@ void subghz_keystore_free(SubGhzKeystore* instance) {
         }
     SubGhzKeyArray_clear(instance->data);
 
+    for(size_t i = 0; i < instance->file_count; i++) {
+        furi_string_free(instance->files[i]);
+    }
+    size_t names = SubGhzKeystoreNameArray_size(instance->names);
+    for(size_t i = 0; i < names; i++) {
+        furi_string_free(*SubGhzKeystoreNameArray_get(instance->names, i));
+    }
+    SubGhzKeystoreNameArray_clear(instance->names);
+    furi_mutex_free(instance->names_mutex);
+
     free(instance);
 }
 
-static void subghz_keystore_add_key(
-    SubGhzKeystore* instance,
-    const char* name,
-    uint64_t key,
-    uint16_t type) {
-    SubGhzKey* manufacture_code = SubGhzKeyArray_push_raw(instance->data);
-    manufacture_code->name = furi_string_alloc_set(name);
-    manufacture_code->key = key;
-    manufacture_code->type = type;
-}
-
-static bool subghz_keystore_process_line(SubGhzKeystore* instance, char* line) {
-    uint64_t key = 0;
+static bool subghz_keystore_parse_line(const char* line, FuriString* out_name, uint64_t* out_key, uint16_t* out_type) {
     uint16_t type = 0;
     char skey[17] = {0};
     char name[65] = {0};
     int ret = sscanf(line, "%16s:%hu:%64s", skey, &type, name);
-    key = strtoull(skey, NULL, 16);
+    uint64_t key = strtoull(skey, NULL, 16);
     if(ret == 3) {
-        subghz_keystore_add_key(instance, name, key, type);
+        furi_string_set_str(out_name, name);
+        *out_key = key;
+        *out_type = type;
         return true;
     } else {
         FURI_LOG_E(TAG, "Failed to load line: %s\r\n", line);
@@ -109,141 +136,253 @@ static void subghz_keystore_mess_with_iv(uint8_t* iv) {
                  : "r0", "r1", "r2", "r3", "memory");
 }
 
-static bool subghz_keystore_read_file(SubGhzKeystore* instance, Stream* stream, uint8_t* iv) {
-    bool result = true;
-    uint8_t buffer[FILE_BUFFER_SIZE];
-
-    char* decrypted_line = malloc(SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE);
-    char* encrypted_line = malloc(SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE);
-    size_t encrypted_line_cursor = 0;
-
-    do {
-        if(iv) {
-            if(!furi_hal_crypto_enclave_load_key(SUBGHZ_KEYSTORE_FILE_ENCRYPTION_KEY_SLOT, iv)) {
-                FURI_LOG_E(TAG, "Unable to load decryption key");
-                break;
-            }
-        }
-
-        size_t ret = 0;
-        do {
-            ret = stream_read(stream, buffer, FILE_BUFFER_SIZE);
-            for(uint16_t i = 0; i < ret; i++) {
-                if(buffer[i] == '\n' && encrypted_line_cursor > 0) {
-
-                    if(iv) {
-
-                        size_t len = strlen(encrypted_line);
-                        if(len % 32 == 0) {
-
-                            for(size_t i = 0; i < len; i += 2) {
-                                uint8_t hi_nibble = 0;
-                                uint8_t lo_nibble = 0;
-                                hex_char_to_hex_nibble(encrypted_line[i], &hi_nibble);
-                                hex_char_to_hex_nibble(encrypted_line[i + 1], &lo_nibble);
-                                encrypted_line[i / 2] = (hi_nibble << 4) | lo_nibble;
-                            }
-                            len /= 2;
-
-                            if(furi_hal_crypto_decrypt(
-                                   (uint8_t*)encrypted_line, (uint8_t*)decrypted_line, len)) {
-                                subghz_keystore_process_line(instance, decrypted_line);
-                            } else {
-                                FURI_LOG_E(TAG, "Decryption failed");
-                                result = false;
-                                break;
-                            }
-                        } else {
-                            FURI_LOG_E(TAG, "Invalid encrypted data: %s", encrypted_line);
-                        }
-                    } else {
-                        subghz_keystore_process_line(instance, encrypted_line);
-                    }
-
-                    memset(decrypted_line, 0, SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE);
-                    memset(encrypted_line, 0, SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE);
-                    encrypted_line_cursor = 0;
-                } else if(buffer[i] == '\r' || buffer[i] == '\n') {
-
-                } else {
-                    if(encrypted_line_cursor < SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE) {
-                        encrypted_line[encrypted_line_cursor] = buffer[i];
-                        encrypted_line_cursor++;
-                    } else {
-                        FURI_LOG_E(TAG, "Malformed file");
-                        result = false;
-                        break;
-                    }
-                }
-            }
-        } while(ret > 0 && result);
-
-        if(iv) furi_hal_crypto_enclave_unload_key(SUBGHZ_KEYSTORE_FILE_ENCRYPTION_KEY_SLOT);
-    } while(false);
-
-    free(encrypted_line);
-    free(decrypted_line);
-
-    return result;
-}
-
-bool subghz_keystore_load(SubGhzKeystore* instance, const char* file_name) {
-    furi_assert(instance);
-    bool result = false;
+static bool subghz_keystore_reader_open(
+    SubGhzKeystoreReader* reader,
+    Storage* storage,
+    const char* file_name) {
+    memset(reader, 0, sizeof(SubGhzKeystoreReader));
     uint8_t iv[16];
     uint32_t version;
     uint32_t encryption;
+    bool opened = false;
+    FuriString* filetype = furi_string_alloc();
 
-    FuriString* filetype;
-    filetype = furi_string_alloc();
-
-    FURI_LOG_I(TAG, "Loading keystore %s", file_name);
-
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-
-    FlipperFormat* flipper_format = flipper_format_file_alloc(storage);
+    reader->flipper_format = flipper_format_buffered_file_alloc(storage);
     do {
-        if(!flipper_format_file_open_existing(flipper_format, file_name)) {
-            FURI_LOG_E(TAG, "Unable to open file for read: %s", file_name);
+        if(!flipper_format_buffered_file_open_existing(reader->flipper_format, file_name)) {
+            FURI_LOG_D(TAG, "Unable to open file for read: %s", file_name);
             break;
         }
-        if(!flipper_format_read_header(flipper_format, filetype, &version)) {
+        if(!flipper_format_read_header(reader->flipper_format, filetype, &version)) {
             FURI_LOG_E(TAG, "Missing or incorrect header");
             break;
         }
-        if(!flipper_format_read_uint32(flipper_format, "Encryption", (uint32_t*)&encryption, 1)) {
+        if(!flipper_format_read_uint32(
+               reader->flipper_format, "Encryption", (uint32_t*)&encryption, 1)) {
             FURI_LOG_E(TAG, "Missing encryption type");
             break;
         }
-
         if(strcmp(furi_string_get_cstr(filetype), SUBGHZ_KEYSTORE_FILE_TYPE) != 0 ||
            version != SUBGHZ_KEYSTORE_FILE_VERSION) {
             FURI_LOG_E(TAG, "Type or version mismatch");
             break;
         }
-
-        Stream* stream = flipper_format_get_raw_stream(flipper_format);
         if(encryption == SubGhzKeystoreEncryptionNone) {
-            result = subghz_keystore_read_file(instance, stream, NULL);
+            reader->encrypted = false;
         } else if(encryption == SubGhzKeystoreEncryptionAES256) {
-            if(!flipper_format_read_hex(flipper_format, "IV", iv, 16)) {
+            if(!flipper_format_read_hex(reader->flipper_format, "IV", iv, 16)) {
                 FURI_LOG_E(TAG, "Missing IV");
                 break;
             }
             subghz_keystore_mess_with_iv(iv);
-            result = subghz_keystore_read_file(instance, stream, iv);
+            if(!furi_hal_crypto_enclave_load_key(SUBGHZ_KEYSTORE_FILE_ENCRYPTION_KEY_SLOT, iv)) {
+                FURI_LOG_E(TAG, "Unable to load decryption key");
+                break;
+            }
+            reader->encrypted = true;
         } else {
             FURI_LOG_E(TAG, "Unknown encryption");
             break;
         }
-    } while(0);
-    flipper_format_free(flipper_format);
-
-    furi_record_close(RECORD_STORAGE);
+        reader->stream = flipper_format_get_raw_stream(reader->flipper_format);
+        reader->line = malloc(SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE + 1);
+        memset(reader->line, 0, SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE + 1);
+        if(reader->encrypted) {
+            reader->decrypted = malloc(SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE + 1);
+            memset(reader->decrypted, 0, SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE + 1);
+        }
+        opened = true;
+    } while(false);
 
     furi_string_free(filetype);
+    if(!opened) {
+        flipper_format_free(reader->flipper_format);
+        reader->flipper_format = NULL;
+    }
+    return opened;
+}
 
+static void subghz_keystore_reader_close(SubGhzKeystoreReader* reader) {
+    if(reader->encrypted) {
+        furi_hal_crypto_enclave_unload_key(SUBGHZ_KEYSTORE_FILE_ENCRYPTION_KEY_SLOT);
+        reader->encrypted = false;
+    }
+    if(reader->line) free(reader->line);
+    if(reader->decrypted) free(reader->decrypted);
+    if(reader->flipper_format) flipper_format_free(reader->flipper_format);
+    memset(reader, 0, sizeof(SubGhzKeystoreReader));
+}
+
+static const char* subghz_keystore_reader_next(SubGhzKeystoreReader* reader) {
+    if(reader->pending_reset) {
+        memset(reader->line, 0, SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE + 1);
+        if(reader->decrypted) memset(reader->decrypted, 0, SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE + 1);
+        reader->cursor = 0;
+        reader->pending_reset = false;
+    }
+    while(!reader->stop) {
+        if(reader->buffer_pos >= reader->buffer_len) {
+            reader->buffer_len = stream_read(reader->stream, reader->buffer, FILE_BUFFER_SIZE);
+            reader->buffer_pos = 0;
+            if(reader->buffer_len == 0) {
+                reader->stop = true;
+                break;
+            }
+        }
+        uint8_t c = reader->buffer[reader->buffer_pos++];
+        if(c == '\n' && reader->cursor > 0) {
+            reader->pending_reset = true;
+            if(!reader->encrypted) return reader->line;
+            size_t len = strlen(reader->line);
+            if(len % 32 == 0) {
+                for(size_t i = 0; i < len; i += 2) {
+                    uint8_t hi_nibble = 0;
+                    uint8_t lo_nibble = 0;
+                    hex_char_to_hex_nibble(reader->line[i], &hi_nibble);
+                    hex_char_to_hex_nibble(reader->line[i + 1], &lo_nibble);
+                    reader->line[i / 2] = (hi_nibble << 4) | lo_nibble;
+                }
+                len /= 2;
+                if(furi_hal_crypto_decrypt(
+                       (uint8_t*)reader->line, (uint8_t*)reader->decrypted, len)) {
+                    return reader->decrypted;
+                }
+                FURI_LOG_E(TAG, "Decryption failed");
+                reader->stop = true;
+                break;
+            }
+            FURI_LOG_E(TAG, "Invalid encrypted data: %s", reader->line);
+            memset(reader->line, 0, SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE + 1);
+            memset(reader->decrypted, 0, SUBGHZ_KEYSTORE_FILE_DECRYPTED_LINE_SIZE + 1);
+            reader->cursor = 0;
+            reader->pending_reset = false;
+        } else if(c == '\r' || c == '\n') {
+        } else if(reader->cursor < SUBGHZ_KEYSTORE_FILE_ENCRYPTED_LINE_SIZE) {
+            reader->line[reader->cursor++] = (char)c;
+        } else {
+            FURI_LOG_E(TAG, "Malformed file");
+            reader->stop = true;
+        }
+    }
+    return NULL;
+}
+
+bool subghz_keystore_load(SubGhzKeystore* instance, const char* file_name) {
+    furi_assert(instance);
+    FURI_LOG_I(TAG, "Loading keystore %s", file_name);
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    SubGhzKeystoreReader* reader = malloc(sizeof(SubGhzKeystoreReader));
+    bool result = subghz_keystore_reader_open(reader, storage, file_name);
+    if(result) {
+        FuriString* name = furi_string_alloc();
+        uint64_t key = 0;
+        uint16_t type = 0;
+        const char* line;
+        while((line = subghz_keystore_reader_next(reader)) != NULL) {
+            if(subghz_keystore_parse_line(line, name, &key, &type)) {
+                SubGhzKey* manufacture_code = SubGhzKeyArray_push_raw(instance->data);
+                manufacture_code->name = furi_string_alloc_set(name);
+                manufacture_code->key = key;
+                manufacture_code->type = type;
+            }
+        }
+        furi_string_free(name);
+        result = reader->buffer_len == 0;
+        subghz_keystore_reader_close(reader);
+    }
+    free(reader);
+    furi_record_close(RECORD_STORAGE);
     return result;
+}
+
+bool subghz_keystore_attach_file(SubGhzKeystore* instance, const char* file_name) {
+    furi_assert(instance);
+    furi_assert(file_name);
+    if(instance->file_count >= SUBGHZ_KEYSTORE_MAX_FILES) return false;
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    SubGhzKeystoreReader* reader = malloc(sizeof(SubGhzKeystoreReader));
+    bool result = subghz_keystore_reader_open(reader, storage, file_name);
+    if(result) subghz_keystore_reader_close(reader);
+    instance->files[instance->file_count++] = furi_string_alloc_set_str(file_name);
+    free(reader);
+    furi_record_close(RECORD_STORAGE);
+    FURI_LOG_I(TAG, "Attach keystore %s: %s", file_name, result ? "ok" : "failed");
+    return result;
+}
+
+SubGhzKeystoreIter* subghz_keystore_iter_alloc(SubGhzKeystore* instance) {
+    furi_assert(instance);
+    SubGhzKeystoreIter* iter = malloc(sizeof(SubGhzKeystoreIter));
+    memset(iter, 0, sizeof(SubGhzKeystoreIter));
+    iter->keystore = instance;
+    iter->current.name = furi_string_alloc();
+    if(instance->file_count) iter->storage = furi_record_open(RECORD_STORAGE);
+    return iter;
+}
+
+const SubGhzKey* subghz_keystore_iter_next(SubGhzKeystoreIter* iter) {
+    furi_assert(iter);
+    SubGhzKeystore* instance = iter->keystore;
+    for(;;) {
+        if(iter->reader_open) {
+            const char* line = subghz_keystore_reader_next(&iter->reader);
+            if(line) {
+                if(subghz_keystore_parse_line(
+                       line, iter->current.name, &iter->current.key, &iter->current.type)) {
+                    return &iter->current;
+                }
+                continue;
+            }
+            subghz_keystore_reader_close(&iter->reader);
+            iter->reader_open = false;
+            continue;
+        }
+        if(iter->file_idx < instance->file_count) {
+            const char* path = furi_string_get_cstr(instance->files[iter->file_idx++]);
+            iter->reader_open = subghz_keystore_reader_open(&iter->reader, iter->storage, path);
+            continue;
+        }
+        if(iter->ram_idx < SubGhzKeyArray_size(instance->data)) {
+            const SubGhzKey* entry = SubGhzKeyArray_cget(instance->data, iter->ram_idx++);
+            furi_string_set(iter->current.name, entry->name);
+            iter->current.key = entry->key;
+            iter->current.type = entry->type;
+            return &iter->current;
+        }
+        return NULL;
+    }
+}
+
+void subghz_keystore_iter_free(SubGhzKeystoreIter* iter) {
+    furi_assert(iter);
+    if(iter->reader_open) subghz_keystore_reader_close(&iter->reader);
+    if(iter->storage) furi_record_close(RECORD_STORAGE);
+    furi_string_free(iter->current.name);
+    free(iter);
+}
+
+const char* subghz_keystore_keep_name(SubGhzKeystore* instance, const char* name) {
+    furi_assert(instance);
+    furi_assert(name);
+    furi_mutex_acquire(instance->names_mutex, FuriWaitForever);
+    const char* kept = NULL;
+    size_t size = SubGhzKeystoreNameArray_size(instance->names);
+    for(size_t i = 0; i < size; i++) {
+        FuriString* existing = *SubGhzKeystoreNameArray_get(instance->names, i);
+        if(furi_string_equal_str(existing, name)) {
+            kept = furi_string_get_cstr(existing);
+            break;
+        }
+    }
+    if(!kept) {
+        FuriString* added = furi_string_alloc_set_str(name);
+        SubGhzKeystoreNameArray_push_back(instance->names, added);
+        kept = furi_string_get_cstr(added);
+    }
+    furi_mutex_release(instance->names_mutex);
+    return kept;
 }
 
 bool subghz_keystore_save(SubGhzKeystore* instance, const char* file_name, uint8_t* iv) {

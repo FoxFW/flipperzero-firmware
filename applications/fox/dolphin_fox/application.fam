@@ -1,0 +1,15 @@
+App(
+    appid="dolphin_fox",
+    name="Dolphin (Fox Version)",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="dolphin_fox_main",
+    requires=["gui", "storage"],
+    stack_size=4 * 1024,
+    fap_icon="icon.png",
+    fap_icon_assets="images",
+    resources="sd_resources",
+    fap_category="Fox",
+    fap_version="1.0",
+    fap_author="FoxFW",
+    fap_description="Dolphin (Fox Version) - classic dolphin animations plus the mood/level passport, as a standalone app.",
+)

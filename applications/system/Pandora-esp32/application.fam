@@ -1,0 +1,14 @@
+App(
+    appid="pandora_esp32",
+    name="[ESP32] Pandora",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="pandora_esp32_app",
+    requires=["gui", "dialogs", "storage"],
+    stack_size=4 * 1024,
+    order=90,
+    fap_icon="pandora_10px.png",
+    fap_category="Sub-GHz",
+    fap_author="user",
+    fap_version="0.1",
+    fap_description="Companion for an ESP32-WROOM-32 running the Pandora D-605 keyfob emulator. The ESP32 does the heavy emulation; the Flipper is the display + keypad + CC1101 radio. Loads a .hex from SD, streams it to the ESP32 over UART, renders the keyfob OLED, forwards buttons and bridges the CC1101 for real RF RX/TX.",
+)

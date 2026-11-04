@@ -1,5 +1,8 @@
 #include "mazda_siemens.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -42,6 +45,9 @@ struct SubGhzProtocolEncoderMazdaSiemens {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMazdaSiemens);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderMazdaSiemens);
+
 typedef enum {
     MazdaSiemensDecoderStepReset = 0,
     MazdaSiemensDecoderStepPreambleSave,
@@ -52,25 +58,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_mazda_siemens_decoder = {
     .alloc = subghz_protocol_decoder_mazda_siemens_alloc,
-    .free = subghz_protocol_decoder_mazda_siemens_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_mazda_siemens_feed,
     .reset = subghz_protocol_decoder_mazda_siemens_reset,
 
     .get_hash_data = subghz_protocol_decoder_mazda_siemens_get_hash_data,
-    .serialize = subghz_protocol_decoder_mazda_siemens_serialize,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_mazda_siemens_deserialize,
-    .get_string = subghz_protocol_decoder_mazda_siemens_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_mazda_siemens_encoder = {
-    .alloc = subghz_protocol_encoder_mazda_siemens_alloc,
-    .free = subghz_protocol_encoder_mazda_siemens_free,
-
-    .deserialize = subghz_protocol_encoder_mazda_siemens_deserialize,
-    .stop = subghz_protocol_encoder_mazda_siemens_stop,
-    .yield = subghz_protocol_encoder_mazda_siemens_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_mazda_siemens_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_mazda_siemens");
 
 const SubGhzProtocol subghz_protocol_mazda_siemens = {
     .name = SUBGHZ_PROTOCOL_MAZDA_SIEMENS_NAME,
@@ -80,7 +79,7 @@ const SubGhzProtocol subghz_protocol_mazda_siemens = {
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_mazda_siemens_decoder,
-    .encoder = &subghz_protocol_mazda_siemens_encoder,
+    .encoder = &subghz_protocol_mazda_siemens_encoder_ext.vtable,
 };
 
 static uint8_t mazda_byte_parity(uint8_t val);
@@ -138,12 +137,6 @@ static bool mazda_check_completion(SubGhzProtocolDecoderMazdaSiemens* instance) 
     return true;
 }
 
-static void mazda_parse_data(SubGhzBlockGeneric* instance) {
-    instance->serial = (uint32_t)(instance->data >> 32);
-    instance->btn = (instance->data >> 24) & 0xFF;
-    instance->cnt = (instance->data >> 8) & 0xFFFF;
-}
-
 static uint8_t mazda_byte_parity(uint8_t val) {
     val ^= val >> 4;
     val ^= val >> 2;
@@ -175,204 +168,12 @@ static void mazda_xor_deobfuscate(uint8_t* data) {
     data[6] = (old5 & 0x55) | (old6 & 0xAA);
 }
 
-static void mazda_xor_obfuscate(uint8_t* data) {
-    uint8_t old5 = data[5];
-    uint8_t old6 = data[6];
-    data[5] = (old5 & 0xAA) | (old6 & 0x55);
-    data[6] = (old5 & 0x55) | (old6 & 0xAA);
-
-    uint8_t parity = mazda_byte_parity(data[7]);
-
-    if(parity) {
-        uint8_t mask = data[6];
-        for(int i = 0; i < 6; i++) {
-            data[i] ^= mask;
-        }
-    } else {
-        uint8_t mask = data[5];
-        for(int i = 0; i < 5; i++) {
-            data[i] ^= mask;
-        }
-        data[6] ^= mask;
-    }
-}
-
-static const char* mazda_get_btn_name(uint8_t btn) {
-    switch(btn) {
-    case 0x10:
-        return "Lock";
-    case 0x20:
-        return "Unlock";
-    case 0x40:
-        return "Trunk";
-    default:
-        return "Unknown";
-    }
-}
-
 #define MAZDA_UPLOAD_MAX 400
-
-void* subghz_protocol_encoder_mazda_siemens_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderMazdaSiemens* instance =
-        malloc(sizeof(SubGhzProtocolEncoderMazdaSiemens));
-
-    instance->base.protocol = &subghz_protocol_mazda_siemens;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = MAZDA_TX_REPEATS;
-    instance->encoder.size_upload = MAZDA_UPLOAD_MAX;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_mazda_siemens_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderMazdaSiemens* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static size_t mazda_encode_byte(LevelDuration* upload, size_t index, uint8_t byte) {
-    uint32_t te = subghz_protocol_mazda_siemens_const.te_short;
-    for(int bit = 7; bit >= 0; bit--) {
-        if((byte >> bit) & 1) {
-            upload[index++] = level_duration_make(true, te);
-            upload[index++] = level_duration_make(false, te);
-        } else {
-            upload[index++] = level_duration_make(false, te);
-            upload[index++] = level_duration_make(true, te);
-        }
-    }
-    return index;
-}
-
-static bool
-    subghz_protocol_encoder_mazda_siemens_get_upload(SubGhzProtocolEncoderMazdaSiemens* instance) {
-    furi_assert(instance);
-
-    uint8_t data[8];
-    for(int i = 0; i < 8; i++) {
-        data[i] = (instance->generic.data >> (56 - 8 * i)) & 0xFF;
-    }
-
-    uint8_t cnt_lo = data[6];
-    cnt_lo++;
-    data[6] = cnt_lo;
-    if(cnt_lo == 0) {
-        data[5]++;
-    }
-
-    uint8_t checksum = 0;
-    for(int i = 0; i < 7; i++) {
-        checksum += data[i];
-    }
-    data[7] = checksum;
-
-    uint64_t packed = 0;
-    for(int i = 0; i < 8; i++) {
-        packed = (packed << 8) | data[i];
-    }
-    instance->generic.data = packed;
-
-    uint8_t tx_data[8];
-    memcpy(tx_data, data, 8);
-    mazda_xor_obfuscate(tx_data);
-
-    size_t index = 0;
-
-    for(int i = 0; i < MAZDA_PREAMBLE_BYTES; i++) {
-        index = mazda_encode_byte(instance->encoder.upload, index, 0xFF);
-    }
-
-    instance->encoder.upload[index++] = level_duration_make(false, MAZDA_TX_GAP_US);
-
-    index = mazda_encode_byte(instance->encoder.upload, index, 0xFF);
-    index = mazda_encode_byte(instance->encoder.upload, index, 0xFF);
-
-    index = mazda_encode_byte(instance->encoder.upload, index, 0xD7);
-
-    for(int i = 0; i < 8; i++) {
-        index = mazda_encode_byte(instance->encoder.upload, index, 255 - tx_data[i]);
-    }
-
-    index = mazda_encode_byte(instance->encoder.upload, index, 0x5A);
-
-    instance->encoder.upload[index++] = level_duration_make(false, MAZDA_TX_GAP_US);
-
-    if(index > MAZDA_UPLOAD_MAX) {
-        FURI_LOG_E(TAG, "Upload size %d exceeds buffer %d", (int)index, MAZDA_UPLOAD_MAX);
-        return false;
-    }
-
-    instance->encoder.size_upload = index;
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_mazda_siemens_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderMazdaSiemens* instance = context;
-    SubGhzProtocolStatus res = SubGhzProtocolStatusError;
-    do {
-        res = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_mazda_siemens_const.min_count_bit_for_found);
-        if(res != SubGhzProtocolStatusOk) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_mazda_siemens_get_upload(instance)) {
-            res = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return res;
-}
-
-void subghz_protocol_encoder_mazda_siemens_stop(void* context) {
-    SubGhzProtocolEncoderMazdaSiemens* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_mazda_siemens_yield(void* context) {
-    SubGhzProtocolEncoderMazdaSiemens* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_mazda_siemens_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderMazdaSiemens* instance =
-        malloc(sizeof(SubGhzProtocolDecoderMazdaSiemens));
-    instance->base.protocol = &subghz_protocol_mazda_siemens;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_mazda_siemens_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMazdaSiemens* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderMazdaSiemens), &subghz_protocol_mazda_siemens);
 }
 
 void subghz_protocol_decoder_mazda_siemens_reset(void* context) {
@@ -490,15 +291,6 @@ uint8_t subghz_protocol_decoder_mazda_siemens_get_hash_data(void* context) {
                     (instance->generic.data >> 48) ^ (instance->generic.data >> 56));
 }
 
-SubGhzProtocolStatus subghz_protocol_decoder_mazda_siemens_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMazdaSiemens* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_mazda_siemens_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -509,38 +301,3 @@ SubGhzProtocolStatus
         subghz_protocol_mazda_siemens_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_mazda_siemens_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderMazdaSiemens* instance = context;
-    mazda_parse_data(&instance->generic);
-
-    subghz_block_generic_global.btn_is_available = false;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 8;
-
-    uint8_t data[8];
-    for(int i = 0; i < 8; i++) {
-        data[i] = (instance->generic.data >> (56 - 8 * i)) & 0xFF;
-    }
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%02X %02X %02X %02X %02X %02X %02X %02X\r\n"
-        "Sn:%08lX Btn:%s\r\n"
-        "Cnt:%04lX Chk:%02X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        data[0],
-        data[1],
-        data[2],
-        data[3],
-        data[4],
-        data[5],
-        data[6],
-        data[7],
-        (uint32_t)instance->generic.serial,
-        mazda_get_btn_name(instance->generic.btn),
-        (uint32_t)instance->generic.cnt,
-        data[7]);
-}

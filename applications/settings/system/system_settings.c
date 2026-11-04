@@ -1,4 +1,5 @@
 #include "system_settings.h"
+#include <furi_hal.h>
 #include <loader/loader.h>
 #include <lib/toolbox/value_index.h>
 #include <locale/locale.h>
@@ -77,6 +78,7 @@ static void log_baud_rate_changed(VariableItem* item) {
     furi_hal_rtc_set_log_baud_rate(log_baud_rate_value[index]);
 }
 
+#ifdef FURI_DEBUG
 const char* const debug_text[] = {
     "OFF",
     "ON",
@@ -91,6 +93,7 @@ static void debug_changed(VariableItem* item) {
         furi_hal_rtc_reset_flag(FuriHalRtcFlagDebug);
     }
 }
+#endif
 
 const char* const heap_trace_mode_text[] = {
     "None",
@@ -247,14 +250,10 @@ static void system_settings_device_name_callback(void* context) {
     } while(false);
     flipper_format_free(file);
 
-    if(saved) {
-
-        Power* power = furi_record_open(RECORD_POWER);
-        power_reboot(power, PowerBootModeNormal);
-    } else {
-
-        view_dispatcher_switch_to_view(app->view_dispatcher, SystemSettingsViewVarItemList);
+    if(saved && app->device_name[0] != '\0') {
+        furi_hal_version_set_name(app->device_name);
     }
+    view_dispatcher_switch_to_view(app->view_dispatcher, SystemSettingsViewVarItemList);
 }
 
 static void system_settings_enter_callback(void* context, uint32_t index) {
@@ -357,11 +356,13 @@ SystemSettings* system_settings_alloc(void) {
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, log_baud_rate_text[value_index]);
 
+#ifdef FURI_DEBUG
     item = variable_item_list_add(
         app->var_item_list, "Debug", COUNT_OF(debug_text), debug_changed, app);
     value_index = furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug) ? 1 : 0;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, debug_text[value_index]);
+#endif
 
     item = variable_item_list_add(
         app->var_item_list,

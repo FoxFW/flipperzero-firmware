@@ -23,6 +23,8 @@ void subghz_file_encoder_worker_get_text_progress(
     SubGhzFileEncoderWorker* instance,
     FuriString* output);
 
+uint8_t subghz_file_encoder_worker_get_progress(SubGhzFileEncoderWorker* instance);
+
 LevelDuration subghz_file_encoder_worker_get_level_duration(void* context);
 
 bool subghz_file_encoder_worker_start(

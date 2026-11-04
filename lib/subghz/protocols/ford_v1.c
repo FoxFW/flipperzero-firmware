@@ -1,6 +1,9 @@
 #include "ford_v1.h"
 #include <lib/subghz/blocks/custom_btn_i.h>
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 #define TAG "FordProtocolV1"
 
@@ -48,7 +51,6 @@ typedef enum {
     FordV1DecoderStepData = 3,
 } FordV1DecoderStep;
 
-static const char* ford_v1_get_button_name(uint8_t btn);
 static void ford_v1_decode_with_flag(uint8_t* raw, size_t len, uint8_t flag_byte);
 static void ford_v1_decode(uint8_t* raw, size_t len);
 static void ford_v1_encode_inverse_block(uint8_t block[9]);
@@ -65,13 +67,10 @@ static bool ford_v1_extract_plain_from_raw(
     const uint8_t* raw17_in,
     uint8_t* plain9_out,
     uint8_t* raw17_canonical_out_opt);
-static void
-    ford_v1_plain_apply_fields(uint8_t* plain9, uint32_t serial, uint8_t btn, uint32_t cnt);
-static void ford_v1_encoder_rebuild_raw_from_plain(uint8_t* raw17, const uint8_t* plain9);
 
 const SubGhzProtocolDecoder subghz_protocol_ford_v1_decoder = {
     .alloc = subghz_protocol_decoder_ford_v1_alloc,
-    .free = subghz_protocol_decoder_ford_v1_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_ford_v1_feed,
     .reset = subghz_protocol_decoder_ford_v1_reset,
     .get_hash_data = subghz_protocol_decoder_ford_v1_get_hash_data,
@@ -80,13 +79,7 @@ const SubGhzProtocolDecoder subghz_protocol_ford_v1_decoder = {
     .get_string = subghz_protocol_decoder_ford_v1_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_ford_v1_encoder = {
-    .alloc = subghz_protocol_encoder_ford_v1_alloc,
-    .free = subghz_protocol_encoder_ford_v1_free,
-    .deserialize = subghz_protocol_encoder_ford_v1_deserialize,
-    .stop = subghz_protocol_encoder_ford_v1_stop,
-    .yield = subghz_protocol_encoder_ford_v1_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_ford_v1_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_ford_v1");
 
 const SubGhzProtocol ford_protocol_v1 = {
     .name = FORD_PROTOCOL_V1_NAME,
@@ -95,27 +88,10 @@ const SubGhzProtocol ford_protocol_v1 = {
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_ford_v1_decoder,
-    .encoder = &subghz_protocol_ford_v1_encoder,
+    .encoder = &subghz_protocol_ford_v1_encoder_ext.vtable,
 };
 
 #define ford_v1_crc16(data, len) subghz_protocol_blocks_crc16((data), (len), 0x1021, 0x0000)
-
-static const char* ford_v1_get_button_name(uint8_t btn) {
-    switch(btn) {
-    case 0:
-        return "Sync";
-    case 1:
-        return "Lock";
-    case 2:
-        return "Unlock";
-    case 4:
-        return "Trunk";
-    case 8:
-        return "Panic";
-    default:
-        return "??";
-    }
-}
 
 static void ford_v1_decode_with_flag(uint8_t* raw, size_t len, uint8_t flag_byte) {
     if(len < 9) return;
@@ -841,84 +817,20 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_ford_v1_free(void* context) {
-    furi_check(context);
-    free(context);
-}
+
 
 void subghz_protocol_decoder_ford_v1_get_string(void* context, FuriString* output) {
-    furi_check(context);
     SubGhzProtocolDecoderFordV1* instance = context;
-
-    uint64_t key1 = instance->generic.data;
-    uint64_t key2 = instance->data2;
-    uint32_t crc = instance->crc_calc;
-    uint16_t crc16 = crc & 0xFFFF;
-
-    if(instance->encryption_supported) {
-        const char* btn_name = ford_v1_get_button_name(instance->generic.btn);
-
-        uint16_t calc_crc = crc16;
-
-        bool crc_ok;
-        uint8_t raw[FORD_V1_DATA_BYTES];
-        ford_v1_raw14_from_internal_keys(key1, key2, raw);
-        raw[15] = (uint8_t)((crc >> 8) & 0xFF);
-        raw[16] = (uint8_t)(crc & 0xFF);
-
-        uint16_t check_crc = ford_v1_crc16(&raw[3], 12);
-        crc_ok = (check_crc == calc_crc);
-
-        furi_string_cat_printf(
-            output,
-            "%s %dbit\r\n"
-            "%014llX%06llX\r\n"
-            "%010llX%04lX\r\n"
-            "Sn:%08lX Bt:%01X [%s]\r\n"
-            "Cnt:%05lX CRC:%04lX [%s]\r\n",
-            instance->generic.protocol_name,
-            instance->generic.data_count_bit,
-            (unsigned long long)key1,
-            (unsigned long long)(key2 >> 40),
-            (unsigned long long)(key2 & 0xFFFFFFFFFFULL),
-            (unsigned long)crc16,
-            (unsigned long)instance->generic.serial,
-            instance->generic.btn,
-            btn_name,
-            (unsigned long)instance->generic.cnt,
-            (unsigned long)crc16,
-            crc_ok ? "OK" : "ERR");
-    } else {
-        uint8_t raw[FORD_V1_DATA_BYTES];
-        ford_v1_raw14_from_internal_keys(key1, key2, raw);
-        raw[15] = (uint8_t)((crc >> 8) & 0xFF);
-        raw[16] = (uint8_t)(crc & 0xFF);
-
-        uint16_t check_crc = ford_v1_crc16(&raw[3], 12);
-        bool crc_ok = (check_crc == crc16);
-
-        uint32_t device_id = ((uint32_t)raw[3] << 24) | ((uint32_t)raw[4] << 16) |
-                             ((uint32_t)raw[5] << 8) | raw[6];
-
-        furi_string_cat_printf(
-            output,
-            "%s %dbit\r\n"
-            "%014llX%06llX\r\n"
-            "%010llX%04lX\r\n"
-            "Sn:%08lX\r\n"
-            "CRC:%04lX [%s]\r\n"
-            "Encryption not supported !\r\n",
-            instance->generic.protocol_name,
-            instance->generic.data_count_bit,
-            (unsigned long long)key1,
-            (unsigned long long)(key2 >> 40),
-            (unsigned long long)(key2 & 0xFFFFFFFFFFULL),
-            (unsigned long)crc16,
-            (unsigned long)device_id,
-            (unsigned long)crc16,
-            crc_ok ? "OK" : "ERR");
-    }
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+
 
 #define FORD_V1_ENC_BURST_COUNT    6U
 #define FORD_V1_ENC_PREAMBLE_PAIRS 400U
@@ -933,8 +845,6 @@ void subghz_protocol_decoder_ford_v1_get_string(void* context, FuriString* outpu
 #error Ford V1 encoder burst layout constants out of sync
 #endif
 
-static const uint8_t ford_v1_encoder_burst_pkt4_vals[6] = {0x08, 0x00, 0x10, 0x08, 0x00, 0x10};
-
 typedef struct SubGhzProtocolEncoderFordV1 {
     SubGhzProtocolEncoderBase base;
     SubGhzProtocolBlockEncoder encoder;
@@ -948,329 +858,8 @@ typedef struct SubGhzProtocolEncoderFordV1 {
     uint8_t burst_idx;
 } SubGhzProtocolEncoderFordV1;
 
-static void
-    ford_v1_plain_apply_fields(uint8_t* plain9, uint32_t serial, uint8_t btn, uint32_t cnt) {
-    uint8_t chk = (uint8_t)(plain9[8] - plain9[6] - plain9[7] - plain9[5]);
-    plain9[0] = (uint8_t)(serial & 0xFFU);
-    plain9[1] = (uint8_t)((serial >> 24) & 0xFFU);
-    plain9[2] = (uint8_t)((serial >> 16) & 0xFFU);
-    plain9[3] = (uint8_t)((serial >> 8) & 0xFFU);
-    plain9[5] = (uint8_t)(((btn & 0x0FU) << 4) | ((cnt >> 16) & 0x0FU));
-    plain9[6] = (uint8_t)((cnt >> 8) & 0xFFU);
-    plain9[7] = (uint8_t)(cnt & 0xFFU);
-    plain9[8] = (uint8_t)(chk + plain9[7] + plain9[6] + plain9[5]);
-}
-
-static void ford_v1_encoder_rebuild_raw_from_plain(uint8_t* raw17, const uint8_t* plain9) {
-    uint8_t air9[9];
-    ford_v1_encode_air_9bytes(plain9, air9);
-    memcpy(&raw17[6], air9, 9);
-    uint16_t c = ford_v1_crc16(&raw17[3], 12);
-    raw17[15] = (uint8_t)(c >> 8);
-    raw17[16] = (uint8_t)(c & 0xFF);
-}
-
-static void ford_v1_encoder_keys_from_raw(SubGhzProtocolEncoderFordV1* instance) {
-    uint8_t* raw = instance->raw_tx;
-    uint64_t key1 = 0;
-    for(int i = 0; i < 7; i++) {
-        key1 = (key1 << 8) | raw[i];
-    }
-    uint64_t key2 = 0;
-    for(int i = 0; i < 8; i++) {
-        key2 = (key2 << 8) | raw[7 + i];
-    }
-    instance->generic.data = key1;
-    instance->data2 = key2;
-    instance->crc_calc = (uint16_t)(((uint16_t)raw[15] << 8) | raw[16]);
-}
-
 __attribute__((weak)) bool subghz_block_generic_global_counter_override_get(uint32_t* cnt_p) {
     UNUSED(cnt_p);
     return false;
 }
 
-static uint32_t ford_v1_encoder_preset_hop_read_stub(void) {
-    return 0;
-}
-
-static void ford_v1_encoder_apply_counter_cap(uint32_t* cnt_p, uint32_t cap) {
-    uint32_t ee = ford_v1_encoder_preset_hop_read_stub();
-    if(ee == 0x80000001u) {
-        uint32_t u3 = *cnt_p;
-        uint32_t r2 = u3 + 1u;
-        if(r2 > cap) {
-            *cnt_p = 0;
-            return;
-        }
-        if(u3 == 0u) {
-            *cnt_p = r2;
-            return;
-        }
-        uint32_t capm1 = cap - 1u;
-        if(u3 == capm1) {
-            *cnt_p = capm1;
-            return;
-        }
-        *cnt_p = r2;
-        return;
-    }
-    if(subghz_block_generic_global_counter_override_get(cnt_p)) {
-        return;
-    }
-    uint32_t sum = ee + *cnt_p;
-    if(sum <= cap) {
-        *cnt_p = sum;
-        return;
-    }
-    *cnt_p = 0;
-}
-
-static void ford_v1_encoder_patch_key1_low_bits(SubGhzProtocolEncoderFordV1* instance) {
-    uint64_t k = instance->generic.data;
-    uint32_t lo = (uint32_t)(k & 0xFFFFFFFFULL);
-    lo = (lo & 0xFF00FFFFU) | 0x80000U;
-    instance->generic.data = (k & 0xFFFFFFFF00000000ULL) | (uint64_t)lo;
-}
-
-static void ford_v1_encoder_build_burst(SubGhzProtocolEncoderFordV1* instance, uint8_t burst_idx) {
-    LevelDuration* const upload = instance->encoder.upload;
-    uint8_t pkt[FORD_V1_DATA_BYTES];
-    memcpy(pkt, instance->raw_tx, FORD_V1_DATA_BYTES);
-
-    pkt[4] = ford_v1_encoder_burst_pkt4_vals[burst_idx];
-    uint16_t crcw = ford_v1_crc16(&pkt[3], 12);
-    pkt[15] = (uint8_t)(crcw >> 8);
-    pkt[16] = (uint8_t)(crcw & 0xFFU);
-
-    size_t index = 0;
-    for(size_t i = 0; i < FORD_V1_ENC_PREAMBLE_PAIRS; i++) {
-        upload[index++] = level_duration_make(true, FORD_V1_ENC_SYNC_LONG_US);
-        upload[index++] = level_duration_make(false, FORD_V1_ENC_SYNC_LONG_US);
-    }
-    upload[index++] = level_duration_make(true, FORD_V1_ENC_SYNC_LONG_US);
-    upload[index++] = level_duration_make(false, FORD_V1_ENC_SYNC_SHORT_US);
-
-    for(size_t by = 0; by < FORD_V1_DATA_BYTES; by++) {
-        uint8_t b = pkt[by];
-        for(int bit_i = 7; bit_i >= 0; bit_i--) {
-            bool bit = ((b >> bit_i) & 1U) != 0U;
-            upload[index++] = level_duration_make(bit, FORD_V1_ENC_SYNC_SHORT_US);
-            upload[index++] = level_duration_make(!bit, FORD_V1_ENC_SYNC_SHORT_US);
-        }
-    }
-
-    upload[index++] = level_duration_make(
-        false,
-        (burst_idx + 1U == FORD_V1_ENC_BURST_COUNT) ? FORD_V1_ENC_GAP_LAST_US :
-                                                      FORD_V1_ENC_GAP_REPEAT_US);
-    instance->encoder.size_upload = FORD_V1_ENC_BURST_LD_COUNT;
-    instance->encoder.front = 0;
-}
-
-void* subghz_protocol_encoder_ford_v1_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFordV1* instance = calloc(1, sizeof(SubGhzProtocolEncoderFordV1));
-    furi_check(instance);
-    instance->base.protocol = &ford_protocol_v1;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 10;
-    instance->encoder.front = 0;
-    instance->encoder.is_running = false;
-    instance->burst_idx = 0;
-    instance->encoder.upload = malloc(FORD_V1_ENC_BURST_LD_COUNT * sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-    return instance;
-}
-
-void subghz_protocol_encoder_ford_v1_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV1* instance = context;
-    if(instance->encoder.upload) {
-        free(instance->encoder.upload);
-        instance->encoder.upload = NULL;
-    }
-    free(instance);
-}
-
-void subghz_protocol_encoder_ford_v1_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV1* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_ford_v1_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV1* instance = context;
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running || instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_ford_v1_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV1* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-    instance->encoder.repeat = 10;
-    instance->plain_valid = 0;
-    instance->burst_idx = 0;
-
-    do {
-        {
-            flipper_format_rewind(flipper_format);
-            FuriString* tmp = furi_string_alloc();
-            bool name_ok = false;
-            if(flipper_format_read_string(flipper_format, "Protocol", tmp)) {
-                if(furi_string_equal_str(tmp, instance->base.protocol->name)) {
-                    name_ok = true;
-                }
-            }
-            furi_string_free(tmp);
-            if(!name_ok) break;
-        }
-
-        flipper_format_rewind(flipper_format);
-        uint8_t key1_bytes[8] = {0};
-        if(!flipper_format_read_hex(flipper_format, "Key", key1_bytes, 8)) {
-            break;
-        }
-        flipper_format_rewind(flipper_format);
-        uint8_t key2_bytes[8] = {0};
-        if(!flipper_format_read_hex(flipper_format, "Key_2", key2_bytes, 8)) {
-            break;
-        }
-        flipper_format_rewind(flipper_format);
-        uint8_t key3_bytes[4] = {0};
-        if(!flipper_format_read_hex(flipper_format, "Key_3", key3_bytes, 4)) {
-            break;
-        }
-
-        uint16_t crc16 = ford_v1_crc16_from_key3_bytes(key3_bytes);
-        instance->crc_calc = crc16;
-
-        bool keys_ok = ford_v1_keys_file_to_canonical_raw(
-            key1_bytes,
-            key2_bytes,
-            crc16,
-            &instance->generic.data,
-            &instance->data2,
-            instance->raw_tx,
-            instance->plain9);
-
-        instance->plain_valid = keys_ok ? 1U : 0U;
-        instance->encryption_supported = instance->plain_valid;
-        if(keys_ok) {
-            ford_v1_encoder_keys_from_raw(instance);
-            instance->crc_calc =
-                (uint16_t)(((uint16_t)instance->raw_tx[15] << 8) | instance->raw_tx[16]);
-        }
-
-        if(!instance->encryption_supported || !instance->plain_valid) {
-            break;
-        }
-
-        flipper_format_rewind(flipper_format);
-        SubGhzProtocolStatus g = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_ford_v1_const.min_count_bit_for_found);
-        if(g != SubGhzProtocolStatusOk) {
-            ret = g;
-            break;
-        }
-
-        ford_v1_encoder_keys_from_raw(instance);
-
-        {
-            uint32_t serial = UINT32_MAX;
-            uint32_t btn = UINT32_MAX;
-            uint32_t cnt = UINT32_MAX;
-            flipper_format_rewind(flipper_format);
-            if(!flipper_format_read_uint32(flipper_format, "Serial", &serial, 1))
-                serial = UINT32_MAX;
-            flipper_format_rewind(flipper_format);
-            if(!flipper_format_read_uint32(flipper_format, "Btn", &btn, 1))
-                btn = UINT32_MAX;
-            flipper_format_rewind(flipper_format);
-            if(!flipper_format_read_uint32(flipper_format, "Cnt", &cnt, 1))
-                cnt = UINT32_MAX;
-            if(serial == UINT32_MAX || btn == UINT32_MAX || cnt == UINT32_MAX) break;
-
-            {
-                const uint8_t original_btn = (uint8_t)(btn & 0x0FU);
-                if(subghz_custom_btn_get_original() == 0) {
-                    subghz_custom_btn_set_original(original_btn);
-                }
-                subghz_custom_btn_set_max(4);
-                uint8_t custom_btn_id = subghz_custom_btn_get();
-                switch(custom_btn_id) {
-                case SUBGHZ_CUSTOM_BTN_UP:    btn = 0x02U; break;
-                case SUBGHZ_CUSTOM_BTN_RIGHT: btn = 0x04U; break;
-                case SUBGHZ_CUSTOM_BTN_DOWN:  btn = 0x08U; break;
-                case SUBGHZ_CUSTOM_BTN_LEFT:  btn = 0x01U; break;
-                case SUBGHZ_CUSTOM_BTN_OK:    btn = original_btn; break;
-                default:                      btn = original_btn; break;
-                }
-            }
-
-            instance->generic.serial = serial;
-            instance->generic.btn = (uint8_t)(btn & 0x0FU);
-            instance->generic.cnt = cnt & 0xFFFFFU;
-        }
-
-        {
-            uint8_t btn_rf = (uint8_t)(instance->generic.btn & 0x0FU);
-
-            ford_v1_encoder_apply_counter_cap(&instance->generic.cnt, 0xFFFFFU);
-
-            uint8_t work[9];
-            memcpy(work, instance->plain9, 9);
-            ford_v1_plain_apply_fields(
-                work, instance->generic.serial, btn_rf, instance->generic.cnt & 0xFFFFFU);
-            memcpy(instance->plain9, work, 9);
-            ford_v1_encoder_rebuild_raw_from_plain(instance->raw_tx, work);
-            ford_v1_encoder_keys_from_raw(instance);
-        }
-
-        ford_v1_encoder_patch_key1_low_bits(instance);
-
-        {
-            flipper_format_rewind(flipper_format);
-            uint32_t repeat_val = 0;
-            instance->encoder.repeat =
-                flipper_format_read_uint32(flipper_format, "Repeat", &repeat_val, 1) ? repeat_val :
-                                                                                       10;
-        }
-
-        ford_v1_encoder_build_burst(instance, instance->burst_idx);
-
-        {
-            flipper_format_rewind(flipper_format);
-            flipper_format_insert_or_update_uint32(
-                flipper_format, "Serial", &instance->generic.serial, 1);
-            uint32_t btn_store = instance->generic.btn;
-            flipper_format_rewind(flipper_format);
-            flipper_format_insert_or_update_uint32(flipper_format, "Btn", &btn_store, 1);
-            uint32_t cnt_store = instance->generic.cnt;
-            flipper_format_rewind(flipper_format);
-            flipper_format_insert_or_update_uint32(flipper_format, "Cnt", &cnt_store, 1);
-        }
-
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}

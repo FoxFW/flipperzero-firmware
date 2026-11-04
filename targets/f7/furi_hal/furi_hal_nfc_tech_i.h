@@ -66,6 +66,8 @@ extern const FuriHalNfcTechBase furi_hal_nfc_iso15693;
 
 extern const FuriHalNfcTechBase furi_hal_nfc_felica;
 
+extern const FuriHalNfcTechBase furi_hal_nfc_texkom;
+
 extern const FuriHalNfcTechBase* const furi_hal_nfc_tech[];
 
 #ifdef __cplusplus

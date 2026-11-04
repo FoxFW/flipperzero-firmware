@@ -120,6 +120,12 @@ static const NfcProtocolTreeNode nfc_protocol_nodes[NfcProtocolNum] = {
             .children_num = 0,
             .children_protocol = NULL,
         },
+    [NfcProtocolTexkom] =
+        {
+            .parent_protocol = NfcProtocolInvalid,
+            .children_num = 0,
+            .children_protocol = NULL,
+        },
 
 };
 

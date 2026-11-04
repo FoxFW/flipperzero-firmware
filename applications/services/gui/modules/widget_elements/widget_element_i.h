@@ -58,6 +58,12 @@ WidgetElement* widget_element_button_create(
     ButtonCallback callback,
     void* context);
 
+bool widget_element_is_button(WidgetElement* element);
+
+void widget_element_button_get(WidgetElement* element, GuiButtonType* type, const char** text);
+
+void widget_element_button_invoke(WidgetElement* element, InputType input_type);
+
 WidgetElement* widget_element_icon_create(uint8_t x, uint8_t y, const Icon* icon);
 
 WidgetElement* widget_element_rect_create(

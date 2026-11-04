@@ -180,9 +180,9 @@ void picopass_scene_read_card_success_on_enter(void* context) {
         FontPrimary,
         furi_string_get_cstr(credential_str));
     widget_add_string_element(
-        widget, 64, 36, AlignCenter, AlignCenter, FontSecondary, furi_string_get_cstr(info_str));
+        widget, 64, 30, AlignCenter, AlignCenter, FontSecondary, furi_string_get_cstr(info_str));
     widget_add_string_element(
-        widget, 64, 46, AlignCenter, AlignCenter, FontSecondary, furi_string_get_cstr(key_str));
+        widget, 64, 41, AlignCenter, AlignCenter, FontSecondary, furi_string_get_cstr(key_str));
 
     furi_string_free(csn_str);
     furi_string_free(credential_str);

@@ -126,6 +126,8 @@ typedef enum {
     SubGhzProtocolFlag_Sensors = (1 << 13),
     SubGhzProtocolFlag_Princeton = (1 << 14),
     SubGhzProtocolFlag_NiceFlorS = (1 << 15),
+    SubGhzProtocolFlag_RawReplay = (1 << 16), // #101/#15: encoder honors TxRaw (verbatim replay != rolling Send); gates the "Raw" button
+    SubGhzProtocolFlag_Bruteforce = (1 << 17),
 } SubGhzProtocolFlag;
 
 struct SubGhzProtocol {
@@ -135,4 +137,6 @@ struct SubGhzProtocol {
 
     const SubGhzProtocolEncoder* encoder;
     const SubGhzProtocolDecoder* decoder;
+
+    uint32_t tx_heap_budget;
 };

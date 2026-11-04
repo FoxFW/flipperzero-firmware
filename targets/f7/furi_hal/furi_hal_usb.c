@@ -86,6 +86,18 @@ static void reset_evt(usbd_device* dev, uint8_t event, uint8_t ep);
 static void susp_evt(usbd_device* dev, uint8_t event, uint8_t ep);
 static void wkup_evt(usbd_device* dev, uint8_t event, uint8_t ep);
 
+/* ---- FoxFW first-boot USB boot gate (see cli_vcp.c / desktop.c) ----
+ * Holds the host-visible USB D+ pullup down during the desktop boot window
+ * so qFlipper's RPC session cannot strand the low heap on first boot.
+ * Fail-safe: inert unless cli_vcp arms it (normal boot only); a hard timeout
+ * always re-enables USB so a desktop hang can never leave USB dead. The hold
+ * itself is just a usbd_connect(false) right after set_config -- the same
+ * path the RAM-defrag reseat already uses. */
+#define FOX_USB_GATE_TIMEOUT_MS 8000u
+static volatile bool fox_usb_gate_armed = false;
+static volatile bool fox_usb_gate_released = false;
+static FuriTimer* fox_usb_gate_timer = NULL;
+
 void furi_hal_usb_init(void) {
     LL_RCC_SetUSBClockSource(LL_RCC_USB_CLKSOURCE_PLLSAI1);
 
@@ -216,6 +228,38 @@ void furi_hal_usb_enable(void) {
     furi_hal_usb_send_message(&msg);
 }
 
+void furi_hal_usb_boot_gate_release(void) {
+    bool was_armed = fox_usb_gate_armed;
+    fox_usb_gate_released = true;
+    if(fox_usb_gate_timer != NULL) {
+        furi_timer_stop(fox_usb_gate_timer);
+    }
+    /* Assert the pullup now. If the interface was never configured,
+     * furi_hal_usb_enable() is a no-op, so this is always safe. */
+    if(was_armed) {
+        furi_hal_usb_enable();
+    }
+}
+
+static void fox_usb_gate_timeout_cb(void* context) {
+    UNUSED(context);
+    /* Safety net: never leave USB dead if the desktop never releases. */
+    furi_hal_usb_boot_gate_release();
+}
+
+void furi_hal_usb_boot_gate_arm(void) {
+    if(fox_usb_gate_armed) {
+        return;
+    }
+    fox_usb_gate_released = false;
+    if(fox_usb_gate_timer == NULL) {
+        fox_usb_gate_timer =
+            furi_timer_alloc(fox_usb_gate_timeout_cb, FuriTimerTypeOnce, NULL);
+    }
+    fox_usb_gate_armed = true;
+    furi_timer_start(fox_usb_gate_timer, furi_ms_to_ticks(FOX_USB_GATE_TIMEOUT_MS));
+}
+
 void furi_hal_usb_reinit(void) {
     UsbApiEventMessage msg = {
         .lock = api_lock_alloc_locked(),
@@ -338,6 +382,12 @@ static void usb_process_mode_start(FuriHalUsbInterface* interface, void* context
         usbd_reg_event(&udev, usbd_evt_reset, reset_evt);
         FURI_LOG_I(TAG, "USB Mode change done");
         usb.enabled = true;
+        if(fox_usb_gate_armed && !fox_usb_gate_released) {
+            /* FoxFW boot gate: keep the pullup down until desktop releases.
+             * Equivalent to an immediate disable after set_config. */
+            usbd_connect(&udev, false);
+            usb.enabled = false;
+        }
     }
 }
 

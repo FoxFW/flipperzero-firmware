@@ -1,4 +1,8 @@
 #include "came_atomo.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 #include <lib/toolbox/manchester_decoder.h>
 #include <lib/toolbox/manchester_encoder.h>
 #include "../blocks/const.h"
@@ -10,6 +14,8 @@
 #include "../blocks/custom_btn_i.h"
 
 #define TAG "SubGhzProtocoCameAtomo"
+
+static bool came_atomo_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
 
 static bool bypass = false;
 
@@ -36,6 +42,9 @@ struct SubGhzProtocolEncoderCameAtomo {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderCameAtomo);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderCameAtomo);
+
 typedef enum {
     CameAtomoDecoderStepReset = 0,
     CameAtomoDecoderStepDecoderData,
@@ -45,88 +54,42 @@ static uint8_t came_atomo_counter_mode = 0;
 
 const SubGhzProtocolDecoder subghz_protocol_came_atomo_decoder = {
     .alloc = subghz_protocol_decoder_came_atomo_alloc,
-    .free = subghz_protocol_decoder_came_atomo_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_came_atomo_feed,
     .reset = subghz_protocol_decoder_came_atomo_reset,
 
-    .get_hash_data = subghz_protocol_decoder_came_atomo_get_hash_data,
-    .serialize = subghz_protocol_decoder_came_atomo_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_came_atomo_deserialize,
     .get_string = subghz_protocol_decoder_came_atomo_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_came_atomo_encoder = {
-    .alloc = subghz_protocol_encoder_came_atomo_alloc,
-    .free = subghz_protocol_encoder_came_atomo_free,
-
-    .deserialize = subghz_protocol_encoder_came_atomo_deserialize,
-    .stop = subghz_protocol_encoder_came_atomo_stop,
-    .yield = subghz_protocol_encoder_came_atomo_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    void* bypass;
+    void* came_atomo_counter_mode;
+    void* came_atomo_raw_replay;
+} enc_came_atomo_host_t;
+static const enc_came_atomo_host_t enc_came_atomo_host = {
+    .bypass = (void*)&bypass,
+    .came_atomo_counter_mode = (void*)&came_atomo_counter_mode,
+    .came_atomo_raw_replay = (void*)&came_atomo_raw_replay,
 };
+static const SubGhzEncoderExternal subghz_protocol_came_atomo_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_came_atomo", &enc_came_atomo_host);
 
 const SubGhzProtocol subghz_protocol_came_atomo = {
     .name = SUBGHZ_PROTOCOL_CAME_ATOMO_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
 
     .decoder = &subghz_protocol_came_atomo_decoder,
-    .encoder = &subghz_protocol_came_atomo_encoder,
+    .encoder = &subghz_protocol_came_atomo_encoder_ext.vtable,
 };
 
 static void subghz_protocol_came_atomo_remote_controller(SubGhzBlockGeneric* instance);
 
-static uint8_t subghz_protocol_came_atomo_get_btn_code(void);
-
-void* subghz_protocol_encoder_came_atomo_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderCameAtomo* instance = malloc(sizeof(SubGhzProtocolEncoderCameAtomo));
-
-    instance->base.protocol = &subghz_protocol_came_atomo;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 1;
-    instance->encoder.size_upload = 900;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_came_atomo_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderCameAtomo* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static LevelDuration
-    subghz_protocol_encoder_came_atomo_add_duration_to_upload(ManchesterEncoderResult result) {
-    LevelDuration data = {.duration = 0, .level = 0};
-    switch(result) {
-    case ManchesterEncoderResultShortLow:
-        data.duration = subghz_protocol_came_atomo_const.te_short;
-        data.level = false;
-        break;
-    case ManchesterEncoderResultLongLow:
-        data.duration = subghz_protocol_came_atomo_const.te_long;
-        data.level = false;
-        break;
-    case ManchesterEncoderResultLongHigh:
-        data.duration = subghz_protocol_came_atomo_const.te_long;
-        data.level = true;
-        break;
-    case ManchesterEncoderResultShortHigh:
-        data.duration = subghz_protocol_came_atomo_const.te_short;
-        data.level = true;
-        break;
-
-    default:
-        FURI_LOG_E(TAG, "SubGhz: ManchesterEncoderResult is incorrect.");
-        break;
-    }
-    return level_duration_make(data.level, data.duration);
-}
 
 bool subghz_protocol_came_atomo_create_data(
     void* context,
@@ -168,275 +131,10 @@ bool subghz_protocol_came_atomo_create_data(
            subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 }
 
-static void subghz_protocol_encoder_came_atomo_get_upload(
-    SubGhzProtocolEncoderCameAtomo* instance,
-    uint8_t btn) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    ManchesterEncoderState enc_state;
-    manchester_encoder_reset(&enc_state);
-    ManchesterEncoderResult result;
-
-    uint8_t pack[8] = {};
-
-    if(subghz_block_generic_global.cnt_need_override ||
-       subghz_block_generic_global.btn_need_override)
-        bypass = true;
-
-    if(came_atomo_counter_mode == 0 || bypass) {
-
-        if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF || bypass) {
-            bypass = false;
-
-            if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
-
-                if((instance->generic.cnt + furi_hal_subghz_get_rolling_counter_mult()) > 0xFFFF) {
-                    instance->generic.cnt = 0;
-                } else {
-                    instance->generic.cnt += furi_hal_subghz_get_rolling_counter_mult();
-                }
-            }
-        } else {
-
-            if((instance->generic.cnt + 0x1) > 0xFFFF) {
-                instance->generic.cnt = 0;
-            } else if(instance->generic.cnt >= 0x1 && instance->generic.cnt != 0xFFFE) {
-                instance->generic.cnt = 0xFFFE;
-            } else {
-                instance->generic.cnt++;
-            }
-        }
-    } else if(came_atomo_counter_mode == 1) {
-
-        if((instance->generic.cnt + 0x1) > 0xFFFF) {
-            instance->generic.cnt = 0;
-        } else if(instance->generic.cnt >= 0x1 && instance->generic.cnt != 0xFFFE) {
-            instance->generic.cnt = 0xFFFE;
-        } else {
-            instance->generic.cnt++;
-        }
-    } else if(came_atomo_counter_mode == 2) {
-
-        if(instance->generic.cnt != 0x807B && instance->generic.cnt != 0x807C &&
-           instance->generic.cnt != 0x007B) {
-            instance->generic.cnt = 0x807B;
-        } else if(instance->generic.cnt == 0x807C) {
-            instance->generic.cnt = 0x007B;
-        } else {
-            instance->generic.cnt++;
-        }
-    } else {
-
-    }
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(btn);
-    }
-
-    btn = subghz_protocol_came_atomo_get_btn_code();
-
-    if(btn == 0x1) {
-        btn = 0x0;
-    } else if(btn == 0x2) {
-        btn = 0x2;
-    } else if(btn == 0x3) {
-        btn = 0x4;
-    } else if(btn == 0x4) {
-        btn = 0x6;
-    }
-
-    if(subghz_block_generic_global_button_override_get(&btn))
-        FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", btn);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_came_atomo_const.te_long * 15);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_came_atomo_const.te_long * 60);
-
-    pack[0] = 0;
-    for(uint8_t i = 0; i < 8; i++) {
-
-        pack[1] = (instance->generic.cnt >> 8);
-        pack[2] = (instance->generic.cnt & 0xFF);
-        pack[3] = ((instance->generic.data_2 >> 32) & 0xFF);
-        pack[4] = ((instance->generic.data_2 >> 24) & 0xFF);
-        pack[5] = ((instance->generic.data_2 >> 16) & 0xFF);
-        pack[6] = ((instance->generic.data_2 >> 8) & 0xFF);
-        pack[7] = (btn << 4);
-
-        switch(i) {
-        case 0:
-            pack[0] = 10;
-            break;
-        case 1:
-            pack[0] = 30;
-            break;
-        case 2:
-            pack[0] = 125;
-            break;
-        case 3:
-            pack[0] = 126;
-            break;
-        case 4:
-            pack[0] = 127;
-            break;
-        case 5:
-            pack[0] = 0;
-            break;
-        case 6:
-            pack[0] = 1;
-            break;
-        case 7:
-            pack[0] = 3;
-            break;
-
-        default:
-            break;
-        }
-
-        atomo_encrypt(pack);
-        uint32_t hi = pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3];
-        uint32_t lo = pack[4] << 24 | pack[5] << 16 | pack[6] << 8 | pack[7];
-        instance->generic.data = (uint64_t)hi << 32 | lo;
-
-        instance->generic.data ^= 0xFFFFFFFFFFFFFFFF;
-        instance->generic.data >>= 4;
-        instance->generic.data &= 0xFFFFFFFFFFFFFFF;
-
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_came_atomo_const.te_long);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_came_atomo_const.te_short);
-
-        for(uint8_t i = (instance->generic.data_count_bit - 2); i > 0; i--) {
-            if(!manchester_encoder_advance(
-                   &enc_state, !bit_read(instance->generic.data, i - 1), &result)) {
-                instance->encoder.upload[index++] =
-                    subghz_protocol_encoder_came_atomo_add_duration_to_upload(result);
-                manchester_encoder_advance(
-                    &enc_state, !bit_read(instance->generic.data, i - 1), &result);
-            }
-            instance->encoder.upload[index++] =
-                subghz_protocol_encoder_came_atomo_add_duration_to_upload(result);
-        }
-        instance->encoder.upload[index] =
-            subghz_protocol_encoder_came_atomo_add_duration_to_upload(
-                manchester_encoder_finish(&enc_state));
-        if(level_duration_get_level(instance->encoder.upload[index])) {
-            index++;
-        }
-
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_came_atomo_const.te_delta * 272);
-    }
-    instance->encoder.size_upload = index;
-    instance->generic.cnt_2++;
-    pack[0] = (instance->generic.cnt_2);
-    pack[1] = (instance->generic.cnt >> 8);
-    pack[2] = (instance->generic.cnt & 0xFF);
-    pack[3] = ((instance->generic.data_2 >> 32) & 0xFF);
-    pack[4] = ((instance->generic.data_2 >> 24) & 0xFF);
-    pack[5] = ((instance->generic.data_2 >> 16) & 0xFF);
-    pack[6] = ((instance->generic.data_2 >> 8) & 0xFF);
-    pack[7] = (btn << 4);
-
-    atomo_encrypt(pack);
-    uint32_t hi = pack[0] << 24 | pack[1] << 16 | pack[2] << 8 | pack[3];
-    uint32_t lo = pack[4] << 24 | pack[5] << 16 | pack[6] << 8 | pack[7];
-    instance->generic.data = (uint64_t)hi << 32 | lo;
-
-    instance->generic.data ^= 0xFFFFFFFFFFFFFFFF;
-    instance->generic.data >>= 4;
-    instance->generic.data &= 0xFFFFFFFFFFFFFFF;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_came_atomo_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderCameAtomo* instance = context;
-    SubGhzProtocolStatus res = SubGhzProtocolStatusError;
-    do {
-        if(SubGhzProtocolStatusOk !=
-           subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-
-        uint32_t tmp_counter_mode;
-        if(flipper_format_read_uint32(flipper_format, "CounterMode", &tmp_counter_mode, 1)) {
-            came_atomo_counter_mode = (uint8_t)tmp_counter_mode;
-        } else {
-            came_atomo_counter_mode = 0;
-        }
-
-        subghz_protocol_came_atomo_remote_controller(&instance->generic);
-        subghz_protocol_encoder_came_atomo_get_upload(instance, instance->generic.btn);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
-        }
-        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "Unable to add Key");
-            break;
-        }
-
-        instance->encoder.is_running = true;
-
-        res = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return res;
-}
-
-void subghz_protocol_encoder_came_atomo_stop(void* context) {
-    SubGhzProtocolEncoderCameAtomo* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_came_atomo_yield(void* context) {
-    SubGhzProtocolEncoderCameAtomo* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
 void* subghz_protocol_decoder_came_atomo_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderCameAtomo* instance = malloc(sizeof(SubGhzProtocolDecoderCameAtomo));
-    instance->base.protocol = &subghz_protocol_came_atomo;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_came_atomo_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderCameAtomo* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderCameAtomo), &subghz_protocol_came_atomo);
 }
 
 void subghz_protocol_decoder_came_atomo_reset(void* context) {
@@ -621,89 +319,6 @@ void atomo_decrypt(uint8_t* buff) {
     }
 }
 
-static uint8_t subghz_protocol_came_atomo_get_btn_code(void) {
-    uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t original_btn_code = subghz_custom_btn_get_original();
-    uint8_t btn = original_btn_code;
-
-    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
-
-        btn = original_btn_code;
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x2;
-            break;
-        case 0x2:
-            btn = 0x1;
-            break;
-        case 0x3:
-            btn = 0x1;
-            break;
-        case 0x4:
-            btn = 0x1;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x3;
-            break;
-        case 0x2:
-            btn = 0x3;
-            break;
-        case 0x3:
-            btn = 0x2;
-            break;
-        case 0x4:
-            btn = 0x2;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x4;
-            break;
-        case 0x2:
-            btn = 0x4;
-            break;
-        case 0x3:
-            btn = 0x4;
-            break;
-        case 0x4:
-            btn = 0x3;
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    return btn;
-}
-
-uint8_t subghz_protocol_decoder_came_atomo_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderCameAtomo* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_came_atomo_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderCameAtomo* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_came_atomo_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -739,32 +354,16 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_came_atomo_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderCameAtomo* instance = context;
+    // Detect/decode split (FoxFW2.0 v2.1): Atomo decrypt (rainbow table) stays
+    // internal; the SD plugin only formats.
     subghz_protocol_came_atomo_remote_controller(&instance->generic);
-    uint32_t code_found_hi = instance->generic.data >> 32;
-    uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
-
-    subghz_block_generic_global.cnt_is_available = true;
-    subghz_block_generic_global.cnt_length_bit = 16;
-    subghz_block_generic_global.current_cnt = instance->generic.cnt;
-
-    subghz_block_generic_global.btn_is_available = true;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 4;
-
-    furi_string_cat_printf(
-        output,
-        "%s %db\r\n"
-        "Key:%08lX%08lX\r\n"
-        "Sn:0x%08lX       Btn:%01X\r\n"
-        "Cnt:%04lX\r\n"
-        "Btn_Cnt:0x%02X",
-
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        code_found_hi,
-        code_found_lo,
-        instance->generic.serial,
-        instance->generic.btn,
-        instance->generic.cnt,
-        instance->generic.cnt_2);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+

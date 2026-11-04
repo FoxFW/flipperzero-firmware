@@ -26,7 +26,7 @@ void tpms_scene_relearn_config_on_enter(void* context) {
         0,
         18,
         128,
-        34,
+        29,
         "\ecHold the Flippers back flat\n"
         "\ecagainst the base of the valve\n"
         "\ecstem & Press TRIGGER to send\n"

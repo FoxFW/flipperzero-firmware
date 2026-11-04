@@ -26,6 +26,14 @@ PluginManagerError plugin_manager_load_single(PluginManager* manager, const char
 
 PluginManagerError plugin_manager_load_all(PluginManager* manager, const char* path);
 
+/* Like plugin_manager_load_all but only loads .fal whose filename starts with
+ * name_prefix (NULL = all). Lets one plugins dir hold several plugin families
+ * without one family preloading another's. FoxFW2.0 2026-10-19. */
+PluginManagerError plugin_manager_load_all_ex(
+    PluginManager* manager,
+    const char* path,
+    const char* name_prefix);
+
 uint32_t plugin_manager_get_count(PluginManager* manager);
 
 const FlipperAppPluginDescriptor* plugin_manager_get(PluginManager* manager, uint32_t index);

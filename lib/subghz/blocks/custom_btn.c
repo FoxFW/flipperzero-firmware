@@ -90,3 +90,52 @@ void subghz_custom_btn_set_max_pages(uint8_t n) {
 uint8_t subghz_custom_btn_get_max_pages(void) {
     return custom_btn_max_pages;
 }
+
+void subghz_custom_btn_set_original_if_unset(uint8_t btn_code) {
+    if(custom_btn_original == 0) custom_btn_original = btn_code;
+}
+
+void subghz_custom_btn_apply_map(
+    uint8_t* btn,
+    uint8_t original,
+    uint8_t custom_id,
+    const uint8_t* btns,
+    const uint8_t* btn_map,
+    size_t btns_count,
+    uint8_t custom_max) {
+    if(!btn) return;
+    if(custom_id == 0 || custom_id > custom_max || btns == NULL || btn_map == NULL ||
+       btns_count == 0) {
+        *btn = original;
+        return;
+    }
+    size_t pos = 0;
+    bool found = false;
+    for(size_t i = 0; i < btns_count; i++) {
+        if(btns[i] == original) {
+            pos = i;
+            found = true;
+            break;
+        }
+    }
+    if(!found) {
+        *btn = original;
+        return;
+    }
+    *btn = btn_map[(size_t)(custom_id - 1) * btns_count + pos];
+}
+
+void subghz_custom_btn_fill_labels(
+    uint8_t btn,
+    const uint8_t* btns,
+    const uint8_t* btn_map,
+    size_t btns_count,
+    uint8_t custom_max,
+    const char* (*get_name)(uint8_t)) {
+    (void)btn;
+    (void)btns;
+    (void)btn_map;
+    (void)btns_count;
+    (void)custom_max;
+    (void)get_name;
+}

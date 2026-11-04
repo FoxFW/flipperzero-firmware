@@ -5,17 +5,18 @@
 #define SGRID_IDX_SAVED         1
 #define SGRID_IDX_READRAW       2
 #define SGRID_IDX_ADDMAN        3
-#define SGRID_IDX_FREQANA       4
-#define SGRID_IDX_MODANA        5
-#define SGRID_IDX_PROTOCOLS     6
-#define SGRID_IDX_MODLIST       7
-#define SGRID_IDX_GDR           8
-#define SGRID_IDX_RADIOSETTINGS 9
-#define SGRID_IDX_KEELOQ        10
-#define SGRID_IDX_KEELOQBF      11
-#define SGRID_IDX_JAMMER        12
-#define SGRID_IDX_TPMS          13
-#define SGRID_BTN_COUNT         14
+#define SGRID_IDX_RADIOSETTINGS 4
+#define SGRID_IDX_FREQANA       5
+#define SGRID_IDX_MODANA        6
+#define SGRID_IDX_JAMMER        7
+#define SGRID_IDX_SUBRATT       8
+#define SGRID_IDX_TPMS          9
+#define SGRID_IDX_PROTOCOLS     10
+#define SGRID_IDX_MODLIST       11
+#define SGRID_IDX_KEELOQ        12
+#define SGRID_IDX_KEELOQBF      13
+#define SGRID_IDX_READDUAL      14
+#define SGRID_BTN_COUNT         15
 
 #ifdef __cplusplus
 extern "C" {

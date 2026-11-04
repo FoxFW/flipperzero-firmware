@@ -7,9 +7,11 @@ void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx);
 #define SUBGHZ_HITAG2_HELL_FAP_PATH EXT_PATH("apps/Sub-GHz/fox_hitag2_hell.fap")
 
 enum SubmenuIndex {
-    SubmenuIndexRecover,
-    SubmenuIndexManual,
     SubmenuIndexHitag2Hell,
+    SubmenuIndexRecover,
+    SubmenuIndexRecoverBt,
+    SubmenuIndexManual,
+    SubmenuIndexSendRaw,
 };
 
 static void subghz_scene_fiat_v1_key_method_submenu_callback(void* context, uint32_t index) {
@@ -22,14 +24,8 @@ void subghz_scene_fiat_v1_key_method_on_enter(void* context) {
 
     submenu_add_item(
         subghz->submenu,
-        "Recover Key (Auto)",
-        SubmenuIndexRecover,
-        subghz_scene_fiat_v1_key_method_submenu_callback,
-        subghz);
-    submenu_add_item(
-        subghz->submenu,
-        "Enter Key Manually",
-        SubmenuIndexManual,
+        "Send Raw (Replay)",
+        SubmenuIndexSendRaw,
         subghz_scene_fiat_v1_key_method_submenu_callback,
         subghz);
 
@@ -46,10 +42,30 @@ void subghz_scene_fiat_v1_key_method_on_enter(void* context) {
                 subghz);
         }
     }
-
-    submenu_set_selected_item(
+    submenu_add_item(
         subghz->submenu,
-        scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneFiatV1KeyMethod));
+        "Recover Key (Auto)",
+        SubmenuIndexRecover,
+        subghz_scene_fiat_v1_key_method_submenu_callback,
+        subghz);
+    submenu_add_item(
+        subghz->submenu,
+        "ESP32 Recover Key",
+        SubmenuIndexRecoverBt,
+        subghz_scene_fiat_v1_key_method_submenu_callback,
+        subghz);
+    submenu_add_item(
+        subghz->submenu,
+        "Enter Key Manually",
+        SubmenuIndexManual,
+        subghz_scene_fiat_v1_key_method_submenu_callback,
+        subghz);
+
+    if(scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneFiatV1KeyMethod) ==
+       SUBGHZ_FIAT_V1_KEYMETHOD_RETURN_SELECT) {
+        submenu_set_selected_item(subghz->submenu, SubmenuIndexHitag2Hell);
+        scene_manager_set_scene_state(subghz->scene_manager, SubGhzSceneFiatV1KeyMethod, 0);
+    }
 
     view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdMenu);
 }
@@ -63,10 +79,20 @@ bool subghz_scene_fiat_v1_key_method_on_event(void* context, SceneManagerEvent e
                 subghz->scene_manager, SubGhzSceneFiatV1KeyMethod, SubmenuIndexRecover);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneFiatV1Recover);
             return true;
+        } else if(event.event == SubmenuIndexRecoverBt) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneFiatV1KeyMethod, SubmenuIndexRecoverBt);
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneFiatV1RecoverBt);
+            return true;
         } else if(event.event == SubmenuIndexManual) {
             scene_manager_set_scene_state(
                 subghz->scene_manager, SubGhzSceneFiatV1KeyMethod, SubmenuIndexManual);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneFiatV1Key);
+            return true;
+        } else if(event.event == SubmenuIndexSendRaw) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneFiatV1KeyMethod, SubmenuIndexSendRaw);
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneFiatV1RawReplay);
             return true;
         } else if(event.event == SubmenuIndexHitag2Hell) {
             scene_manager_set_scene_state(

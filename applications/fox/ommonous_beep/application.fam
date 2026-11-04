@@ -1,0 +1,14 @@
+App(
+    appid="ommonous_beep",
+    name="Ommonous Beep",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="ommonous_beep_app",
+    requires=["gui"],
+    stack_size=2 * 1024,
+    order=90,
+    fap_icon="icon_10px.png",
+    fap_category="Games",
+    fap_author="FoxFW",
+    fap_version="1.0",
+    fap_description="Fake 'self destruct' prank: black screen, accelerating beeps with screen flash + vibration, then Matrix rain and an instant power-off. Does nothing real - it's all pretend.",
+)

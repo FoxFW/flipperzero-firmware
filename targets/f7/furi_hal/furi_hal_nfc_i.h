@@ -57,6 +57,10 @@ void furi_hal_nfc_timers_init(void);
 
 void furi_hal_nfc_timers_deinit(void);
 
+void furi_hal_nfc_transparent_mode_enter(const FuriHalSpiBusHandle* handle);
+
+void furi_hal_nfc_transparent_mode_exit(const FuriHalSpiBusHandle* handle);
+
 uint32_t furi_hal_nfc_get_irq(const FuriHalSpiBusHandle* handle);
 
 bool furi_hal_nfc_event_wait_for_specific_irq(

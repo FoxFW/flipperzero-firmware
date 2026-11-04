@@ -1,0 +1,19 @@
+App(
+    appid="fox_android_companion",
+    name="Fox Android Companion",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="fox_android_companion_app",
+    fap_icon_assets="icons",
+    requires=[
+        "gui",
+        "subghz",
+        "nfc",
+        "desktop",
+        "loader",
+    ],
+    stack_size=8 * 1024,
+    fap_category="System",
+    fap_author="FoxFW",
+    fap_version="1.0",
+    fap_description="Headless IO bridge the FoxFW Android companion drives over BLE/USB. Launched on demand, exits when idle. Channels: CLI, ESP32 (GPIO-UART relay), SUBGHZ (RX/TX), NFC (HF+LF), SETTINGS (apply/read FoxFW settings). Desktop flag-launches it headless for settings sync.",
+)

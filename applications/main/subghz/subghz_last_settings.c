@@ -7,6 +7,7 @@
 #define SUBGHZ_LAST_SETTING_FILE_TYPE    "Flipper SubGhz Last Setting File"
 #define SUBGHZ_LAST_SETTING_FILE_VERSION 3
 #define SUBGHZ_LAST_SETTINGS_PATH        EXT_PATH("subghz/assets/last_subghz.settings")
+#define SUBGHZ_RSSI_RESET_MARKER         EXT_PATH("subghz/assets/rssi_reset")
 
 #define SUBGHZ_LAST_SETTING_FIELD_FREQUENCY                         "Frequency"
 #define SUBGHZ_LAST_SETTING_FIELD_PRESET                            "Preset"
@@ -19,9 +20,10 @@
 #define SUBGHZ_LAST_SETTING_FIELD_IGNORE_FILTER                     "IgnoreFilter"
 #define SUBGHZ_LAST_SETTING_FIELD_FILTER                            "Filter"
 #define SUBGHZ_LAST_SETTING_FIELD_RSSI_THRESHOLD                    "RSSI"
-#define SUBGHZ_LAST_SETTING_FIELD_RSSI_FORCE_APPLIED                "RSSIForceApplied"
+#define SUBGHZ_LAST_SETTING_FIELD_PREDEFINED                        "Predefined"
 #define SUBGHZ_LAST_SETTING_FIELD_DELETE_OLD                        "DelOldSignals"
 #define SUBGHZ_LAST_SETTING_FIELD_AUTO_SAVE                         "AutoSave"
+#define SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW              "CaptureUnknownRaw"
 #define SUBGHZ_LAST_SETTING_FIELD_HOPPING_THRESHOLD                 "HoppingThreshold"
 #define SUBGHZ_LAST_SETTING_FIELD_LED_AND_POWER_AMP                 "LedAndPowerAmp"
 #define SUBGHZ_LAST_SETTING_FIELD_TX_POWER                          "TXPower"
@@ -31,9 +33,11 @@
 #define SUBGHZ_LAST_SETTING_FIELD_MOD_FILTER           "ModFilter"
 #define SUBGHZ_LAST_SETTING_FIELD_BYPASS_REGION_LOCK   "BypassRegionLock"
 #define SUBGHZ_LAST_SETTING_FIELD_FILE_PREFIX          "FilePrefix"
-#define SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUP       "ProtocolGroup"
-#define SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUPS_ENABLED "ProtocolGroupsEnabled"
 #define SUBGHZ_LAST_SETTING_FIELD_FREQUENCY_OFFSET     "FrequencyOffset"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_FREQUENCY   "DualIntFrequency"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_PRESET      "DualIntPreset"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_FREQUENCY   "DualExtFrequency"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_PRESET      "DualExtPreset"
 
 SubGhzLastSettings* subghz_last_settings_alloc(void) {
     SubGhzLastSettings* instance = malloc(sizeof(SubGhzLastSettings));
@@ -57,8 +61,9 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
 
     instance->filter = SubGhzProtocolFlag_Decodable;
     instance->rssi = SUBGHZ_RAW_THRESHOLD_DEFAULT;
-    instance->rssi_force_applied = false;
+    instance->predefined_index = 0;
     instance->auto_save = false;
+    instance->capture_unknown_raw = true;
     instance->hopping_threshold = -90.0f;
     instance->enable_preset_hopping = false;
     instance->preset_hopping_threshold = SUBGHZ_LAST_SETTING_DEFAULT_PRESET_HOPPING_THRESHOLD;
@@ -67,9 +72,11 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
     instance->raw_playback_zoom_level = SUBGHZ_LAST_SETTING_DEFAULT_RAW_ZOOM_LEVEL;
     instance->bypass_region_lock = false;
     instance->file_prefix[0] = '\0';
-    instance->protocol_group = 0;
-    memset(instance->protocol_groups_enabled, 0x01, sizeof(instance->protocol_groups_enabled));
     instance->frequency_offset = 0;
+    instance->dual_int_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
+    instance->dual_int_preset_index = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_INT_PRESET;
+    instance->dual_ext_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
+    instance->dual_ext_preset_index = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_EXT_PRESET;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     FlipperFormat* fff_data_file = flipper_format_file_alloc(storage);
@@ -156,12 +163,12 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
                    fff_data_file, SUBGHZ_LAST_SETTING_FIELD_RSSI_THRESHOLD, &instance->rssi, 1)) {
                 flipper_format_rewind(fff_data_file);
             }
-            if(!flipper_format_read_bool(
+            if(!flipper_format_read_uint32(
                    fff_data_file,
-                   SUBGHZ_LAST_SETTING_FIELD_RSSI_FORCE_APPLIED,
-                   &instance->rssi_force_applied,
+                   SUBGHZ_LAST_SETTING_FIELD_PREDEFINED,
+                   &instance->predefined_index,
                    1)) {
-                instance->rssi_force_applied = false;
+                instance->predefined_index = 0;
                 flipper_format_rewind(fff_data_file);
             }
             if(!flipper_format_read_bool(
@@ -177,6 +184,14 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
                    &instance->auto_save,
                    1)) {
                 instance->auto_save = false;
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_bool(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW,
+                   &instance->capture_unknown_raw,
+                   1)) {
+                instance->capture_unknown_raw = true; /* default ON for older settings files */
                 flipper_format_rewind(fff_data_file);
             }
             uint32_t tx_power = 0;
@@ -249,31 +264,42 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
             }
             flipper_format_rewind(fff_data_file);
 
-            if(!flipper_format_read_uint32(
-                   fff_data_file,
-                   SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUP,
-                   &instance->protocol_group,
-                   1)) {
-                instance->protocol_group = 0;
-                flipper_format_rewind(fff_data_file);
-            }
-            if(!flipper_format_read_hex(
-                   fff_data_file,
-                   SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUPS_ENABLED,
-                   instance->protocol_groups_enabled,
-                   sizeof(instance->protocol_groups_enabled))) {
-                memset(
-                    instance->protocol_groups_enabled,
-                    0x01,
-                    sizeof(instance->protocol_groups_enabled));
-                flipper_format_rewind(fff_data_file);
-            }
             if(!flipper_format_read_int32(
                    fff_data_file,
                    SUBGHZ_LAST_SETTING_FIELD_FREQUENCY_OFFSET,
                    &instance->frequency_offset,
                    1)) {
                 instance->frequency_offset = 0;
+                flipper_format_rewind(fff_data_file);
+            }
+
+            flipper_format_rewind(fff_data_file);
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_FREQUENCY,
+                   &instance->dual_int_frequency,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_PRESET,
+                   &instance->dual_int_preset_index,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_FREQUENCY,
+                   &instance->dual_ext_frequency,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_PRESET,
+                   &instance->dual_ext_preset_index,
+                   1)) {
                 flipper_format_rewind(fff_data_file);
             }
 
@@ -300,29 +326,28 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
         instance->preset_index = SUBGHZ_LAST_SETTING_DEFAULT_PRESET;
     }
 
-    if(instance->protocol_group >= SUBGHZ_GARAGE_PROTOCOL_GROUP_COUNT) {
-        instance->protocol_group = 0;
+    if(instance->dual_int_frequency == 0 ||
+       !furi_hal_subghz_is_frequency_valid(instance->dual_int_frequency)) {
+        instance->dual_int_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
+    }
+    if(instance->dual_ext_frequency == 0 ||
+       !furi_hal_subghz_is_frequency_valid(instance->dual_ext_frequency)) {
+        instance->dual_ext_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
     }
 
-    {
-        bool any_enabled = false;
-        for(size_t i = 0; i < SUBGHZ_GARAGE_PROTOCOL_GROUP_COUNT; i++) {
-            if(instance->protocol_groups_enabled[i]) {
-                any_enabled = true;
-                break;
-            }
-        }
-        if(!any_enabled) {
-            memset(
-                instance->protocol_groups_enabled,
-                0x01,
-                sizeof(instance->protocol_groups_enabled));
-        }
+    /* Every install forces the RSSI threshold back to the sane default. The updater re-deploys
+     * the one-shot marker file to SD on every install (any version, even an identical rebuild);
+     * on boot we consume it (delete) and force -65. So ~90% of users who never touch RSSI don't
+     * sit at -90 decoding noise, and anyone stuck at -90 just reinstalls to fix it. Between
+     * installs users can still adjust it. */
+    Storage* marker_storage = furi_record_open(RECORD_STORAGE);
+    bool rssi_reset_marker = storage_file_exists(marker_storage, SUBGHZ_RSSI_RESET_MARKER);
+    if(rssi_reset_marker) {
+        storage_simply_remove(marker_storage, SUBGHZ_RSSI_RESET_MARKER);
     }
-
-    if(!instance->rssi_force_applied) {
+    furi_record_close(RECORD_STORAGE);
+    if(rssi_reset_marker) {
         instance->rssi = SUBGHZ_RAW_THRESHOLD_DEFAULT;
-        instance->rssi_force_applied = true;
         subghz_last_settings_save(instance);
     }
 }
@@ -404,10 +429,10 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
             break;
         }
 
-        if(!flipper_format_write_bool(
+        if(!flipper_format_write_uint32(
                file,
-               SUBGHZ_LAST_SETTING_FIELD_RSSI_FORCE_APPLIED,
-               &instance->rssi_force_applied,
+               SUBGHZ_LAST_SETTING_FIELD_PREDEFINED,
+               &instance->predefined_index,
                1)) {
             break;
         }
@@ -417,6 +442,13 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
         }
         if(!flipper_format_write_bool(
                file, SUBGHZ_LAST_SETTING_FIELD_AUTO_SAVE, &instance->auto_save, 1)) {
+            break;
+        }
+        if(!flipper_format_write_bool(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW,
+               &instance->capture_unknown_raw,
+               1)) {
             break;
         }
         uint32_t tx_power = instance->tx_power;
@@ -472,22 +504,33 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
                file, SUBGHZ_LAST_SETTING_FIELD_FILE_PREFIX, instance->file_prefix)) {
             break;
         }
-        if(!flipper_format_write_uint32(
-               file, SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUP, &instance->protocol_group, 1)) {
-            break;
-        }
-        if(!flipper_format_write_hex(
-               file,
-               SUBGHZ_LAST_SETTING_FIELD_PROTOCOL_GROUPS_ENABLED,
-               instance->protocol_groups_enabled,
-               (uint16_t)sizeof(instance->protocol_groups_enabled))) {
-            break;
-        }
         if(!flipper_format_write_int32(
                file,
                SUBGHZ_LAST_SETTING_FIELD_FREQUENCY_OFFSET,
                &instance->frequency_offset,
                1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_FREQUENCY,
+               &instance->dual_int_frequency,
+               1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_PRESET, &instance->dual_int_preset_index, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_FREQUENCY,
+               &instance->dual_ext_frequency,
+               1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_PRESET, &instance->dual_ext_preset_index, 1)) {
             break;
         }
         saved = true;

@@ -40,6 +40,8 @@ DesktopUsbMode desktop_api_get_usb_mode(Desktop* instance);
 
 void desktop_api_set_usb_mode(Desktop* instance, DesktopUsbMode mode);
 
+bool desktop_boot_is_ready(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,3 +1,4 @@
+#ifdef FURI_DEBUG
 
 #include "../desktop_i.h"
 #include "../views/desktop_view_debug.h"
@@ -44,3 +45,4 @@ bool desktop_scene_debug_on_event(void* context, SceneManagerEvent event) {
 void desktop_scene_debug_on_exit(void* context) {
     UNUSED(context);
 }
+#endif

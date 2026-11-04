@@ -1,0 +1,22 @@
+App(
+    appid="pandora_pin_brute",
+    name="Pandora Cracker",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="pandora_pin_brute_app",
+    sources=["*.c*", "!lib", "!tests", "!hosttest"],
+    requires=["gui", "dialogs", "storage"],
+    stack_size=8 * 1024,
+    fap_private_libs=[
+        Lib(
+            # Own copy of the PandoraPIC PIC18 interpreter. Built -Os: the FAP
+            # loads into the Flipper heap, so code size matters here.
+            name="pic18core",
+            cflags=["-Os"],
+        ),
+    ],
+    fap_category="Sub-GHz",
+    fap_icon="icon.png",
+    fap_author="user",
+    fap_version="0.1",
+    fap_description="Recovers a Pandora keyfob firmware's unlock code: detects PIC18 (DXL-5000) vs ARM (D-605/MAX) automatically. PIC -> numeric PIN (reads the code literals, else brute-forces 0000-9999) -> <name>_PIN.txt. ARM -> knock-code (static scanner analysis) -> <name>_KNOCK.txt. Pick the .hex/.bin and watch the progress bar.",
+)

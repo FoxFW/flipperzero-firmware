@@ -76,6 +76,56 @@ static const SfrEntry SFR_TABLE[] = {
 #define A_FSR2L   0xFD9
 #define A_STATUS  0xFD8
 
+/* Timer + interrupt SFRs */
+#define A_INTCON2 0xFF1
+#define A_INTCON3 0xFF0
+#define A_TMR0H   0xFD7
+#define A_TMR0L   0xFD6
+#define A_T0CON   0xFD5
+#define A_RCON    0xFD0
+#define A_TMR1H   0xFCF
+#define A_TMR1L   0xFCE
+#define A_T1CON   0xFCD
+#define A_TMR2    0xFCC
+#define A_PR2     0xFCB
+#define A_T2CON   0xFCA
+#define A_TMR3H   0xFB3
+#define A_TMR3L   0xFB2
+#define A_T3CON   0xFB1
+#define A_PIR1    0xF9D
+#define A_PIE1    0xF9C
+#define A_IPR1    0xF9E
+#define A_PIR2    0xFA0
+#define A_PIE2    0xF9F
+#define A_IPR2    0xFA1
+#define A_PIR3    0xFA3
+#define A_PIE3    0xFA2
+#define A_IPR3    0xFA4
+
+/* INTCON bits */
+#define INTCON_GIE    0x80  /* GIE / GIEH            */
+#define INTCON_PEIE   0x40  /* PEIE / GIEL           */
+#define INTCON_TMR0IE 0x20
+#define INTCON_INT0IE 0x10
+#define INTCON_RBIE   0x08
+#define INTCON_TMR0IF 0x04
+#define INTCON_INT0IF 0x02
+#define INTCON_RBIF   0x01
+/* INTCON2 priority bits (used when RCON.IPEN=1) */
+#define INTCON2_TMR0IP 0x04
+#define INTCON2_RBIP   0x01
+/* PIR1/PIE1 bits */
+#define PIR1_TMR1IF 0x01
+#define PIR1_TMR2IF 0x02
+/* PIR2/PIE2 bits */
+#define PIR2_TMR3IF 0x02
+/* RCON bits */
+#define RCON_IPEN   0x80
+
+/* Interrupt vectors */
+#define VEC_HIGH 0x000008u
+#define VEC_LOW  0x000018u
+
 /*
  * Fast SFR classification by address. 0 = normal RAM (not a special SFR);
  * the rest are "classes" that replicate the branches of _read_sfr/_write_sfr in
@@ -214,9 +264,16 @@ static void    write_data(Pic18Cpu* c, uint16_t addr, uint8_t val);
 static int     fsr_access(Pic18Cpu* c, int n, uint8_t kind, int write, uint8_t wval);
 
 /* --------------------------------------------------------------- utilities */
+/* Single code byte: routed through the paging hook when the frontend installs
+ * one (on_prog), else a direct prog[] index with 0xFF past the end. */
+static uint8_t code_rd(Pic18Cpu* c, uint32_t a) {
+    if(c->on_prog) return c->on_prog(c, a, c->prog_ctx);
+    return (a < c->prog_size) ? c->prog[a] : 0xFF;
+}
+
 static uint16_t pword(Pic18Cpu* c, uint32_t a) {
-    uint8_t b0 = (a < c->prog_size) ? c->prog[a] : 0xFF;
-    uint8_t b1 = (a + 1 < c->prog_size) ? c->prog[a + 1] : 0xFF;
+    uint8_t b0 = code_rd(c, a);
+    uint8_t b1 = code_rd(c, a + 1);
     return (uint16_t)(b0 | (b1 << 8));
 }
 
@@ -404,6 +461,29 @@ static uint8_t read_data(Pic18Cpu* c, uint16_t addr) {
 
 static void write_data(Pic18Cpu* c, uint16_t addr, uint8_t val) {
     addr &= 0xFFF;
+    /* Timer registers: keep the prescaler coherent with software reloads, and
+     * model the TMR0 16-bit write buffer (a write to TMR0L transfers the byte
+     * previously staged in TMR0H together with the new low byte, and resets the
+     * prescaler), matching the PIC18 datasheet. */
+    switch(addr) {
+    case A_T0CON:
+        c->ram[addr] = val;
+        c->t0_presc = 0;
+        return;
+    case A_TMR0H:
+        c->t0_wrbuf = val;
+        c->ram[addr] = val;
+        return;
+    case A_TMR0L:
+        if(!(c->ram[A_T0CON] & 0x40)) c->ram[A_TMR0H] = c->t0_wrbuf; /* 16-bit */
+        c->ram[A_TMR0L] = val;
+        c->t0_presc = 0;
+        return;
+    case A_T1CON: c->ram[addr] = val; c->t1_presc = 0; return;
+    case A_T2CON: c->ram[addr] = val; c->t2_presc = 0; c->t2_postsc = 0; return;
+    case A_T3CON: c->ram[addr] = val; c->t3_presc = 0; return;
+    default: break;
+    }
     uint8_t k = kind_of(addr);
     switch(k) {
     case SFRK_NONE:
@@ -475,8 +555,9 @@ static uint8_t config_read(Pic18Cpu* c, uint32_t a) {
 }
 
 static uint8_t prog_read(Pic18Cpu* c, uint32_t a) {
+    if(a >= 0x300000) return config_read(c, a); /* config stays in its table */
+    if(c->on_prog) return c->on_prog(c, a, c->prog_ctx); /* demand-paged code */
     if(a < c->prog_size) return c->prog[a];
-    if(a >= 0x300000) return config_read(c, a);
     return 0xFF;
 }
 
@@ -501,7 +582,10 @@ static void tblwt(Pic18Cpu* c, int mode) {
         tblptr_set(c, ptr);
     }
     uint8_t val = c->ram[A_TABLAT];
-    if(ptr < c->prog_size) c->prog[ptr] = val;
+    if(c->on_prog_write)
+        c->on_prog_write(c, ptr, val, c->progw_ctx); /* paged image: read-only, drops */
+    else if(ptr < c->prog_size)
+        c->prog[ptr] = val;
     if(mode == 1)
         tblptr_set(c, (ptr + 1) & 0x3FFFFF);
     else if(mode == 2)
@@ -893,6 +977,12 @@ void pic18_reset(Pic18Cpu* c) {
     c->steps = 0;
     c->halted = 0;
     c->sleeping = 0;
+    c->t0_presc = 0;
+    c->t0_wrbuf = 0;
+    c->t1_presc = 0;
+    c->t2_presc = 0;
+    c->t2_postsc = 0;
+    c->t3_presc = 0;
     memset(c->ram, 0, sizeof(c->ram));
     c->ram[A_BSR] = 0;
     c->ram[A_STKPTR] = 0;
@@ -946,16 +1036,172 @@ int pic18_load_hex(Pic18Cpu* c, const char* path) {
 }
 #endif
 
+/* =============================================================== timers
+ * Advances the on-chip timers by `dcyc` instruction cycles (Fosc/4 ticks) and
+ * raises the overflow flags the firmware's ISR polls. Only the internal
+ * instruction-clock source is modeled (T*CS=0); external-clock/counter modes
+ * are not driven here. Each timer's registers live in ram[] at their SFR
+ * addresses; the prescaler/postscaler residues live in the Pic18Cpu. mario2
+ * (Pandora DXL-5000) keeps time on a 16-bit TMR0; TMR1/2/3 are modeled too so
+ * the subsystem is complete, but the Pandora images leave them off.
+ */
+static void timers_advance(Pic18Cpu* c, uint32_t dcyc) {
+    /* ---- TMR0 ---- */
+    uint8_t t0con = c->ram[A_T0CON];
+    if((t0con & 0x80) && !(t0con & 0x20)) { /* TMR0ON=1, T0CS=0 (internal) */
+        uint32_t div = (t0con & 0x08) ? 1u : (1u << ((t0con & 0x07) + 1)); /* PSA / T0PS */
+        c->t0_presc += dcyc;
+        uint32_t inc = c->t0_presc / div;
+        c->t0_presc -= inc * div;
+        if(inc) {
+            if(t0con & 0x40) { /* T08BIT: 8-bit */
+                uint32_t v = (uint32_t)c->ram[A_TMR0L] + inc;
+                if(v > 0xFF) c->ram[A_INTCON] |= INTCON_TMR0IF;
+                c->ram[A_TMR0L] = (uint8_t)(v & 0xFF);
+            } else { /* 16-bit */
+                uint32_t v = (((uint32_t)c->ram[A_TMR0H] << 8) | c->ram[A_TMR0L]) + inc;
+                if(v > 0xFFFF) c->ram[A_INTCON] |= INTCON_TMR0IF;
+                c->ram[A_TMR0H] = (uint8_t)((v >> 8) & 0xFF);
+                c->ram[A_TMR0L] = (uint8_t)(v & 0xFF);
+            }
+        }
+    }
+    /* ---- TMR1 (16-bit) ---- */
+    uint8_t t1con = c->ram[A_T1CON];
+    if((t1con & 0x01) && !(t1con & 0x02)) { /* TMR1ON=1, TMR1CS=0 (internal) */
+        uint32_t div = 1u << ((t1con >> 4) & 0x03); /* T1CKPS 1:1..1:8 */
+        c->t1_presc += dcyc;
+        uint32_t inc = c->t1_presc / div;
+        c->t1_presc -= inc * div;
+        if(inc) {
+            uint32_t v = (((uint32_t)c->ram[A_TMR1H] << 8) | c->ram[A_TMR1L]) + inc;
+            if(v > 0xFFFF) c->ram[A_PIR1] |= PIR1_TMR1IF;
+            c->ram[A_TMR1H] = (uint8_t)((v >> 8) & 0xFF);
+            c->ram[A_TMR1L] = (uint8_t)(v & 0xFF);
+        }
+    }
+    /* ---- TMR2 (8-bit, PR2 match + postscaler) ---- */
+    uint8_t t2con = c->ram[A_T2CON];
+    if(t2con & 0x04) { /* TMR2ON */
+        static const uint8_t t2ps[4] = {1, 4, 16, 16}; /* T2CKPS: 1:1,1:4,1:16,1:16 */
+        uint32_t div = t2ps[t2con & 0x03];
+        uint8_t post = (uint8_t)(((t2con >> 3) & 0x0F) + 1); /* TOUTPS 1:1..1:16 */
+        c->t2_presc += dcyc;
+        while(c->t2_presc >= div) {
+            c->t2_presc -= div;
+            uint8_t nv = (uint8_t)(c->ram[A_TMR2] + 1);
+            if(nv > c->ram[A_PR2]) {
+                nv = 0;
+                if(++c->t2_postsc >= post) {
+                    c->t2_postsc = 0;
+                    c->ram[A_PIR1] |= PIR1_TMR2IF;
+                }
+            }
+            c->ram[A_TMR2] = nv;
+        }
+    }
+    /* ---- TMR3 (16-bit) ---- */
+    uint8_t t3con = c->ram[A_T3CON];
+    if((t3con & 0x01) && !(t3con & 0x02)) { /* TMR3ON=1, TMR3CS=0 */
+        uint32_t div = 1u << ((t3con >> 4) & 0x03);
+        c->t3_presc += dcyc;
+        uint32_t inc = c->t3_presc / div;
+        c->t3_presc -= inc * div;
+        if(inc) {
+            uint32_t v = (((uint32_t)c->ram[A_TMR3H] << 8) | c->ram[A_TMR3L]) + inc;
+            if(v > 0xFFFF) c->ram[A_PIR2] |= PIR2_TMR3IF;
+            c->ram[A_TMR3H] = (uint8_t)((v >> 8) & 0xFF);
+            c->ram[A_TMR3L] = (uint8_t)(v & 0xFF);
+        }
+    }
+}
+
+/* ========================================================== interrupts
+ * Checks, between instructions, for a pending-and-enabled interrupt and, if
+ * found, vectors to it: push the return PC, snapshot WREG/STATUS/BSR into the
+ * fast-return shadow (hardware does this on every interrupt), clear the global
+ * enable the architecture clears on entry, and jump to the vector. RETFIE
+ * (exec_op) re-sets the global enable on return. Both the compatibility model
+ * (RCON.IPEN=0, single vector 0x0008) and the two-priority model (IPEN=1,
+ * 0x0008 high / 0x0018 low) are handled; the Pandora images run IPEN=0.
+ */
+static void take_interrupt(Pic18Cpu* c, uint32_t vector, uint8_t clear_gie_bit) {
+    pic18_push(c, c->pc);
+    c->ws = c->w;
+    c->statuss = c->ram[A_STATUS];
+    c->bsrs = bsr4(c);
+    c->ram[A_INTCON] &= (uint8_t)~clear_gie_bit;
+    c->pc = vector;
+    c->sleeping = 0;
+    c->cycles++;
+}
+
+static void service_interrupt(Pic18Cpu* c) {
+    if(c->halted) return;
+    uint8_t intcon = c->ram[A_INTCON];
+    if(!(intcon & INTCON_GIE)) return; /* GIE/GIEH gates every vector */
+
+    /* INTCON-local sources (flag & enable) */
+    int tmr0 = (intcon & INTCON_TMR0IF) && (intcon & INTCON_TMR0IE);
+    int int0 = (intcon & INTCON_INT0IF) && (intcon & INTCON_INT0IE);
+    int rbif = (intcon & INTCON_RBIF) && (intcon & INTCON_RBIE);
+    /* peripheral sources (flag & enable), split by which register pair */
+    uint8_t p1 = (uint8_t)(c->ram[A_PIR1] & c->ram[A_PIE1]);
+    uint8_t p2 = (uint8_t)(c->ram[A_PIR2] & c->ram[A_PIE2]);
+    uint8_t p3 = (uint8_t)(c->ram[A_PIR3] & c->ram[A_PIE3]);
+    int periph = (p1 || p2 || p3);
+
+    if(!(c->ram[A_RCON] & RCON_IPEN)) {
+        /* compatibility mode: GIE gates everything, PEIE gates peripherals */
+        if(tmr0 || int0 || rbif || ((intcon & INTCON_PEIE) && periph)) {
+            take_interrupt(c, VEC_HIGH, INTCON_GIE);
+            return;
+        }
+    } else {
+        /* two-priority mode: GIEH=bit7, GIEL=bit6 */
+        uint8_t intcon2 = c->ram[A_INTCON2];
+        uint8_t ipr1 = c->ram[A_IPR1], ipr2 = c->ram[A_IPR2], ipr3 = c->ram[A_IPR3];
+        int tmr0_hi = tmr0 && (intcon2 & INTCON2_TMR0IP);
+        int rb_hi = rbif && (intcon2 & INTCON2_RBIP);
+        int p_hi = ((p1 & ipr1) || (p2 & ipr2) || (p3 & ipr3));
+        int high = tmr0_hi || int0 || rb_hi || p_hi; /* INT0 is always high priority */
+        int low = (tmr0 && !(intcon2 & INTCON2_TMR0IP)) || (rbif && !(intcon2 & INTCON2_RBIP)) ||
+                  ((p1 & ~ipr1) || (p2 & ~ipr2) || (p3 & ~ipr3));
+        if(high) {
+            take_interrupt(c, VEC_HIGH, INTCON_GIE);
+            return;
+        }
+        if((intcon & INTCON_PEIE) && low) {
+            take_interrupt(c, VEC_LOW, INTCON_PEIE);
+            return;
+        }
+    }
+
+    /* No on-chip interrupt pending: offer the slot to a frontend-modeled
+     * source (e.g. a board whose firmware runs its timer tick off its own
+     * software flags). */
+    if(c->on_irq) {
+        int32_t v = c->on_irq(c, c->irq_ctx);
+        if(v >= 0) take_interrupt(c, (uint32_t)v, INTCON_GIE);
+    }
+}
+
 int pic18_step(Pic18Cpu* c) {
     if(c->halted) return 0;
+    /* interrupts are recognized between instructions */
+    service_interrupt(c);
     if(c->sleeping) c->sleeping = 0;
     uint32_t pc = c->pc;
     if(c->on_code) c->on_code(c, pc, c->code_ctx);
     uint16_t op = pword(c, pc);
+    uint64_t cyc0 = c->cycles;
     c->steps++;
     c->cycles++;
     c->pc = (pc + 2) & 0x1FFFFF;
     exec_op(c, pc, op);
+    uint32_t dcyc = (uint32_t)(c->cycles - cyc0);
+    if(dcyc == 0) dcyc = 1;
+    timers_advance(c, dcyc);
     return !c->halted;
 }
 

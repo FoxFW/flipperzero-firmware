@@ -9,16 +9,15 @@
 #include <flipper_format/flipper_format_i.h>
 #include <loader/loader.h>
 #include <storage/storage.h>
+#include <toolbox/stream/file_stream.h>
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/protocols/kia_v3_v4.h>
 #include <lib/subghz/protocols/psa.h>
 #include <lib/toolbox/hex.h>
+#include <stdlib.h>
 
 #define TAG "SubGhz"
 
-#define CC1101_EXT_PROBE_FAP_PATH EXT_PATH("apps/Sub-GHz/subghz_garage_cc1101_check.fap")
-#define CC1101_PROBE_RELAUNCH_PATH EXT_PATH("subghz/.cc1101_probe_relaunch")
-#define SUBGHZ_GARAGE_FAP_PATH EXT_PATH("apps/Sub-GHz/subghz_garage.fap")
 
 static const char* subghz_protopirate_name_alias(const char* name) {
     static const struct {
@@ -35,7 +34,6 @@ static const char* subghz_protopirate_name_alias(const char* name) {
         {"Kia V3/V4", "KIA/HYU V3/V4"},
         {"Kia V5", "KIA/HYU V5"},
         {"Kia V6", "KIA/HYU V6"},
-        {"Porsche Touareg", "Porsche AG"},
         {"PSA", "PSA GROUP"},
         {"Subaru", "SUBARU"},
         {"VAG", "VAG GROUP"},
@@ -143,6 +141,31 @@ static void subghz_key_load_convert_psa(FlipperFormat* fff_data) {
 
 void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx);
 
+static void subghz_loading_cover_draw_cb(Canvas* canvas, void* ctx) {
+    SubGhz* subghz = ctx;
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    const char* text = (subghz && subghz->loading_cover_text) ? subghz->loading_cover_text : "LOADING";
+    canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, text);
+}
+
+void subghz_loading_cover_show(SubGhz* subghz, const char* text) {
+    subghz->loading_cover_text = text ? text : "LOADING";
+    if(subghz->loading_cover_viewport) return;
+    subghz->loading_cover_viewport = view_port_alloc();
+    view_port_draw_callback_set(
+        subghz->loading_cover_viewport, subghz_loading_cover_draw_cb, subghz);
+    gui_add_view_port(subghz->gui, subghz->loading_cover_viewport, GuiLayerFullscreen);
+    view_port_update(subghz->loading_cover_viewport);
+}
+
+void subghz_loading_cover_hide(SubGhz* subghz) {
+    if(!subghz->loading_cover_viewport) return;
+    gui_remove_view_port(subghz->gui, subghz->loading_cover_viewport);
+    view_port_free(subghz->loading_cover_viewport);
+    subghz->loading_cover_viewport = NULL;
+}
+
 void subghz_blink_start(SubGhz* subghz) {
     furi_assert(subghz);
     notification_message(subghz->notifications, &sequence_blink_stop);
@@ -184,6 +207,20 @@ bool subghz_tx_start(SubGhz* subghz, FlipperFormat* flipper_format) {
     return false;
 }
 
+void subghz_dialog_message_no_ext_module(SubGhz* subghz) {
+    DialogMessage* message = dialog_message_alloc();
+    dialog_message_set_header(message, "External module needed", 63, 3, AlignCenter, AlignTop);
+    dialog_message_set_text(
+        message,
+        "Read Int+Ext uses both\nthe internal radio and\nan external CC1101.\nConnect one and retry.",
+        0,
+        17,
+        AlignLeft,
+        AlignTop);
+    dialog_message_show(subghz->dialogs, message);
+    dialog_message_free(message);
+}
+
 void subghz_dialog_message_freq_error(SubGhz* subghz, bool only_rx) {
     DialogsApp* dialogs = subghz->dialogs;
     DialogMessage* message = dialog_message_alloc();
@@ -200,6 +237,23 @@ void subghz_dialog_message_freq_error(SubGhz* subghz, bool only_rx) {
 
     dialog_message_show(dialogs, message);
     dialog_message_free(message);
+}
+
+static size_t subghz_key_load_first_raw_offset(Stream* stream) {
+    FuriString* line = furi_string_alloc();
+    size_t offset = stream_size(stream);
+    stream_rewind(stream);
+    while(true) {
+        size_t pos = stream_tell(stream);
+        if(!stream_read_line(stream, line)) break;
+        if(furi_string_start_with_str(line, "RAW_Data")) {
+            offset = pos;
+            break;
+        }
+    }
+    furi_string_free(line);
+    stream_rewind(stream);
+    return offset;
 }
 
 bool subghz_key_load(SubGhz* subghz, const char* file_path, bool show_dialog) {
@@ -281,8 +335,12 @@ bool subghz_key_load(SubGhz* subghz, const char* file_path, bool show_dialog) {
                 break;
             }
         }
-        size_t preset_index =
+        int preset_index =
             subghz_setting_get_inx_preset_by_name(setting, furi_string_get_cstr(temp_str));
+        if(preset_index < 0) {
+            FURI_LOG_E(TAG, "Unknown Preset");
+            break;
+        }
 
         uint8_t* preset_data = subghz_setting_get_preset_data(setting, preset_index);
         size_t preset_data_size = subghz_setting_get_preset_data_size(setting, preset_index);
@@ -312,6 +370,7 @@ bool subghz_key_load(SubGhz* subghz, const char* file_path, bool show_dialog) {
         }
 
         FlipperFormat* fff_data = subghz_txrx_get_fff_data(subghz->txrx);
+        subghz->loaded_file_has_raw = false;
         if(!strcmp(furi_string_get_cstr(temp_str), "RAW")) {
 
             subghz->load_type_file = SubGhzLoadTypeFileRaw;
@@ -329,9 +388,11 @@ bool subghz_key_load(SubGhz* subghz, const char* file_path, bool show_dialog) {
                     flipper_format_get_raw_stream(fff_data),
                     stream_size(file_stream));
             } else {
-                stream_copy_full(
-                    flipper_format_get_raw_stream(fff_data_file),
-                    flipper_format_get_raw_stream(fff_data));
+                Stream* key_src = flipper_format_get_raw_stream(fff_data_file);
+                size_t key_raw_off = subghz_key_load_first_raw_offset(key_src);
+                subghz->loaded_file_has_raw = (key_raw_off < stream_size(key_src));
+                stream_rewind(key_src);
+                stream_copy(key_src, flipper_format_get_raw_stream(fff_data), key_raw_off);
             }
             subghz_key_load_normalize_preset(fff_data);
             subghz_key_load_normalize_key(fff_data);
@@ -417,11 +478,75 @@ bool subghz_signal_needs_decrypt(FlipperFormat* flipper_format) {
                 needs = true;
             }
             furi_string_free(type_str);
+        } else if(furi_string_equal_str(proto, "Fiat V1")) {
+            flipper_format_rewind(flipper_format);
+            if(!flipper_format_key_exist(flipper_format, "Hitag2 Key")) {
+                needs = true;
+            }
         }
     }
     furi_string_free(proto);
     flipper_format_rewind(flipper_format);
     return needs;
+}
+
+const char* subghz_recovery_action_label(SubGhzRecoveryAction action) {
+    switch(action) {
+    case SubGhzRecoveryActionHitag:
+        return "Hitag";
+    case SubGhzRecoveryActionSeedBf:
+        return "Seed BF";
+    case SubGhzRecoveryActionDecrypt:
+        return "Decrypt";
+    case SubGhzRecoveryActionKeeloq:
+        return "KeeLoq";
+    default:
+        return "";
+    }
+}
+
+SubGhzRecoveryAction subghz_recovery_primary_action(FlipperFormat* flipper_format) {
+    if(!flipper_format) return SubGhzRecoveryActionNone;
+    SubGhzRecoveryAction action = SubGhzRecoveryActionNone;
+    FuriString* proto = furi_string_alloc();
+    flipper_format_rewind(flipper_format);
+    if(flipper_format_read_string(flipper_format, "Protocol", proto)) {
+        if(furi_string_equal_str(proto, "PSA GROUP")) {
+            FuriString* type_str = furi_string_alloc();
+            flipper_format_rewind(flipper_format);
+            if(!flipper_format_read_string(flipper_format, "Type", type_str) ||
+               furi_string_equal_str(type_str, "00")) {
+                action = SubGhzRecoveryActionDecrypt;
+            }
+            furi_string_free(type_str);
+        } else if(furi_string_equal_str(proto, "Fiat V1")) {
+            flipper_format_rewind(flipper_format);
+            if(!flipper_format_key_exist(flipper_format, "Hitag2 Key")) {
+                action = SubGhzRecoveryActionHitag;
+            }
+        } else if(
+            furi_string_equal_str(proto, "Hitag-2") ||
+            furi_string_equal_str(proto, "Renault V1")) {
+            uint8_t recovered = 0;
+            flipper_format_rewind(flipper_format);
+            if(!flipper_format_read_hex(flipper_format, "Recovered", &recovered, 1) ||
+               recovered != 1U) {
+                action = SubGhzRecoveryActionSeedBf;
+            }
+        } else if(furi_string_equal_str(proto, "KeeLoq")) {
+            FuriString* mf = furi_string_alloc();
+            flipper_format_rewind(flipper_format);
+            bool known = flipper_format_read_string(flipper_format, "Manufacture", mf) &&
+                         !furi_string_empty(mf) && !furi_string_equal_str(mf, "Unknown");
+            furi_string_free(mf);
+            if(!known) {
+                action = SubGhzRecoveryActionKeeloq;
+            }
+        }
+    }
+    furi_string_free(proto);
+    flipper_format_rewind(flipper_format);
+    return action;
 }
 
 bool subghz_get_next_name_file(SubGhz* subghz, uint8_t max_len) {
@@ -507,9 +632,94 @@ bool subghz_save_protocol_to_file(
     return saved;
 }
 
+#define RAW_TRIM_DEAD_AIR_US 200000L
+#define RAW_TRIM_VALUES_PER_LINE 512U
+
+bool subghz_save_append_raw_from_file(const char* dev_file_name, const char* src_raw) {
+    furi_assert(dev_file_name);
+    furi_assert(src_raw);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    Stream* src = file_stream_alloc(storage);
+    Stream* dst = file_stream_alloc(storage);
+    bool ok = false;
+    do {
+        if(!file_stream_open(src, src_raw, FSAM_READ, FSOM_OPEN_EXISTING)) break;
+        size_t total = stream_size(src);
+        size_t raw_off = subghz_key_load_first_raw_offset(src);
+        if(raw_off >= total) {
+            ok = true;
+            break;
+        }
+        if(!file_stream_open(dst, dev_file_name, FSAM_READ_WRITE, FSOM_OPEN_EXISTING)) break;
+        stream_seek(dst, 0, StreamOffsetFromEnd);
+        stream_seek(src, raw_off, StreamOffsetFromStart);
+
+        FuriString* line = furi_string_alloc();
+        FuriString* out = furi_string_alloc();
+        bool started = false;
+        bool have_pending = false;
+        int32_t pending = 0;
+        size_t out_count = 0;
+        bool wrote_any = false;
+        while(stream_read_line(src, line)) {
+            if(!furi_string_start_with_str(line, "RAW_Data")) continue;
+            const char* rp = strchr(furi_string_get_cstr(line), ':');
+            if(!rp) continue;
+            rp++;
+            while(true) {
+                char* endp = NULL;
+                long v = strtol(rp, &endp, 10);
+                if(endp == rp) break;
+                rp = endp;
+                bool is_dead = (v < 0) && (-v > RAW_TRIM_DEAD_AIR_US);
+                if(!started) {
+                    if(is_dead) continue;
+                    started = true;
+                }
+                if(have_pending) {
+                    if(out_count == 0) furi_string_set(out, "RAW_Data:");
+                    furi_string_cat_printf(out, " %ld", (long)pending);
+                    if(++out_count >= RAW_TRIM_VALUES_PER_LINE) {
+                        furi_string_cat_str(out, "\n");
+                        stream_write_string(dst, out);
+                        furi_string_reset(out);
+                        out_count = 0;
+                    }
+                    wrote_any = true;
+                }
+                pending = (int32_t)v;
+                have_pending = true;
+            }
+        }
+        if(have_pending && !((pending < 0) && (-pending > RAW_TRIM_DEAD_AIR_US))) {
+            if(out_count == 0) furi_string_set(out, "RAW_Data:");
+            furi_string_cat_printf(out, " %ld", (long)pending);
+            out_count++;
+            wrote_any = true;
+        }
+        if(out_count > 0) {
+            furi_string_cat_str(out, "\n");
+            stream_write_string(dst, out);
+        }
+        furi_string_free(line);
+        furi_string_free(out);
+
+        if(!wrote_any) {
+            stream_seek(src, raw_off, StreamOffsetFromStart);
+            stream_copy(src, dst, total - raw_off);
+        }
+        ok = true;
+    } while(false);
+    stream_free(src);
+    stream_free(dst);
+    furi_record_close(RECORD_STORAGE);
+    return ok;
+}
+
 void subghz_save_to_file(void* context) {
     furi_assert(context);
     SubGhz* subghz = context;
+    if(subghz->load_type_file == SubGhzLoadTypeFileRaw) return;
     if(subghz_path_is_file(subghz->file_path)) {
         subghz_save_protocol_to_file(
             subghz,
@@ -604,35 +814,3 @@ SubGhzRxKeyState subghz_rx_key_state_get(SubGhz* subghz) {
     return subghz->rx_key_state;
 }
 
-void subghz_launch_garage_via_probe(SubGhz* subghz, const char* args, bool use_probe) {
-    if(!subghz->blank_transition_viewport) {
-        subghz->blank_transition_viewport = view_port_alloc();
-        view_port_draw_callback_set(
-            subghz->blank_transition_viewport, subghz_blank_transition_draw_cb, NULL);
-        gui_add_view_port(subghz->gui, subghz->blank_transition_viewport, GuiLayerFullscreen);
-        view_port_update(subghz->blank_transition_viewport);
-    }
-
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    bool probe_installed = use_probe && storage_file_exists(storage, CC1101_EXT_PROBE_FAP_PATH);
-
-    Loader* loader = furi_record_open(RECORD_LOADER);
-    if(probe_installed) {
-        File* f = storage_file_alloc(storage);
-        if(storage_file_open(f, CC1101_PROBE_RELAUNCH_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-            storage_file_write(f, args, strlen(args));
-        }
-        storage_file_close(f);
-        storage_file_free(f);
-        loader_enqueue_launch(
-            loader, CC1101_EXT_PROBE_FAP_PATH, NULL, LoaderDeferredLaunchFlagNone);
-    } else {
-        FURI_LOG_W(TAG, "CC1101 probe .fap not found, launching Garage directly");
-        loader_enqueue_launch(loader, SUBGHZ_GARAGE_FAP_PATH, args, LoaderDeferredLaunchFlagNone);
-    }
-    furi_record_close(RECORD_LOADER);
-    furi_record_close(RECORD_STORAGE);
-
-    scene_manager_stop(subghz->scene_manager);
-    view_dispatcher_stop(subghz->view_dispatcher);
-}

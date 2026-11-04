@@ -1,5 +1,6 @@
 // scenes/protopirate_scene_receiver.c
 #include "../protopirate_app_i.h"
+#include "../protopirate_lowram_guard.h"
 #include "../helpers/protopirate_storage.h"
 #include "../helpers/protopirate_saved_match.h"
 #include "views/protopirate_receiver.h"
@@ -17,7 +18,6 @@ static void protopirate_scene_receiver_start_rx_stack(ProtoPirateApp* app);
 static void protopirate_scene_receiver_process_deferred_storage(ProtoPirateApp* app);
 
 static void protopirate_scene_receiver_update_statusbar(void* context) {
-    furi_check(context);
     ProtoPirateApp* app = context;
 
     char frequency_str[16] = {0};
@@ -121,8 +121,6 @@ static void protopirate_scene_receiver_callback(
 }
 
 static bool protopirate_scene_receiver_process_auto_save(ProtoPirateApp* app) {
-    furi_check(app);
-
     if(!app->txrx || !app->txrx->history) {
         return false;
     }
@@ -194,8 +192,6 @@ static bool protopirate_scene_receiver_process_auto_save(ProtoPirateApp* app) {
 }
 
 static void protopirate_scene_receiver_process_saved_match(ProtoPirateApp* app) {
-    furi_check(app);
-
     if(!app->check_saved || !app->txrx || !app->txrx->history) {
         return;
     }
@@ -310,6 +306,8 @@ void protopirate_scene_receiver_on_enter(void* context) {
         return;
     }
 
+    protopirate_lowram_mitigate(PROTOPIRATE_LOWRAM_THRESHOLD);
+
     if(app->txrx->history) {
         protopirate_history_release_scratch(app->txrx->history);
     }
@@ -363,8 +361,7 @@ void protopirate_scene_receiver_on_enter(void* context) {
     view_dispatcher_send_custom_event(
         app->view_dispatcher, ProtoPirateCustomEventReceiverDeferredRxStart);
 
-    //Kill Variable Item Lists and Widgets if it exists now to save memory.
-    protopirate_variable_item_list_free(app);
+    //Kill Widget if it exists now to save memory.
     protopirate_widget_free(app);
 }
 
@@ -500,6 +497,8 @@ bool protopirate_scene_receiver_on_event(void* context, SceneManagerEvent event)
 
 void protopirate_scene_receiver_on_exit(void* context) {
     ProtoPirateApp* app = context;
+
+    protopirate_lowram_softlock_release();
 
     FURI_LOG_I(TAG, "=== EXITING RECEIVER SCENE ===");
     furi_timer_stop(app->deferred_storage_timer);

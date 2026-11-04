@@ -39,6 +39,23 @@ uint8_t subghz_custom_btn_get_max_pages(void);
 
 const char* subghz_custom_btn_get_label_for_proto(const char* proto_name, uint8_t btn_dir);
 
+void subghz_custom_btn_set_original_if_unset(uint8_t btn_code);
+void subghz_custom_btn_apply_map(
+    uint8_t* btn,
+    uint8_t original,
+    uint8_t custom_id,
+    const uint8_t* btns,
+    const uint8_t* btn_map,
+    size_t btns_count,
+    uint8_t custom_max);
+void subghz_custom_btn_fill_labels(
+    uint8_t btn,
+    const uint8_t* btns,
+    const uint8_t* btn_map,
+    size_t btns_count,
+    uint8_t custom_max,
+    const char* (*get_name)(uint8_t));
+
 #ifdef __cplusplus
 }
 #endif

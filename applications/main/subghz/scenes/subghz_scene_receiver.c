@@ -1,8 +1,20 @@
 #include "../subghz_i.h"
 #include <lib/subghz/protocols/bin_raw.h>
+
 #include <toolbox/name_generator.h>
+#include <string.h>
+#include "../helpers/subghz_lowram_guard.h"
+#include "../helpers/subghz_decode_plugin_loader.h"
 
 #define TAG "SubGhzSceneReceiver"
+
+/* 1: capture undecoded RF bursts inline as "Unknown RAW" history items so the user
+ * sees them without backing out of Read. 0: disable (kill switch). */
+#define SUBGHZ_CAPTURE_UNKNOWN_RAW 1
+#if SUBGHZ_CAPTURE_UNKNOWN_RAW
+static uint32_t s_last_decode_tick = 0; /* tick of last decoder output */
+static bool s_burst_signal_seen = false;
+#endif
 
 const NotificationSequence subghz_sequence_rx = {
     &message_green_255,
@@ -36,6 +48,34 @@ const NotificationSequence subghz_sequence_rx_locked = {
     NULL,
 };
 
+const NotificationSequence subghz_sequence_rx_nosound = {
+    &message_green_255,
+
+    &message_display_backlight_on,
+
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+
+    &message_delay_50,
+    NULL,
+};
+
+const NotificationSequence subghz_sequence_rx_locked_nosound = {
+    &message_green_255,
+
+    &message_display_backlight_on,
+
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+
+    &message_delay_500,
+
+    &message_display_backlight_off,
+    NULL,
+};
+
 static void subghz_scene_receiver_update_statusbar(void* context) {
     SubGhz* subghz = context;
     FuriString* history_stat_str = furi_string_alloc();
@@ -48,17 +88,8 @@ static void subghz_scene_receiver_update_statusbar(void* context) {
             subghz_txrx_get_frequency_and_modulation(
                 subghz->txrx, frequency_str, modulation_str, false);
         } else {
-            FuriString* temp_str = furi_string_alloc();
-
-            subghz_txrx_get_frequency_and_modulation(subghz->txrx, frequency_str, temp_str, true);
-            furi_string_printf(
-                modulation_str,
-                "%s        Mod: %s",
-                (subghz_txrx_radio_device_get(subghz->txrx) == SubGhzRadioDeviceTypeInternal) ?
-                    "Int" :
-                    "Ext",
-                furi_string_get_cstr(temp_str));
-            furi_string_free(temp_str);
+            subghz_txrx_get_frequency_and_modulation(
+                subghz->txrx, frequency_str, modulation_str, true);
         }
 #else
         subghz_txrx_get_frequency_and_modulation(
@@ -91,13 +122,82 @@ static void subghz_scene_receiver_update_statusbar(void* context) {
         subghz->subghz_receiver, subghz_txrx_radio_device_get(subghz->txrx));
 }
 
+#define SUBGHZ_RECEIVER_TUNE_DEBOUNCE_TICKS 3
+
+static uint8_t s_tune_debounce = 0;
+
+static void subghz_scene_receiver_cycle_frequency(SubGhz* subghz, bool next) {
+    if(subghz_txrx_hopper_get_state(subghz->txrx) != SubGhzHopperStateOFF) return;
+    SubGhzSetting* setting = subghz_txrx_get_setting(subghz->txrx);
+    const size_t count = subghz_setting_get_frequency_count(setting);
+    if(count == 0) return;
+    SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
+    size_t index = 0;
+    for(size_t i = 0; i < count; i++) {
+        if(preset.frequency == subghz_setting_get_frequency(setting, i)) {
+            index = i;
+            break;
+        }
+    }
+    index = next ? (index + 1) % count : (index + count - 1) % count;
+    const uint32_t frequency = subghz_setting_get_frequency(setting, index);
+    subghz_txrx_set_preset(
+        subghz->txrx,
+        furi_string_get_cstr(preset.name),
+        frequency,
+        preset.data,
+        preset.data_size);
+    subghz->last_settings->frequency = frequency;
+    subghz_setting_set_default_frequency(setting, frequency);
+    s_tune_debounce = SUBGHZ_RECEIVER_TUNE_DEBOUNCE_TICKS;
+    subghz_scene_receiver_update_statusbar(subghz);
+}
+
+static void subghz_scene_receiver_cycle_preset(SubGhz* subghz, bool next) {
+    if(subghz_txrx_preset_hopper_get_state(subghz->txrx) != SubGhzPresetHopperStateOFF) return;
+    SubGhzSetting* setting = subghz_txrx_get_setting(subghz->txrx);
+    const size_t count = subghz_setting_get_preset_count(setting);
+    if(count == 0) return;
+    SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
+    size_t index = 0;
+    for(size_t i = 0; i < count; i++) {
+        if(!strcmp(subghz_setting_get_preset_name(setting, i), furi_string_get_cstr(preset.name))) {
+            index = i;
+            break;
+        }
+    }
+    for(size_t step = 0; step < count; step++) {
+        index = next ? (index + 1) % count : (index + count - 1) % count;
+        if(!subghz->modulation_filter ||
+           subghz_modulation_filter_is_enabled(subghz->modulation_filter, index)) {
+            break;
+        }
+    }
+    const char* preset_name = subghz_setting_get_preset_name(setting, index);
+    uint8_t* preset_data = subghz_setting_get_preset_data(setting, index);
+    const size_t preset_data_size = subghz_setting_get_preset_data_size(setting, index);
+    subghz_txrx_set_tx_power(preset_data, preset_data_size, subghz->tx_power);
+    subghz_txrx_set_preset(
+        subghz->txrx, preset_name, preset.frequency, preset_data, preset_data_size);
+    subghz->last_settings->preset_index = index;
+    s_tune_debounce = SUBGHZ_RECEIVER_TUNE_DEBOUNCE_TICKS;
+    subghz_scene_receiver_update_statusbar(subghz);
+}
+
+static void subghz_scene_receiver_apply_tune(SubGhz* subghz) {
+    s_tune_debounce = 0;
+    subghz_txrx_rx_start(subghz->txrx);
+    subghz_save_all(subghz);
+    subghz_scene_receiver_update_statusbar(subghz);
+}
+
 void subghz_scene_receiver_callback(SubGhzCustomEvent event, void* context) {
     furi_assert(context);
     SubGhz* subghz = context;
     view_dispatcher_send_custom_event(subghz->view_dispatcher, event);
 }
 
-static void subghz_scene_receiver_process_auto_save(SubGhz* subghz) {
+void subghz_scene_receiver_process_auto_save(SubGhz* subghz) {
     uint16_t idx = 0;
     while(subghz_history_find_auto_save_pending(subghz->history, &idx)) {
         FlipperFormat* ff = subghz_history_get_raw_data(subghz->history, idx);
@@ -141,24 +241,34 @@ static void subghz_scene_receiver_process_auto_save(SubGhz* subghz) {
         }
         subghz_history_set_auto_save_pending(subghz->history, idx, false);
     }
+    subghz_history_release_cache(subghz->history);
 }
 
-static void subghz_scene_add_to_history_callback(
+void subghz_scene_receiver_add_decoded(
+    SubGhz* subghz,
     SubGhzReceiver* receiver,
     SubGhzProtocolDecoderBase* decoder_base,
-    void* context) {
-    furi_assert(context);
-    SubGhz* subghz = context;
-
+    SubGhzRadioPreset* preset,
+    SubGhzHistorySource source) {
     if((decoder_base->protocol->flag & subghz->ignore_filter) == 0) {
         SubGhzHistory* history = subghz->history;
-        FuriString* item_name = furi_string_alloc();
-        FuriString* item_time = furi_string_alloc();
         uint16_t idx = subghz_history_get_item(history);
 
-        SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
-        if(subghz->last_settings->delete_old_signals) {
-            if(subghz_history_get_last_index(subghz->history) >= 54) {
+        bool identical_ping = false;
+        {
+            bool ping_notify = false;
+            int16_t ident =
+                subghz_history_find_identical(history, decoder_base, preset, &ping_notify);
+            if(ident >= 0) {
+                identical_ping = true;
+                subghz_view_receiver_flash_item(subghz->subghz_receiver, (uint16_t)ident);
+                if(ping_notify) {
+                    subghz->state_notifications = SubGhzNotificationStateRxDone;
+                }
+            }
+        }
+        if(!identical_ping && subghz->last_settings->delete_old_signals) {
+            if(subghz_history_get_last_index(subghz->history) >= SUBGHZ_HISTORY_MAX - 1) {
                 subghz->state_notifications = SubGhzNotificationStateRx;
 
                 subghz_view_receiver_disable_draw_callback(subghz->subghz_receiver);
@@ -173,44 +283,103 @@ static void subghz_scene_add_to_history_callback(
                 idx--;
             }
         }
-        if(subghz_history_add_to_history(history, decoder_base, &preset)) {
-            furi_string_reset(item_name);
-            furi_string_reset(item_time);
-
+        if(!identical_ping &&
+           subghz_history_add_to_history(history, decoder_base, preset, source)) {
             subghz->state_notifications = SubGhzNotificationStateRxDone;
 
-            subghz_history_get_text_item_menu(history, item_name, idx);
-            subghz_history_get_time_item_menu(history, item_time, idx);
-            subghz_view_receiver_add_item_to_menu(
-                subghz->subghz_receiver,
-                furi_string_get_cstr(item_name),
-                furi_string_get_cstr(item_time),
-                subghz_history_get_type_protocol(history, idx));
+            subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
+
+            uint16_t save_idx = idx;
+            bool do_auto_save = true;
+            int16_t dedup_removed = subghz_history_dedup_last_fiat_hitag2(history);
+            if(dedup_removed < 0) {
+                dedup_removed = subghz_history_dedup_last_came_holtek(history);
+            }
+            if(dedup_removed >= 0) {
+                subghz_view_receiver_disable_draw_callback(subghz->subghz_receiver);
+                subghz_view_receiver_delete_item(
+                    subghz->subghz_receiver, (uint16_t)dedup_removed);
+                subghz_view_receiver_enable_draw_callback(subghz->subghz_receiver);
+                subghz->idx_menu_chosen =
+                    subghz_view_receiver_get_idx_menu(subghz->subghz_receiver);
+                if((uint16_t)dedup_removed == idx) {
+                    do_auto_save = false;
+                } else if((uint16_t)dedup_removed < idx) {
+                    save_idx = idx - 1;
+                }
+            }
 
             subghz_scene_receiver_update_statusbar(subghz);
             if(subghz_history_get_text_space_left(subghz->history, NULL)) {
                 notification_message(subghz->notifications, &sequence_error);
             }
             subghz_rx_key_state_set(subghz, SubGhzRxKeyStateAddKey);
-            if(subghz->last_settings->auto_save) {
+            if(subghz->last_settings->auto_save && do_auto_save) {
 
-                subghz_history_set_auto_save_pending(history, idx, true);
+                subghz_history_set_auto_save_pending(history, save_idx, true);
             }
         }
-        subghz_receiver_reset(receiver);
-        furi_string_free(item_name);
-        furi_string_free(item_time);
+        if(decoder_base->protocol->name && !strcmp(decoder_base->protocol->name, "Hitag-2")) {
+            subghz_receiver_reset_except_by_name(receiver, "Fiat V1");
+        } else {
+            subghz_receiver_reset(receiver);
+        }
     } else {
         FURI_LOG_D(TAG, "%s protocol ignored", decoder_base->protocol->name);
     }
 }
 
+static void subghz_scene_add_to_history_callback(
+    SubGhzReceiver* receiver,
+    SubGhzProtocolDecoderBase* decoder_base,
+    void* context) {
+    furi_assert(context);
+    SubGhz* subghz = context;
+#if SUBGHZ_CAPTURE_UNKNOWN_RAW
+    s_last_decode_tick = furi_get_tick();
+#endif
+    SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
+    subghz_scene_receiver_add_decoded(
+        subghz, receiver, decoder_base, &preset, SubGhzHistorySourceNone);
+}
+
+void subghz_scene_receiver_notify(SubGhz* subghz) {
+    switch(subghz->state_notifications) {
+    case SubGhzNotificationStateRx:
+        notification_message(subghz->notifications, &sequence_blink_cyan_10);
+        break;
+    case SubGhzNotificationStateRxDone: {
+        bool sound_on = subghz_txrx_speaker_get_state(subghz->txrx) == SubGhzSpeakerStateEnable;
+        if(!subghz_is_locked(subghz)) {
+            if(sound_on) {
+                notification_message(subghz->notifications, &subghz_sequence_rx);
+            } else {
+                notification_message(subghz->notifications, &subghz_sequence_rx_nosound);
+            }
+        } else {
+            if(sound_on) {
+                notification_message(subghz->notifications, &subghz_sequence_rx_locked);
+            } else {
+                notification_message(subghz->notifications, &subghz_sequence_rx_locked_nosound);
+            }
+        }
+        subghz->state_notifications = SubGhzNotificationStateRx;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void subghz_scene_receiver_on_enter(void* context) {
     SubGhz* subghz = context;
+    subghz_decode_plugin_loader_flush();
+    subghz_lowram_mitigate(
+        SUBGHZ_LOWRAM_SOFTLOCK_THRESHOLD + subghz_txrx_receiver_heap_needed(subghz->txrx));
     SubGhzHistory* history = subghz->history;
-
-    FuriString* item_name = furi_string_alloc();
-    FuriString* item_time = furi_string_alloc();
+    subghz_history_release_cache(history);
+    subghz_txrx_rx_ring_set_wanted(
+        subghz->txrx, SUBGHZ_CAPTURE_UNKNOWN_RAW && subghz->last_settings->capture_unknown_raw);
 
     if(subghz_rx_key_state_get(subghz) == SubGhzRxKeyStateIDLE) {
         subghz_txrx_set_preset_internal(
@@ -230,22 +399,15 @@ void subghz_scene_receiver_on_enter(void* context) {
     }
 
     subghz_view_receiver_set_mode(subghz->subghz_receiver, SubGhzViewReceiverModeLive);
+    subghz_view_receiver_set_wave_line(
+        subghz->subghz_receiver,
+        subghz->last_settings->visualizer_display_mode == SubGhzReadRawVizLine);
 
     subghz_view_receiver_exit(subghz->subghz_receiver);
     for(uint16_t i = 0; i < subghz_history_get_item(history); i++) {
-        furi_string_reset(item_name);
-        furi_string_reset(item_time);
-        subghz_history_get_text_item_menu(history, item_name, i);
-        subghz_history_get_time_item_menu(history, item_time, i);
-        subghz_view_receiver_add_item_to_menu(
-            subghz->subghz_receiver,
-            furi_string_get_cstr(item_name),
-            furi_string_get_cstr(item_time),
-            subghz_history_get_type_protocol(history, i));
+        subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
         subghz_rx_key_state_set(subghz, SubGhzRxKeyStateAddKey);
     }
-    furi_string_free(item_name);
-    furi_string_free(item_time);
 
     subghz_view_receiver_set_callback(
         subghz->subghz_receiver, subghz_scene_receiver_callback, subghz);
@@ -307,11 +469,22 @@ bool subghz_scene_receiver_on_event(void* context, SceneManagerEvent event) {
             }
             consumed = true;
             break;
-        case SubGhzCustomEventViewReceiverOK:
-
+        case SubGhzCustomEventViewReceiverOK: {
+#if SUBGHZ_CAPTURE_UNKNOWN_RAW
+            /* Captured RAW items serialize Protocol
+             * "RAW"; route them to the Unknown-RAW menu. Everything else -> info. */
+            const char* ok_proto =
+                subghz_history_get_protocol_name(subghz->history, subghz->idx_menu_chosen);
+            bool is_raw_item = (ok_proto != NULL) && (strcmp(ok_proto, "RAW") == 0);
+            scene_manager_next_scene(
+                subghz->scene_manager,
+                is_raw_item ? SubGhzSceneUnknownRaw : SubGhzSceneReceiverInfo);
+#else
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiverInfo);
+#endif
             consumed = true;
             break;
+        }
         case SubGhzCustomEventViewReceiverDeleteItem:
             subghz->state_notifications = SubGhzNotificationStateRx;
 
@@ -345,13 +518,59 @@ bool subghz_scene_receiver_on_event(void* context, SceneManagerEvent event) {
             subghz_unlock(subghz);
             consumed = true;
             break;
+        case SubGhzCustomEventViewReceiverNextFrequency:
+            subghz_scene_receiver_cycle_frequency(subghz, true);
+            consumed = true;
+            break;
+        case SubGhzCustomEventViewReceiverPrevFrequency:
+            subghz_scene_receiver_cycle_frequency(subghz, false);
+            consumed = true;
+            break;
+        case SubGhzCustomEventViewReceiverNextPreset:
+            subghz_scene_receiver_cycle_preset(subghz, true);
+            consumed = true;
+            break;
+        case SubGhzCustomEventViewReceiverPrevPreset:
+            subghz_scene_receiver_cycle_preset(subghz, false);
+            consumed = true;
+            break;
         default:
             break;
         }
     } else if(event.type == SceneManagerEventTypeTick) {
+        if(s_tune_debounce > 0 && --s_tune_debounce == 0) {
+            subghz_scene_receiver_apply_tune(subghz);
+        }
+#if SUBGHZ_CAPTURE_UNKNOWN_RAW
+        /* A real burst ended (ring latched+frozen). If no decoder fired for it,
+         * store it inline as an Unknown RAW item, then reset (unfreeze) the ring. */
+        if(subghz_txrx_burst_ready(subghz->txrx)) {
+            /* Runtime toggle (Read config). OFF -> latch is still consumed+reset below
+             * so the ring never stays frozen, but nothing is added: only the built-in 65. */
+            if(subghz->last_settings->capture_unknown_raw && s_burst_signal_seen &&
+               (furi_get_tick() - s_last_decode_tick) >= 400) {
+                FlipperFormat* ff = subghz_txrx_rx_ring_build_raw_ff(subghz->txrx);
+                if(ff) {
+                    SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
+                    int16_t idx =
+                        subghz_history_add_raw(subghz->history, ff, &preset, "Unknown RAW");
+                    if(idx < 0) {
+                        flipper_format_free(ff); /* history didn't take it */
+                    } else {
+                        subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
+                        subghz_rx_key_state_set(subghz, SubGhzRxKeyStateAddKey);
+                        subghz_scene_receiver_update_statusbar(subghz);
+                    }
+                }
+            }
+            subghz_txrx_rx_ring_reset(subghz->txrx); /* clear latch + unfreeze */
+            s_burst_signal_seen = false;
+        }
+#endif
         if(subghz->last_settings->auto_save) {
             subghz_scene_receiver_process_auto_save(subghz);
         }
+        subghz_history_flush(subghz->history);
         if(subghz_txrx_hopper_get_state(subghz->txrx) != SubGhzHopperStateOFF) {
             subghz_txrx_hopper_update(subghz->txrx, subghz->last_settings->hopping_threshold);
             subghz_scene_receiver_update_statusbar(subghz);
@@ -365,28 +584,24 @@ bool subghz_scene_receiver_on_event(void* context, SceneManagerEvent event) {
             subghz->threshold_rssi, subghz_txrx_radio_device_get_rssi(subghz->txrx));
 
         subghz_receiver_rssi(subghz->subghz_receiver, ret_rssi.rssi);
-        subghz_protocol_decoder_bin_raw_data_input_rssi(
-            (SubGhzProtocolDecoderBinRAW*)subghz_txrx_get_decoder(subghz->txrx), ret_rssi.rssi);
-
-        switch(subghz->state_notifications) {
-        case SubGhzNotificationStateRx:
-            notification_message(subghz->notifications, &sequence_blink_cyan_10);
-            break;
-        case SubGhzNotificationStateRxDone:
-            if(!subghz_is_locked(subghz)) {
-                notification_message(subghz->notifications, &subghz_sequence_rx);
-            } else {
-                notification_message(subghz->notifications, &subghz_sequence_rx_locked);
-            }
-            subghz->state_notifications = SubGhzNotificationStateRx;
-            break;
-        default:
-            break;
+#if SUBGHZ_CAPTURE_UNKNOWN_RAW
+        if(ret_rssi.is_above) s_burst_signal_seen = true;
+#endif
+        if(READ_BIT(subghz->filter, SubGhzProtocolFlag_BinRAW) > 0) {
+            subghz_protocol_decoder_bin_raw_data_input_rssi(
+                (SubGhzProtocolDecoderBinRAW*)subghz_txrx_get_decoder(subghz->txrx), ret_rssi.rssi);
         }
+
+        subghz_scene_receiver_notify(subghz);
     }
     return consumed;
 }
 
 void subghz_scene_receiver_on_exit(void* context) {
-    UNUSED(context);
+    SubGhz* subghz = context;
+    if(s_tune_debounce > 0) {
+        s_tune_debounce = 0;
+        subghz_save_all(subghz);
+    }
+    subghz_lowram_softlock_release();
 }

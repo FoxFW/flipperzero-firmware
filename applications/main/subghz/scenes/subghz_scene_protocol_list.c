@@ -1,6 +1,5 @@
 #include "../subghz_i.h"
 #include "../subghz_protocol_filter.h"
-#include "../subghz_protocol_groups.h"
 #include <lib/subghz/subghz_protocol_registry.h>
 #include <string.h>
 
@@ -8,28 +7,21 @@
 #define SELECT_ROW_INDEX 1u
 
 static const char* const proto_toggle_labels[] = {"OFF", "ON"};
-static const char* const group_toggle_labels[] = {"OFF", "ON"};
-static const char* const select_labels[]       = {"All", "None"};
+static const char* const select_labels[] = {"All", "None"};
 
 typedef struct {
-    SubGhz* subghz;
-    size_t  protocol_index;
-    size_t  group;
-    bool    enabled;
-    VariableItem* item;
-
-    char label[32];
+    uint16_t protocol_index;
+    bool enabled;
 } ProtoItemCtx;
 
-static ProtoItemCtx*   g_proto_ctx       = NULL;
-static size_t          g_proto_ctx_count = 0;
-static uint8_t         g_select_choice   = 0;
-static VariableItem*   g_count_item      = NULL;
-static VariableItem*   g_group_items[SUBGHZ_PROTOCOL_GROUP_COUNT];
-static bool             g_group_present[SUBGHZ_PROTOCOL_GROUP_COUNT];
-static bool          g_filter_dirty    = false;
-static bool          g_count_dirty     = false;
-static SubGhz*       g_proto_subghz    = NULL;
+static ProtoItemCtx* g_proto_ctx = NULL;
+static size_t g_proto_ctx_count = 0;
+static uint8_t g_select_choice = 0;
+static VariableItem* g_count_item = NULL;
+static bool g_filter_dirty = false;
+static bool g_count_dirty = false;
+static SubGhz* g_proto_subghz = NULL;
+static uint8_t g_first_proto_row = 0;
 
 static void build_count_text(SubGhz* subghz, size_t total, char* buf, size_t n) {
     size_t active = subghz_protocol_filter_enabled_count(subghz->protocol_filter, total);
@@ -40,37 +32,12 @@ static void build_count_text(SubGhz* subghz, size_t total, char* buf, size_t n) 
 }
 
 static void apply_items_to_filter(void) {
+    if(!g_proto_subghz || !g_proto_subghz->protocol_filter) return;
     for(size_t i = 0; i < g_proto_ctx_count; i++) {
-        if(!g_proto_ctx[i].subghz || !g_proto_ctx[i].subghz->protocol_filter) continue;
         subghz_protocol_filter_set_enabled(
-            g_proto_ctx[i].subghz->protocol_filter,
-            g_proto_ctx[i].protocol_index,
-            g_proto_ctx[i].enabled);
+            g_proto_subghz->protocol_filter, g_proto_ctx[i].protocol_index, g_proto_ctx[i].enabled);
     }
     g_filter_dirty = false;
-}
-
-static void refresh_group_header(size_t group) {
-    if(group >= SUBGHZ_PROTOCOL_GROUP_COUNT || !g_group_items[group]) return;
-
-    size_t enabled_count = 0, member_count = 0;
-    for(size_t i = 0; i < g_proto_ctx_count; i++) {
-        if(g_proto_ctx[i].group != group) continue;
-        member_count++;
-        if(g_proto_ctx[i].enabled) enabled_count++;
-    }
-
-    if(member_count == 0) return;
-    if(enabled_count == member_count) {
-        variable_item_set_current_value_index(g_group_items[group], 1);
-        variable_item_set_current_value_text(g_group_items[group], "ON");
-    } else if(enabled_count == 0) {
-        variable_item_set_current_value_index(g_group_items[group], 0);
-        variable_item_set_current_value_text(g_group_items[group], "OFF");
-    } else {
-        variable_item_set_current_value_index(g_group_items[group], 1);
-        variable_item_set_current_value_text(g_group_items[group], "MIX");
-    }
 }
 
 static void proto_toggle_cb(VariableItem* item) {
@@ -83,147 +50,126 @@ static void proto_toggle_cb(VariableItem* item) {
     variable_item_set_current_value_text(item, proto_toggle_labels[val]);
     g_proto_ctx[ci].enabled = (val != 0);
     g_filter_dirty = true;
-    g_count_dirty  = true;
-
-    refresh_group_header(g_proto_ctx[ci].group);
+    g_count_dirty = true;
 }
 
-#define GROUP_CTX_FLAG 0x8000u
-
-static void group_toggle_cb(VariableItem* item) {
-    uintptr_t ctx_raw = (uintptr_t)variable_item_get_context(item);
-    if(!(ctx_raw & GROUP_CTX_FLAG)) return;
-    size_t group = (ctx_raw & ~(uintptr_t)GROUP_CTX_FLAG) - 1;
-    if(group >= SUBGHZ_PROTOCOL_GROUP_COUNT) return;
-
-    uint8_t val = variable_item_get_current_value_index(item);
-    bool enable = (val != 0);
-
-    for(size_t i = 0; i < g_proto_ctx_count; i++) {
-        if(g_proto_ctx[i].group != group) continue;
-        g_proto_ctx[i].enabled = enable;
-        if(g_proto_ctx[i].item) {
-            variable_item_set_current_value_index(g_proto_ctx[i].item, enable ? 1 : 0);
-            variable_item_set_current_value_text(g_proto_ctx[i].item, proto_toggle_labels[enable ? 1 : 0]);
-        }
+static void select_apply(bool enable) {
+    if(!g_proto_subghz) return;
+    VariableItemList* list = g_proto_subghz->variable_item_list;
+    for(size_t ci = 0; ci < g_proto_ctx_count; ci++) {
+        g_proto_ctx[ci].enabled = enable;
+        size_t row = g_first_proto_row + ci;
+        if(row > UINT8_MAX) break;
+        VariableItem* it = variable_item_list_get(list, (uint8_t)row);
+        if(!it) continue;
+        variable_item_set_current_value_index(it, enable ? 1 : 0);
+        variable_item_set_current_value_text(it, proto_toggle_labels[enable ? 1 : 0]);
     }
-    variable_item_set_current_value_text(item, group_toggle_labels[enable ? 1 : 0]);
-
-    g_filter_dirty = true;
-    g_count_dirty  = true;
+    apply_items_to_filter();
+    g_count_dirty = true;
 }
 
 static void select_value_change_cb(VariableItem* item) {
     g_select_choice = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, select_labels[g_select_choice]);
+    select_apply(g_select_choice == 0);
 }
 
 static bool is_raw_family(const char* name) {
     return strcmp(name, "RAW") == 0 || strcmp(name, "BinRAW") == 0;
 }
 
+static int name_cmp_nocase(const char* a, const char* b) {
+    for(;; a++, b++) {
+        char ca = *a, cb = *b;
+        if(ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if(cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if(ca != cb || ca == '\0') return (unsigned char)ca - (unsigned char)cb;
+    }
+}
+
+static const char* proto_name(size_t index) {
+    const SubGhzProtocol* proto =
+        subghz_protocol_registry_get_by_index(&subghz_protocol_registry, index);
+    return proto ? proto->name : NULL;
+}
+
 static void protocol_list_populate(SubGhz* subghz) {
     VariableItemList* list = subghz->variable_item_list;
     variable_item_list_reset(list);
 
-    if(g_proto_ctx) { free(g_proto_ctx); g_proto_ctx = NULL; }
+    if(g_proto_ctx) {
+        free(g_proto_ctx);
+        g_proto_ctx = NULL;
+    }
     g_proto_ctx_count = 0;
-    memset(g_group_items, 0, sizeof(g_group_items));
-    memset(g_group_present, 0, sizeof(g_group_present));
 
     size_t total = subghz_protocol_registry_count(&subghz_protocol_registry);
-    size_t alloc = (total < PROTO_LIST_MAX ? total : PROTO_LIST_MAX);
-    g_proto_ctx = malloc(sizeof(ProtoItemCtx) * alloc);
+    if(total > PROTO_LIST_MAX) total = PROTO_LIST_MAX;
+    g_proto_ctx = malloc(sizeof(ProtoItemCtx) * total);
     furi_assert(g_proto_ctx);
 
-    size_t group_of[PROTO_LIST_MAX];
-    for(size_t i = 0; i < total && i < PROTO_LIST_MAX; i++) {
-        const SubGhzProtocol* proto = subghz_protocol_registry_get_by_index(&subghz_protocol_registry, i);
-        if(!proto) continue;
-        if(is_raw_family(proto->name)) continue;
-        group_of[i] = subghz_protocol_group_for_name(proto->name);
-        g_group_present[group_of[i]] = true;
+    for(size_t i = 0; i < total; i++) {
+        const char* name = proto_name(i);
+        if(!name || is_raw_family(name)) continue;
+        size_t pos = g_proto_ctx_count++;
+        while(pos > 0 && name_cmp_nocase(proto_name(g_proto_ctx[pos - 1].protocol_index), name) > 0) {
+            g_proto_ctx[pos] = g_proto_ctx[pos - 1];
+            pos--;
+        }
+        g_proto_ctx[pos].protocol_index = (uint16_t)i;
+        g_proto_ctx[pos].enabled = subghz_protocol_filter_is_enabled(subghz->protocol_filter, i);
     }
 
-    size_t group_row_count = 0;
-    for(size_t g = 0; g < SUBGHZ_PROTOCOL_GROUP_COUNT; g++) {
-        if(g_group_present[g]) group_row_count++;
-    }
-
-    variable_item_list_reserve(list, total + group_row_count + 2);
+    variable_item_list_reserve(list, total + 2);
 
     char count_buf[16];
     build_count_text(subghz, total, count_buf, sizeof(count_buf));
     g_count_item = variable_item_list_add(list, "Protocols", 1, NULL, NULL);
     variable_item_set_current_value_index(g_count_item, 0);
     variable_item_set_current_value_text(g_count_item, count_buf);
-    g_count_dirty  = false;
+    g_count_dirty = false;
     g_filter_dirty = false;
 
     VariableItem* sel = variable_item_list_add(list, "Select", 2, select_value_change_cb, NULL);
     variable_item_set_current_value_index(sel, g_select_choice);
     variable_item_set_current_value_text(sel, select_labels[g_select_choice]);
 
-    for(size_t i = 0; i < total && i < PROTO_LIST_MAX; i++) {
-        const SubGhzProtocol* proto = subghz_protocol_registry_get_by_index(&subghz_protocol_registry, i);
-        if(proto && is_raw_family(proto->name)) {
+    g_first_proto_row = 2;
+    for(size_t i = 0; i < total; i++) {
+        const char* name = proto_name(i);
+        if(name && is_raw_family(name)) {
+            g_first_proto_row++;
             subghz_protocol_filter_set_enabled(subghz->protocol_filter, i, true);
-            VariableItem* raw = variable_item_list_add(list, proto->name, 1, NULL, NULL);
+            VariableItem* raw = variable_item_list_add(list, name, 1, NULL, NULL);
             variable_item_set_current_value_index(raw, 0);
             variable_item_set_current_value_text(raw, "ON");
         }
     }
 
-    for(size_t g = 0; g < SUBGHZ_PROTOCOL_GROUP_COUNT; g++) {
-        if(!g_group_present[g]) continue;
-
-        VariableItem* header = variable_item_list_add(
-            list, subghz_protocol_group_names[g], 2, group_toggle_cb,
-            (void*)(uintptr_t)((g + 1) | GROUP_CTX_FLAG));
-        g_group_items[g] = header;
-        variable_item_set_current_value_index(header, 1);
-
-        for(size_t i = 0; i < total && i < PROTO_LIST_MAX; i++) {
-            const SubGhzProtocol* proto = subghz_protocol_registry_get_by_index(&subghz_protocol_registry, i);
-            if(!proto || is_raw_family(proto->name)) continue;
-            if(group_of[i] != g) continue;
-
-            bool enabled = subghz_protocol_filter_is_enabled(subghz->protocol_filter, i);
-            size_t ci    = g_proto_ctx_count++;
-            g_proto_ctx[ci].subghz         = subghz;
-            g_proto_ctx[ci].protocol_index = i;
-            g_proto_ctx[ci].group          = g;
-            g_proto_ctx[ci].enabled        = enabled;
-
-            snprintf(
-                g_proto_ctx[ci].label, sizeof(g_proto_ctx[ci].label), "  %s", proto->name);
-            VariableItem* it = variable_item_list_add(
-                list, g_proto_ctx[ci].label, 2, proto_toggle_cb, (void*)(uintptr_t)(ci + 1));
-            variable_item_set_current_value_index(it, enabled ? 1 : 0);
-            variable_item_set_current_value_text(it, proto_toggle_labels[enabled ? 1 : 0]);
-            g_proto_ctx[ci].item = it;
-        }
-
-        refresh_group_header(g);
+    for(size_t ci = 0; ci < g_proto_ctx_count; ci++) {
+        bool enabled = g_proto_ctx[ci].enabled;
+        VariableItem* it = variable_item_list_add(
+            list,
+            proto_name(g_proto_ctx[ci].protocol_index),
+            2,
+            proto_toggle_cb,
+            (void*)(uintptr_t)(ci + 1));
+        variable_item_set_current_value_index(it, enabled ? 1 : 0);
+        variable_item_set_current_value_text(it, proto_toggle_labels[enabled ? 1 : 0]);
     }
 }
 
 static void protocol_list_enter_cb(void* context, uint32_t index) {
-    SubGhz* subghz = context;
+    UNUSED(context);
     if(index != SELECT_ROW_INDEX) return;
-
-    bool enable_all = (g_select_choice == 0);
-    size_t total    = subghz_protocol_registry_count(&subghz_protocol_registry);
-    for(size_t i = 0; i < total; i++)
-        subghz_protocol_filter_set_enabled(subghz->protocol_filter, i, enable_all);
-
-    protocol_list_populate(subghz);
-    variable_item_list_set_selected_item(subghz->variable_item_list, SELECT_ROW_INDEX);
+    select_apply(g_select_choice == 0);
 }
 
 void subghz_scene_protocol_list_on_enter(void* context) {
     SubGhz* subghz = context;
-    g_proto_subghz  = subghz;
+    subghz_txrx_receiver_release(subghz->txrx);
+    g_proto_subghz = subghz;
     g_select_choice = 0;
 
     protocol_list_populate(subghz);
@@ -235,11 +181,10 @@ void subghz_scene_protocol_list_on_enter(void* context) {
 
 bool subghz_scene_protocol_list_on_event(void* context, SceneManagerEvent event) {
     SubGhz* subghz = context;
-    bool consumed   = false;
+    bool consumed = false;
 
     if(event.type == SceneManagerEventTypeCustom) {
-        scene_manager_set_scene_state(
-            subghz->scene_manager, SubGhzSceneProtocolList, event.event);
+        scene_manager_set_scene_state(subghz->scene_manager, SubGhzSceneProtocolList, event.event);
         consumed = true;
     } else if(event.type == SceneManagerEventTypeBack) {
         if(g_filter_dirty) apply_items_to_filter();
@@ -264,11 +209,13 @@ void subghz_scene_protocol_list_on_exit(void* context) {
     if(g_filter_dirty) apply_items_to_filter();
     subghz_protocol_filter_save(subghz->protocol_filter);
     variable_item_list_reset(subghz->variable_item_list);
-    if(g_proto_ctx) { free(g_proto_ctx); g_proto_ctx = NULL; }
+    if(g_proto_ctx) {
+        free(g_proto_ctx);
+        g_proto_ctx = NULL;
+    }
     g_proto_ctx_count = 0;
-    g_count_item      = NULL;
-    memset(g_group_items, 0, sizeof(g_group_items));
-    g_filter_dirty    = false;
-    g_count_dirty     = false;
-    g_proto_subghz    = NULL;
+    g_count_item = NULL;
+    g_filter_dirty = false;
+    g_count_dirty = false;
+    g_proto_subghz = NULL;
 }

@@ -7,6 +7,8 @@
 #include <gui/modules/text_input.h>
 #include <input/input.h>
 #include <storage/storage.h>
+#include <namechanger/namechanger.h>
+#include <flipper_format/flipper_format.h>
 #include <assets_icons.h>
 #include "fox_setup_icons.h"
 
@@ -37,7 +39,6 @@ static bool fox_setup_pin_is_set(void) {
 #define FOX_SETUP_FLAG_DIR          "/ext/apps_data/fox_setup"
 #define FOX_SETUP_FLAG_PATH         "/ext/apps_data/fox_setup/completed.flag"
 #define FOX_SETUP_DONE_INT_PATH     "/int/fox_setup.done"
-#define FOX_SETUP_PENDING_NAME_PATH "/ext/apps_data/fox_setup/name.pending"
 #define FOX_SETUP_PENDING_PIN_PATH  "/ext/apps_data/fox_setup/fox_pend.tmp"
 #define FOX_SETUP_AUTO_ARG          "auto"
 #define FOX_SETUP_WIPER_ARG         "wiper"
@@ -84,8 +85,9 @@ typedef enum {
 } FoxSetupViewId;
 
 typedef enum {
-    EventRenameOk   = 0,
-    EventRenameBack = 1,
+    EventRenameOk      = 0,
+    EventRenameBack    = 1,
+    EventSetupComplete = 2,
 } FoxSetupEvent;
 
 typedef struct {
@@ -94,6 +96,8 @@ typedef struct {
     TextInput*      text_input;
     FoxSetupModel*  model;
     FuriMutex*      mutex;
+    FuriTimer*      complete_timer;
+    bool            complete_armed;
 } FoxSetupApp;
 
 static bool fox_setup_already_ran(void) {
@@ -256,7 +260,7 @@ static void fox_setup_draw_main(Canvas* canvas, void* ctx) {
             canvas_draw_icon(canvas, 0, 0, &I_fox_64x64);
             canvas_set_font(canvas, FontPrimary);
             elements_multiline_text_aligned(
-                canvas, 96, 28, AlignCenter, AlignCenter, "Welcome\nto\nFoxFW v2.0");
+                canvas, 96, 28, AlignCenter, AlignCenter, "Welcome\nto\nFoxFW v2.1");
             elements_button_right(canvas, "Next");
             break;
 
@@ -296,23 +300,26 @@ static void fox_setup_draw_main(Canvas* canvas, void* ctx) {
             fox_setup_draw_pin(canvas, model);
             break;
 
-        case Page6_Complete:
+        case Page6_Complete: {
             canvas_set_font(canvas, FontPrimary);
-            canvas_draw_str_aligned(canvas, 64, 14, AlignCenter, AlignCenter, "Setup Complete!");
-            canvas_set_font(canvas, FontSecondary);
-            if(model->name_changed) {
-
-                canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter,
-                                        "Flipper will restart");
-                canvas_draw_str_aligned(canvas, 64, 43, AlignCenter, AlignCenter,
-                                        "to apply your changes.");
+            const char* done_nm =
+                model->name_changed ? model->device_name : furi_hal_version_get_name_ptr();
+            if(!done_nm) done_nm = "Flipper";
+            char done_msg[64];
+            if(model->pin_changed && !model->name_changed) {
+                snprintf(done_msg, sizeof(done_msg), "PIN Set!");
+            } else if(model->name_changed && model->pin_changed) {
+                snprintf(done_msg, sizeof(done_msg), "Welcome %s!\nPIN Set!", done_nm);
             } else {
-
-                canvas_draw_str_aligned(canvas, 64, 37, AlignCenter, AlignCenter,
-                                        "Please join our Discord!");
+                snprintf(done_msg, sizeof(done_msg), "Welcome %s!", done_nm);
             }
-            elements_button_right(canvas, "Finish");
+            elements_multiline_text_aligned(canvas, 64, 32, AlignCenter, AlignCenter, done_msg);
+            if(!app->complete_armed) {
+                app->complete_armed = true;
+                furi_timer_start(app->complete_timer, furi_ms_to_ticks(2000));
+            }
             break;
+        }
     }
 
     furi_mutex_release(app->mutex);
@@ -342,9 +349,7 @@ static bool fox_setup_input_main(InputEvent* event, void* ctx) {
     switch(model->current_page) {
         case Page1_Welcome:
             if(key == InputKeyBack) {
-                furi_mutex_release(app->mutex);
-                view_dispatcher_stop(app->view_dispatcher);
-                return true;
+                model->current_page = Page6_Complete;
             } else if(key == InputKeyOk || key == InputKeyRight) {
                 model->current_page = Page2_RenamePrompt;
             }
@@ -501,8 +506,21 @@ static bool fox_setup_input_main(InputEvent* event, void* ctx) {
     return consumed;
 }
 
+static void fox_setup_complete_timer_cb(void* ctx) {
+    FoxSetupApp* app = ctx;
+    view_dispatcher_send_custom_event(app->view_dispatcher, EventSetupComplete);
+}
+
 static bool fox_setup_custom_event(void* ctx, uint32_t event) {
     FoxSetupApp* app = ctx;
+
+    if(event == EventSetupComplete) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->model->completed = true;
+        furi_mutex_release(app->mutex);
+        view_dispatcher_stop(app->view_dispatcher);
+        return true;
+    }
 
     if(event == EventRenameOk) {
 
@@ -513,16 +531,18 @@ static bool fox_setup_custom_event(void* ctx, uint32_t event) {
 
         if(strlen(name_copy) > 0) {
             Storage* st = (Storage*)furi_record_open(RECORD_STORAGE);
-            File* nf = storage_file_alloc(st);
-            storage_simply_mkdir(st, FOX_SETUP_FLAG_DIR);
-            if(storage_file_open(nf, FOX_SETUP_PENDING_NAME_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-                storage_file_write(nf, name_copy, strlen(name_copy) + 1);
-                storage_file_close(nf);
+            storage_simply_mkdir(st, EXT_PATH("System"));
+            FlipperFormat* nf = flipper_format_file_alloc(st);
+            if(flipper_format_file_open_always(nf, NAMECHANGER_PATH) &&
+               flipper_format_write_header_cstr(nf, NAMECHANGER_HEADER, NAMECHANGER_VERSION) &&
+               flipper_format_write_string_cstr(nf, "Name", name_copy)) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 app->model->name_changed = true;
                 furi_mutex_release(app->mutex);
+                furi_hal_version_set_name(name_copy);
             }
-            storage_file_free(nf);
+            flipper_format_file_close(nf);
+            flipper_format_free(nf);
             furi_record_close(RECORD_STORAGE);
         }
 
@@ -537,7 +557,9 @@ static bool fox_setup_custom_event(void* ctx, uint32_t event) {
 static bool fox_setup_nav_event(void* ctx) {
     FoxSetupApp* app = ctx;
     furi_mutex_acquire(app->mutex, FuriWaitForever);
-    app->model->current_page = Page2_RenamePrompt;
+    if(app->model->current_page != Page6_Complete) {
+        app->model->current_page = Page2_RenamePrompt;
+    }
     furi_mutex_release(app->mutex);
     view_dispatcher_switch_to_view(app->view_dispatcher, ViewIdMain);
     return true;
@@ -559,6 +581,8 @@ int32_t fox_setup_app(void* p) {
         app->model->ignore_input_until = furi_get_tick() + furi_ms_to_ticks(600);
     }
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    app->complete_timer = furi_timer_alloc(fox_setup_complete_timer_cb, FuriTimerTypeOnce, app);
+    app->complete_armed = false;
 
     app->view_dispatcher = view_dispatcher_alloc();
     Gui* gui = furi_record_open(RECORD_GUI);
@@ -586,12 +610,7 @@ int32_t fox_setup_app(void* p) {
     view_dispatcher_switch_to_view(app->view_dispatcher, ViewIdMain);
     view_dispatcher_run(app->view_dispatcher);
 
-    bool write_flag    = !wiper_launch;
-
-    bool should_reboot = app->model->completed &&
-                         app->model->name_changed &&
-                         !wiper_launch &&
-                         !auto_launch;
+    bool write_flag = !wiper_launch;
 
     view_dispatcher_remove_view(app->view_dispatcher, ViewIdMain);
     view_dispatcher_remove_view(app->view_dispatcher, ViewIdTextInput);
@@ -599,12 +618,13 @@ int32_t fox_setup_app(void* p) {
     text_input_free(app->text_input);
     view_dispatcher_free(app->view_dispatcher);
     furi_record_close(RECORD_GUI);
+    furi_timer_stop(app->complete_timer);
+    furi_timer_free(app->complete_timer);
     furi_mutex_free(app->mutex);
     free(app->model);
     free(app);
 
     if(write_flag) fox_setup_write_flag();
-    if(should_reboot) furi_hal_power_reset();
 
     return 0;
 }

@@ -43,6 +43,8 @@ static const SubGhzBtnLabelEntry label_table[] = {
     { "Star Line",    "Lock",  "Unlock", "Trunk",  "Start"  },
     { "Sheriff CFM",  "Lock",  "Unlock", "Trunk",  "Panic"  },
 
+    { "Hitag-2",      "Lock",  "Unlock", NULL,     NULL     },
+
     { NULL, NULL, NULL, NULL, NULL }
 };
 

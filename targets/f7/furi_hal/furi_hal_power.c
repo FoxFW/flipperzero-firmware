@@ -160,9 +160,15 @@ bool furi_hal_power_sleep_available(void) {
     return furi_hal_power.insomnia == 0;
 }
 
+static volatile bool furi_hal_power_force_light_sleep_flag = false;
+
+void furi_hal_power_set_force_light_sleep(bool force) {
+    furi_hal_power_force_light_sleep_flag = force;
+}
+
 static inline bool furi_hal_power_deep_sleep_available(void) {
     return furi_hal_bt_is_alive() && !furi_hal_rtc_is_flag_set(FuriHalRtcFlagLegacySleep) &&
-           !furi_hal_debug_is_gdb_session_active();
+           !furi_hal_power_force_light_sleep_flag && !furi_hal_debug_is_gdb_session_active();
 }
 
 static inline void furi_hal_power_light_sleep(void) {

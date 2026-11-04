@@ -126,6 +126,110 @@ DICT_DEF2(
 static MemmgrHeapThreadDict_t memmgr_heap_thread_dict = {0};
 static volatile uint32_t memmgr_heap_thread_trace_depth = 0;
 
+/* ===== FOX_HI_TRACE (DIAGNOSTIC -- REMOVE BEFORE RELEASE) ====================
+ * Records every allocation whose user pointer lands at/above FOX_HI_TRACE_ADDR
+ * (thread that made it + size + tick) and drops it again on free, so the table
+ * holds only the SURVIVORS living high in the heap. Dumped in the fragmentation
+ * map as "High-heap survivors" to name the owners of the first-boot stranded
+ * comb and show WHEN each was born (boot vs the wizard/slideshow window). Pure
+ * observability: static storage, no heap use, runs under the existing trace
+ * depth guard. Comment the #define to compile out. */
+/* #define FOX_HI_TRACE 1 */ /* stripped for release: reclaims ~12KB .bss */
+#ifdef FOX_HI_TRACE
+#define FOX_HI_TRACE_ADDR 0x20020000u /* raised: chase mid-heap app-use strands, not boot band */
+#define FOX_HI_TRACE_MAX  192
+typedef struct {
+    uint32_t addr; /* user pointer; 0 = empty slot */
+    uint32_t size;
+    uint32_t tick;
+    uint32_t caller; /* return addr of the malloc caller (addr2line this) */
+    char thread[16];
+} FoxHiEntry;
+static FoxHiEntry fox_hi_tbl[FOX_HI_TRACE_MAX];
+static uint32_t fox_hi_dropped = 0;
+
+static void fox_hi_record(void* pointer, size_t size, void* caller) {
+    uint32_t a = (uint32_t)pointer;
+    if(a < FOX_HI_TRACE_ADDR) return;
+    for(uint32_t i = 0; i < FOX_HI_TRACE_MAX; i++) {
+        if(fox_hi_tbl[i].addr == 0) {
+            fox_hi_tbl[i].addr = a;
+            fox_hi_tbl[i].size = (uint32_t)size;
+            fox_hi_tbl[i].tick = (uint32_t)furi_get_tick();
+            fox_hi_tbl[i].caller = (uint32_t)caller;
+            const char* nm = furi_thread_get_name(furi_thread_get_current_id());
+            uint32_t k = 0;
+            if(nm != NULL) {
+                for(; nm[k] != '\0' && k < sizeof(fox_hi_tbl[i].thread) - 1; k++) {
+                    fox_hi_tbl[i].thread[k] = nm[k];
+                }
+            }
+            fox_hi_tbl[i].thread[k] = '\0';
+            return;
+        }
+    }
+    fox_hi_dropped++;
+}
+
+static void fox_hi_forget(void* pointer) {
+    uint32_t a = (uint32_t)pointer;
+    if(a < FOX_HI_TRACE_ADDR) return;
+    for(uint32_t i = 0; i < FOX_HI_TRACE_MAX; i++) {
+        if(fox_hi_tbl[i].addr == a) {
+            fox_hi_tbl[i].addr = 0;
+            return;
+        }
+    }
+}
+
+/* Append-only log of allocations >= FOX_HI_TRACE_ADDR made during the boot
+ * window, NEVER removed on free. Entries here that are NOT live survivors are
+ * the TRANSIENTS that churned the high band during boot -- e.g. the first-boot-
+ * only allocation that pushes desktop's permanent blocks high. addr2line the
+ * caller to name them. */
+#define FOX_BOOT_WINDOW 6000u
+#define FOX_BOOT_BIG    2048u /* also capture big allocs (the spike buffer), any address */
+#define FOX_BOOT_MAX    192
+typedef struct {
+    uint32_t addr;
+    uint32_t size;
+    uint32_t tick;
+    uint32_t caller;
+    char thread[16];
+} FoxBootEntry;
+static FoxBootEntry fox_boot_tbl[FOX_BOOT_MAX];
+static uint32_t fox_boot_count = 0;
+static uint32_t fox_boot_dropped = 0;
+
+static void fox_boot_record(void* pointer, size_t size, void* caller) {
+    uint32_t a = (uint32_t)pointer;
+    /* Record high-address allocs (footprint growth) OR any big alloc (a spike
+     * buffer, which may land LOW and push everything above it up, then free).
+     * The first-boot RAM spike that strands the permanent blocks can be either
+     * shape, so catch both. */
+    if(a < FOX_HI_TRACE_ADDR && size < FOX_BOOT_BIG) return;
+    uint32_t t = (uint32_t)furi_get_tick();
+    if(t >= FOX_BOOT_WINDOW) return;
+    if(fox_boot_count >= FOX_BOOT_MAX) {
+        fox_boot_dropped++;
+        return;
+    }
+    uint32_t i = fox_boot_count++;
+    fox_boot_tbl[i].addr = a;
+    fox_boot_tbl[i].size = (uint32_t)size;
+    fox_boot_tbl[i].tick = t;
+    fox_boot_tbl[i].caller = (uint32_t)caller;
+    const char* nm = furi_thread_get_name(furi_thread_get_current_id());
+    uint32_t k = 0;
+    if(nm != NULL) {
+        for(; nm[k] != '\0' && k < sizeof(fox_boot_tbl[i].thread) - 1; k++) {
+            fox_boot_tbl[i].thread[k] = nm[k];
+        }
+    }
+    fox_boot_tbl[i].thread[k] = '\0';
+}
+#endif /* FOX_HI_TRACE */
+
 void memmgr_heap_init(void) {
     MemmgrHeapThreadDict_init(memmgr_heap_thread_dict);
 }
@@ -174,7 +278,7 @@ size_t memmgr_heap_get_thread_memory(FuriThreadId thread_id) {
                     BlockLink_t* pxLink = (void*)puc;
 
                     if((pxLink->xBlockSize & heapBLOCK_ALLOCATED_BITMASK) &&
-                       pxLink->pxNextFreeBlock == NULL) {
+                       pxLink->pxNextFreeBlock == heapPROTECT_BLOCK_POINTER(NULL)) {
                         leftovers += data->value;
                     }
                 }
@@ -187,10 +291,16 @@ size_t memmgr_heap_get_thread_memory(FuriThreadId thread_id) {
 }
 
 #undef traceMALLOC
-static inline void traceMALLOC(void* pointer, size_t size) {
+static inline void traceMALLOC(void* pointer, size_t size, void* caller) {
     FuriThreadId thread_id = furi_thread_get_current_id();
     if(thread_id && memmgr_heap_thread_trace_depth == 0) {
         memmgr_heap_thread_trace_depth++;
+#ifdef FOX_HI_TRACE
+        fox_hi_record(pointer, size, caller);
+        fox_boot_record(pointer, size, caller);
+#else
+        (void)caller;
+#endif
         MemmgrHeapAllocDict_t* alloc_dict =
             MemmgrHeapThreadDict_get(memmgr_heap_thread_dict, (uint32_t)thread_id);
         if(alloc_dict) {
@@ -206,6 +316,9 @@ static inline void traceFREE(void* pointer, size_t size) {
     FuriThreadId thread_id = furi_thread_get_current_id();
     if(thread_id && memmgr_heap_thread_trace_depth == 0) {
         memmgr_heap_thread_trace_depth++;
+#ifdef FOX_HI_TRACE
+        fox_hi_forget(pointer);
+#endif
         MemmgrHeapAllocDict_t* alloc_dict =
             MemmgrHeapThreadDict_get(memmgr_heap_thread_dict, (uint32_t)thread_id);
         if(alloc_dict) {
@@ -240,6 +353,11 @@ void memmgr_heap_printf_free_blocks(void) {
 #define MEMMGR_HEAP_MAP_BUCKET_COUNT    128
 #define MEMMGR_HEAP_MAP_BUCKETS_PER_ROW 32
 #define MEMMGR_HEAP_MAP_LINE_SIZE       160
+/* Per-thread breakdown collects into a fixed stack array (no alloc under the
+ * scheduler-suspend), so it is capped. 24 covers every live Flipper thread with
+ * headroom; any beyond that are counted as an overflow line, not dropped
+ * silently. Keep the struct small - this sits on the RAM-monitor / CLI stack. */
+#define MEMMGR_HEAP_MAP_MAX_THREADS     24
 
 /* Clamp-and-emit a formatted line built with snprintf(). `written` is
  * snprintf()'s return value (the length it WOULD have written, which can
@@ -310,6 +428,11 @@ void memmgr_heap_write_fragmentation_map(
     size_t used_region_count = 0;
     size_t largest_used_region = 0;
     size_t sum_used_from_gaps = 0;
+    size_t smallest_free_block = (size_t)-1; /* sentinel; set to 0 below if no free blocks */
+    size_t second_largest_free_block = 0;
+    /* Free-block size histogram (coalescing health at a glance): a heap with
+     * plenty of total free but a tall <=64 column is fragmented into crumbs. */
+    size_t free_hist[6] = {0, 0, 0, 0, 0, 0}; /* <=32, <=64, <=256, <=1K, <=4K, >4K */
 
     {
         BlockLink_t* pxBlock = heapPROTECT_BLOCK_POINTER(xStart.pxNextFreeBlock);
@@ -333,7 +456,26 @@ void memmgr_heap_write_fragmentation_map(
             free_block_count++;
             sum_free_from_walk += block_size;
             if(block_size > largest_free_block) {
+                second_largest_free_block = largest_free_block;
                 largest_free_block = block_size;
+            } else if(block_size > second_largest_free_block) {
+                second_largest_free_block = block_size;
+            }
+            if(block_size < smallest_free_block) {
+                smallest_free_block = block_size;
+            }
+            if(block_size <= 32) {
+                free_hist[0]++;
+            } else if(block_size <= 64) {
+                free_hist[1]++;
+            } else if(block_size <= 256) {
+                free_hist[2]++;
+            } else if(block_size <= 1024) {
+                free_hist[3]++;
+            } else if(block_size <= 4096) {
+                free_hist[4]++;
+            } else {
+                free_hist[5]++;
             }
 
             prev_end = block_addr + block_size;
@@ -349,6 +491,9 @@ void memmgr_heap_write_fragmentation_map(
             }
         }
     }
+
+    if(free_block_count == 0) smallest_free_block = 0;
+    size_t avg_free_block = (free_block_count > 0) ? (sum_free_from_walk / free_block_count) : 0;
 
     size_t total_free = xPortGetFreeHeapSize();
     size_t total_used = (heap_total > total_free) ? (heap_total - total_free) : 0;
@@ -449,6 +594,82 @@ void memmgr_heap_write_fragmentation_map(
         heap_total,
         (accounted_total == heap_total) ? "[OK]" : "[MISMATCH - bug or corruption]");
     memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+    /* ---- Extended summary ----
+     * All cheap, all always-safe (plain reads of file-scope counters + the Pass-1
+     * accumulators). These are the numbers that turn a one-off snapshot into a
+     * diagnosis: the low-water mark tells you the worst this boot ever got even
+     * though it recovered; the alloc/free churn tells you whether a "leak" is
+     * really growth or just high turnover; the free-block distribution tells you
+     * whether free heap is one usable slab or a drift of unusable crumbs. */
+    written = snprintf(
+        line,
+        sizeof(line),
+        "Min-ever free (low-water since boot): %zu bytes\n",
+        (size_t)xMinimumEverFreeBytesRemaining);
+    memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+    {
+        size_t peak_used = (heap_total > (size_t)xMinimumEverFreeBytesRemaining) ?
+                               (heap_total - (size_t)xMinimumEverFreeBytesRemaining) :
+                               0;
+        written = snprintf(
+            line, sizeof(line), "Peak used (high-water since boot): %zu bytes\n", peak_used);
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+    }
+
+    written = snprintf(
+        line,
+        sizeof(line),
+        "Lifetime allocs: %zu, frees: %zu (net live blocks: %zu)\n",
+        (size_t)xNumberOfSuccessfulAllocations,
+        (size_t)xNumberOfSuccessfulFrees,
+        (size_t)(xNumberOfSuccessfulAllocations - xNumberOfSuccessfulFrees));
+    memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+    written = snprintf(
+        line,
+        sizeof(line),
+        "Free block sizes: smallest %zu, avg %zu, 2nd-largest %zu, largest %zu\n",
+        smallest_free_block,
+        avg_free_block,
+        second_largest_free_block,
+        largest_free_block);
+    memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+    written = snprintf(
+        line,
+        sizeof(line),
+        "Free blocks by size: <=32:%zu <=64:%zu <=256:%zu <=1K:%zu <=4K:%zu >4K:%zu\n",
+        free_hist[0],
+        free_hist[1],
+        free_hist[2],
+        free_hist[3],
+        free_hist[4],
+        free_hist[5]);
+    memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+    if(heap_total > 0) {
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Heap utilisation: used %lu.%01lu%%, free %lu.%01lu%%\n",
+            (unsigned long)(total_used * 100u / heap_total),
+            (unsigned long)((total_used * 1000u / heap_total) % 10u),
+            (unsigned long)(total_free * 100u / heap_total),
+            (unsigned long)((total_free * 1000u / heap_total) % 10u));
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+    }
+
+    if(total_free > 0) {
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Largest free block is %lu.%01lu%% of all free heap (100%% = unfragmented)\n",
+            (unsigned long)(largest_free_block * 100u / total_free),
+            (unsigned long)((largest_free_block * 1000u / total_free) % 10u));
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+    }
 
     written = snprintf(
         line,
@@ -622,6 +843,203 @@ void memmgr_heap_write_fragmentation_map(
             memmgr_heap_map_emit(write_callback, write_context, line, (int)pos);
         }
     }
+
+    /* ---- Per-thread live heap usage ----
+     * The allocator already tags every live allocation with the FuriThreadId that
+     * made it (the MemmgrHeapThreadDict that traceMALLOC/traceFREE maintain), so
+     * we can attribute live heap to the OWNING THREAD - the single most useful
+     * thing when hunting a leak or a RAM hog. Collected under ONE brief
+     * vTaskSuspendAll() (the outer dict and the TCBs are only stable while the
+     * scheduler is suspended, and file I/O must never run there), into a fixed
+     * stack array, then emitted after resume. The per-block validity test mirrors
+     * the proven one in memmgr_heap_get_thread_memory(). */
+    {
+        struct {
+            uint32_t bytes;
+            uint32_t count;
+            char     name[20];
+        } tinfo[MEMMGR_HEAP_MAP_MAX_THREADS];
+        uint32_t tcount = 0;
+        uint32_t toverflow = 0;
+
+        vTaskSuspendAll();
+        {
+            memmgr_heap_thread_trace_depth++;
+            MemmgrHeapThreadDict_it_t it;
+            for(MemmgrHeapThreadDict_it(it, memmgr_heap_thread_dict);
+                !MemmgrHeapThreadDict_end_p(it);
+                MemmgrHeapThreadDict_next(it)) {
+                MemmgrHeapThreadDict_itref_t* tref = MemmgrHeapThreadDict_ref(it);
+                if(tcount >= MEMMGR_HEAP_MAP_MAX_THREADS) {
+                    toverflow++;
+                    continue;
+                }
+                uint32_t sum = 0;
+                uint32_t cnt = 0;
+                MemmgrHeapAllocDict_it_t ait;
+                for(MemmgrHeapAllocDict_it(ait, tref->value);
+                    !MemmgrHeapAllocDict_end_p(ait);
+                    MemmgrHeapAllocDict_next(ait)) {
+                    MemmgrHeapAllocDict_itref_t* data = MemmgrHeapAllocDict_ref(ait);
+                    if(data->key != 0) {
+                        uint8_t* puc = (uint8_t*)data->key;
+                        puc -= xHeapStructSize;
+                        BlockLink_t* pxLink = (void*)puc;
+                        if((pxLink->xBlockSize & heapBLOCK_ALLOCATED_BITMASK) &&
+                           pxLink->pxNextFreeBlock == heapPROTECT_BLOCK_POINTER(NULL)) {
+                            sum += data->value;
+                            cnt++;
+                        }
+                    }
+                }
+                tinfo[tcount].bytes = sum;
+                tinfo[tcount].count = cnt;
+                const char* nm = furi_thread_get_name((FuriThreadId)(size_t)tref->key);
+                uint32_t k = 0;
+                if(nm != NULL) {
+                    for(; nm[k] != '\0' && k < sizeof(tinfo[tcount].name) - 1; k++) {
+                        tinfo[tcount].name[k] = nm[k];
+                    }
+                }
+                tinfo[tcount].name[k] = '\0';
+                tcount++;
+            }
+            memmgr_heap_thread_trace_depth--;
+        }
+        (void)xTaskResumeAll();
+
+        written = snprintf(
+            line, sizeof(line), "\n--- Per-thread live heap (tracked allocations) ---\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+        size_t tracked_total = 0;
+        for(uint32_t i = 0; i < tcount; i++) {
+            tracked_total += tinfo[i].bytes;
+            written = snprintf(
+                line,
+                sizeof(line),
+                "%-20s %8lu bytes  %4lu allocs\n",
+                tinfo[i].name[0] ? tinfo[i].name : "<unnamed>",
+                (unsigned long)tinfo[i].bytes,
+                (unsigned long)tinfo[i].count);
+            memmgr_heap_map_emit(write_callback, write_context, line, written);
+        }
+
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Tracked live total: %zu bytes across %lu threads%s\n",
+            tracked_total,
+            (unsigned long)tcount,
+            toverflow ? " (+more; table full)" : "");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+        written = snprintf(
+            line,
+            sizeof(line),
+            "NOTE: per-thread totals cover only heap the thread-trace tagged; early-boot\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        written = snprintf(
+            line,
+            sizeof(line),
+            "and ISR allocations are untagged, so this sums to less than total used - it\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        written =
+            snprintf(line, sizeof(line), "shows WHICH THREAD owns the heap it does cover.\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+    }
+
+#ifdef FOX_HI_TRACE
+    {
+        /* Bump the trace depth so traceMALLOC/traceFREE skip fox_hi_record/forget
+         * while we read the table -- a stable snapshot without suspending the
+         * scheduler (file I/O must be able to run here). */
+        memmgr_heap_thread_trace_depth++;
+        written = snprintf(
+            line,
+            sizeof(line),
+            "\n--- High-heap survivors (>= 0x%08lx, DIAGNOSTIC) ---\n",
+            (unsigned long)FOX_HI_TRACE_ADDR);
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Live blocks in/above the first-boot stranded band: owner thread + birth tick.\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+        uint32_t shown = 0;
+        size_t hi_total = 0;
+        uint32_t last_addr = 0; /* address-sorted selection emit (addrs are unique) */
+        for(;;) {
+            uint32_t best_i = FOX_HI_TRACE_MAX;
+            uint32_t best_addr = 0xFFFFFFFFu;
+            for(uint32_t i = 0; i < FOX_HI_TRACE_MAX; i++) {
+                uint32_t a = fox_hi_tbl[i].addr;
+                if(a != 0 && a > last_addr && a < best_addr) {
+                    best_addr = a;
+                    best_i = i;
+                }
+            }
+            if(best_i == FOX_HI_TRACE_MAX) break;
+            last_addr = best_addr;
+            hi_total += fox_hi_tbl[best_i].size;
+            shown++;
+            written = snprintf(
+                line,
+                sizeof(line),
+                "0x%08lx  %8lu bytes  tick %8lu  caller 0x%08lx  %s\n",
+                (unsigned long)fox_hi_tbl[best_i].addr,
+                (unsigned long)fox_hi_tbl[best_i].size,
+                (unsigned long)fox_hi_tbl[best_i].tick,
+                (unsigned long)fox_hi_tbl[best_i].caller,
+                fox_hi_tbl[best_i].thread[0] ? fox_hi_tbl[best_i].thread : "<unnamed>");
+            memmgr_heap_map_emit(write_callback, write_context, line, written);
+        }
+        written = snprintf(
+            line,
+            sizeof(line),
+            "High-heap survivors: %lu blocks, %zu bytes total%s\n",
+            (unsigned long)shown,
+            hi_total,
+            fox_hi_dropped ? " (table overflowed; some missed)" : "");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+
+        written = snprintf(
+            line,
+            sizeof(line),
+            "\n--- Boot-window allocs (>= 0x%08lx OR >= %lu B, tick < %lu, DIAGNOSTIC) ---\n",
+            (unsigned long)FOX_HI_TRACE_ADDR,
+            (unsigned long)FOX_BOOT_BIG,
+            (unsigned long)FOX_BOOT_WINDOW);
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Allocated high during boot; an entry NOT in the survivors above was freed =\n"
+            "a transient that pushed the permanent blocks high. addr2line the caller.\n");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        for(uint32_t i = 0; i < fox_boot_count; i++) {
+            written = snprintf(
+                line,
+                sizeof(line),
+                "0x%08lx  %8lu bytes  tick %8lu  caller 0x%08lx  %s\n",
+                (unsigned long)fox_boot_tbl[i].addr,
+                (unsigned long)fox_boot_tbl[i].size,
+                (unsigned long)fox_boot_tbl[i].tick,
+                (unsigned long)fox_boot_tbl[i].caller,
+                fox_boot_tbl[i].thread[0] ? fox_boot_tbl[i].thread : "<unnamed>");
+            memmgr_heap_map_emit(write_callback, write_context, line, written);
+        }
+        written = snprintf(
+            line,
+            sizeof(line),
+            "Boot-window high allocs: %lu recorded%s\n",
+            (unsigned long)fox_boot_count,
+            fox_boot_dropped ? " (table overflowed; some missed)" : "");
+        memmgr_heap_map_emit(write_callback, write_context, line, written);
+        memmgr_heap_thread_trace_depth--;
+    }
+#endif /* FOX_HI_TRACE */
 }
 
 void* pvPortMalloc(size_t xWantedSize) {
@@ -736,7 +1154,7 @@ void* pvPortMalloc(size_t xWantedSize) {
             mtCOVERAGE_TEST_MARKER();
         }
 
-        traceMALLOC(pvReturn, xAllocatedBlockSize);
+        traceMALLOC(pvReturn, xAllocatedBlockSize, __builtin_return_address(0));
 
         (void)xAllocatedBlockSize;
     }

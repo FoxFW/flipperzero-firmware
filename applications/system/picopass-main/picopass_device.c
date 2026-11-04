@@ -451,6 +451,21 @@ bool picopass_file_select(PicopassDevice* dev) {
     return res;
 }
 
+bool picopass_device_load(PicopassDevice* dev, const char* path) {
+    furi_assert(dev);
+    furi_assert(path);
+    furi_string_set_str(dev->load_path, path);
+    FuriString* filename = furi_string_alloc();
+    path_extract_filename(dev->load_path, filename, true);
+    strlcpy(dev->dev_name, furi_string_get_cstr(filename), sizeof(dev->dev_name));
+    furi_string_free(filename);
+    bool res = picopass_device_load_data(dev, dev->load_path, true);
+    if(res) {
+        picopass_device_set_name(dev, dev->dev_name);
+    }
+    return res;
+}
+
 void picopass_device_data_clear(PicopassDeviceData* dev_data) {
     for(size_t i = 0; i < PICOPASS_MAX_APP_LIMIT; i++) {
         memset(dev_data->card_data[i].data, 0, sizeof(dev_data->card_data[i].data));

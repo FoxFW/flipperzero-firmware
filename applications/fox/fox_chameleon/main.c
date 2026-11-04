@@ -431,13 +431,12 @@ static void action_check_esp32(App* app) {
         dump_raw_capture_to_sd(app, "check_esp32_raw.txt", "Raw bytes seen while waiting for an AT reply.");
 
     widget_reset(app->widget);
-    widget_add_string_multiline_element(
+    widget_add_text_scroll_element(
         app->widget,
         2,
         2,
-        AlignLeft,
-        AlignTop,
-        FontSecondary,
+        124,
+        45,
         dumped ? "This app requires an\n"
                  "external ESP32 running\n"
                  "Fox ESP32 Firmware,\n"

@@ -50,6 +50,7 @@ typedef enum {
     DesktopGlobalFoxSetupLaunch,
     DesktopGlobalSdCardRemoved,
     DesktopGlobalSdCardMounted,
+    DesktopGlobalBannerTick,
 
     DesktopMainEventOpenClockLock,
 } DesktopEvent;

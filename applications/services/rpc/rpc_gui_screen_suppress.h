@@ -10,6 +10,12 @@ extern "C" {
 
 void rpc_gui_screen_stream_set_suppressed(bool suppressed);
 
+/* Set the first line of the "Operation in Progress!" placeholder frame shown
+ * to a connected PC while the CLI/USB is soft-locked. Pass the app name (e.g.
+ * "NFC"); pass NULL or "" to restore the default ("Sub-GHz"). Safe to call
+ * from any app that suppresses the screen stream. */
+void rpc_gui_screen_stream_set_placeholder_label(const char* label);
+
 bool rpc_gui_screen_stream_is_suppressed(void);
 
 bool rpc_gui_screen_stream_is_active(void);

@@ -348,7 +348,7 @@ static void mf_plus_scene_show_keys_on_enter(NfcApp* instance) {
         found_admin,
         (uint8_t)MfPlusAdminKeyNum);
 
-    widget_add_text_scroll_element(instance->widget, 2, 2, 124, 60, furi_string_get_cstr(str));
+    widget_add_text_scroll_element(instance->widget, 2, 2, 124, 45, furi_string_get_cstr(str));
     widget_add_button_element(
         instance->widget, GuiButtonTypeLeft, "Back", mf_plus_scene_show_keys_callback, instance);
     view_dispatcher_switch_to_view(instance->view_dispatcher, NfcViewWidget);
@@ -452,7 +452,7 @@ static void mf_plus_scene_iso4_info_on_enter(NfcApp* instance) {
     nfc_render_mf_plus_iso14443_4(data, instance->text_box_store);
 
     widget_add_text_scroll_element(
-        instance->widget, 0, 0, 128, 52, furi_string_get_cstr(instance->text_box_store));
+        instance->widget, 0, 0, 128, 47, furi_string_get_cstr(instance->text_box_store));
     widget_add_button_element(
         instance->widget,
         GuiButtonTypeRight,

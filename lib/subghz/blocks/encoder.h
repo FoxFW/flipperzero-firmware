@@ -40,6 +40,13 @@ size_t subghz_protocol_blocks_get_upload_from_bit_array(
     uint32_t duration_bit,
     SubGhzProtocolBlockAlignBit align_bit);
 
+#define SUBGHZ_ASSERT_ENCODER_PREFIX(type) \
+    _Static_assert(offsetof(type, base) == 0, #type " must have base as first member")
+
+void subghz_protocol_encoder_generic_free(void* context);
+void subghz_protocol_encoder_generic_stop(void* context);
+LevelDuration subghz_protocol_encoder_generic_yield(void* context);
+
 #ifdef __cplusplus
 }
 #endif

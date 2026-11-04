@@ -10,6 +10,9 @@
 #include <lib/toolbox/manchester_decoder.h>
 #include <lib/toolbox/manchester_encoder.h>
 #include <furi_hal_subghz.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 #define TAG "FiatMarelli"
 
@@ -74,6 +77,8 @@ struct SubGhzProtocolEncoderFiatMarelli {
     uint8_t bit_count;
     uint32_t te_detected;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFiatMarelli);
+
 
 typedef enum {
     FiatMarelliDecoderStepReset = 0,
@@ -85,7 +90,7 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_fiat_marelli_decoder = {
     .alloc = subghz_protocol_decoder_fiat_marelli_alloc,
-    .free = subghz_protocol_decoder_fiat_marelli_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_fiat_marelli_feed,
     .reset = subghz_protocol_decoder_fiat_marelli_reset,
     .get_hash_data = subghz_protocol_decoder_fiat_marelli_get_hash_data,
@@ -94,209 +99,30 @@ const SubGhzProtocolDecoder subghz_protocol_fiat_marelli_decoder = {
     .get_string = subghz_protocol_decoder_fiat_marelli_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_fiat_marelli_encoder = {
-    .alloc = subghz_protocol_encoder_fiat_marelli_alloc,
-    .free = subghz_protocol_encoder_fiat_marelli_free,
-    .deserialize = subghz_protocol_encoder_fiat_marelli_deserialize,
-    .stop = subghz_protocol_encoder_fiat_marelli_stop,
-    .yield = subghz_protocol_encoder_fiat_marelli_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_fiat_marelli_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_fiat_marelli");
 
 const SubGhzProtocol subghz_protocol_fiat_marelli = {
     .name = FIAT_MARELLI_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+    // SubGhzProtocolFlag_Decodable deliberately omitted (v2.0.14, 2026-10-12).
+    // Delphi BSI and Magneti Marelli BSI Fiat systems both use the same
+    // Hitag2/PCF7946 transponder, so there is no distinct Marelli over-the-air
+    // protocol: the Fiat V0/V1 decoders already cover every Fiat Hitag2 remote.
+    // With Decodable set, this decoder only ever latched garbage 102-bit frames
+    // (misframed, wrong serial) onto Fiat V1 (Delphi) and Renault captures and
+    // showed up as a bogus second Decode-RAW result (0 of 22 corpus fires were
+    // uniquely Marelli). Dropping Decodable keeps it out of the live-RX/Decode-RAW
+    // sweep, while Load|Save|Send keep existing saved MARELLI .sub files openable
+    // and emulatable. Re-add Decodable if a genuine Marelli RF frame is ever found.
+    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Load |
+            SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_fiat_marelli_decoder,
-    .encoder = &subghz_protocol_fiat_marelli_encoder,
+    .encoder = &subghz_protocol_fiat_marelli_encoder_ext.vtable,
 };
 
 #define FIAT_MARELLI_ENCODER_UPLOAD_MAX 1500
 #define FIAT_MARELLI_ENCODER_REPEAT     3
 #define FIAT_MARELLI_PREAMBLE_PAIRS     100
-
-void* subghz_protocol_encoder_fiat_marelli_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFiatMarelli* instance = calloc(1, sizeof(SubGhzProtocolEncoderFiatMarelli));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_fiat_marelli;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = FIAT_MARELLI_ENCODER_REPEAT;
-    instance->encoder.size_upload = FIAT_MARELLI_ENCODER_UPLOAD_MAX;
-    instance->encoder.upload = malloc(FIAT_MARELLI_ENCODER_UPLOAD_MAX * sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_fiat_marelli_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFiatMarelli* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool fiat_marelli_encoder_get_upload(SubGhzProtocolEncoderFiatMarelli* instance) {
-    uint32_t te = instance->te_detected;
-    if(te == 0) te = subghz_protocol_fiat_marelli_const.te_short;
-
-    uint32_t te_short = te;
-    uint32_t te_long = te * 2;
-    uint32_t gap_duration = te * 12;
-    uint32_t sync_duration = te * 8;
-
-    size_t index = 0;
-    size_t max_upload = FIAT_MARELLI_ENCODER_UPLOAD_MAX;
-    uint8_t data_bits = instance->bit_count;
-    if(data_bits == 0) data_bits = instance->generic.data_count_bit;
-    if(data_bits < FIAT_MARELLI_MIN_DATA_BITS || data_bits > FIAT_MARELLI_MAX_DATA_BITS) {
-        return false;
-    }
-
-    for(uint8_t i = 0; i < FIAT_MARELLI_PREAMBLE_PAIRS && (index + 1) < max_upload; i++) {
-        instance->encoder.upload[index++] = level_duration_make(true, te_short);
-        if(i < FIAT_MARELLI_PREAMBLE_PAIRS - 1) {
-            instance->encoder.upload[index++] = level_duration_make(false, te_short);
-        }
-    }
-
-    if(index < max_upload) {
-        instance->encoder.upload[index++] = level_duration_make(false, te_short + gap_duration);
-    }
-
-    if(index < max_upload) {
-        instance->encoder.upload[index++] = level_duration_make(true, sync_duration);
-    }
-
-    bool in_mid1 = true;
-
-    for(uint8_t bit_i = 0; bit_i < data_bits && (index + 1) < max_upload; bit_i++) {
-        uint8_t byte_idx = bit_i / 8;
-        uint8_t bit_pos = 7 - (bit_i % 8);
-        bool data_bit = (instance->raw_data[byte_idx] >> bit_pos) & 1;
-
-        if(in_mid1) {
-            if(data_bit) {
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-            } else {
-                instance->encoder.upload[index++] = level_duration_make(false, te_long);
-                in_mid1 = false;
-            }
-        } else {
-            if(data_bit) {
-                instance->encoder.upload[index++] = level_duration_make(true, te_long);
-                in_mid1 = true;
-            } else {
-                instance->encoder.upload[index++] = level_duration_make(true, te_short);
-                instance->encoder.upload[index++] = level_duration_make(false, te_short);
-            }
-        }
-    }
-
-    if(in_mid1) {
-        if(index < max_upload) {
-            instance->encoder.upload[index++] =
-                level_duration_make(false, te_short + gap_duration * 3);
-        }
-    } else {
-        if(index > 0) {
-            instance->encoder.upload[index - 1] =
-                level_duration_make(false, te_short + gap_duration * 3);
-        }
-    }
-
-    instance->encoder.size_upload = index;
-    return index > 0;
-}
-
-static void fiat_marelli_encoder_rebuild_raw_data(SubGhzProtocolEncoderFiatMarelli* instance) {
-    memset(instance->raw_data, 0, sizeof(instance->raw_data));
-
-    uint64_t key = instance->generic.data;
-    for(int i = 0; i < 8; i++) {
-        instance->raw_data[i] = (uint8_t)(key >> (56 - i * 8));
-    }
-
-    uint8_t extra_bits =
-        instance->generic.data_count_bit > 64 ? (instance->generic.data_count_bit - 64) : 0;
-    for(uint8_t i = 0; i < extra_bits && i < 32; i++) {
-        uint8_t byte_idx = 8 + (i / 8);
-        uint8_t bit_pos = 7 - (i % 8);
-        if(instance->extra_data & (1UL << (extra_bits - 1 - i))) {
-            instance->raw_data[byte_idx] |= (1 << bit_pos);
-        }
-    }
-
-    instance->bit_count = instance->generic.data_count_bit;
-
-    if(instance->bit_count >= 104) {
-        instance->raw_data[12] = fiat_marelli_crc8(instance->raw_data, 12);
-    }
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_fiat_marelli_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderFiatMarelli* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) break;
-
-        uint32_t extra = 0;
-        if(flipper_format_read_uint32(flipper_format, "Extra", &extra, 1)) {
-            instance->extra_data = extra;
-        }
-
-        uint32_t te = 0;
-        if(flipper_format_read_uint32(flipper_format, "TE", &te, 1)) {
-            instance->te_detected = te;
-        }
-
-        fiat_marelli_encoder_rebuild_raw_data(instance);
-
-        if(!fiat_marelli_encoder_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-
-        instance->encoder.repeat = FIAT_MARELLI_ENCODER_REPEAT;
-        instance->encoder.front = 0;
-        instance->encoder.is_running = true;
-
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_fiat_marelli_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFiatMarelli* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_fiat_marelli_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFiatMarelli* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) {
-            instance->encoder.repeat--;
-        }
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 static void fiat_marelli_rebuild_raw_data(SubGhzProtocolDecoderFiatMarelli* instance) {
     memset(instance->raw_data, 0, sizeof(instance->raw_data));
@@ -352,11 +178,7 @@ void* subghz_protocol_decoder_fiat_marelli_alloc(SubGhzEnvironment* environment)
     return instance;
 }
 
-void subghz_protocol_decoder_fiat_marelli_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderFiatMarelli* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_fiat_marelli_reset(void* context) {
     furi_check(context);
@@ -521,7 +343,16 @@ void subghz_protocol_decoder_fiat_marelli_feed(void* context, bool level, uint32
                 crc_ok = (calc == instance->raw_data[12]);
             }
 
-            if(crc_ok) {
+            // Preamble-residue gate (see fiat_marelli notes): a genuine Marelli
+            // frame starts with a full 0xFF preamble byte and a data-start 0 bit
+            // in byte[1] (observed 0xFFFE across two fobs; 0xFFFC per spec). A
+            // noise/cross-protocol latch (e.g. a Manchester-ish section of a Fiat
+            // V1 capture) comes through as 0xFFFF and is rejected here, so it no
+            // longer shows up as a bogus Marelli result in Decode RAW.
+            bool preamble_ok =
+                (instance->raw_data[0] == 0xFFU) && ((instance->raw_data[1] & 0x01U) == 0U);
+
+            if(crc_ok && preamble_ok) {
                 instance->generic.serial =
                     ((uint32_t)instance->raw_data[2] << 24) |
                     ((uint32_t)instance->raw_data[3] << 16) |
@@ -607,19 +438,6 @@ SubGhzProtocolStatus subghz_protocol_decoder_fiat_marelli_deserialize(
     return ret;
 }
 
-static const char* fiat_marelli_button_name(uint8_t btn) {
-    switch(btn) {
-    case 0x7:
-        return "Lock";
-    case 0xB:
-        return "Unlock";
-    case 0xD:
-        return "Trunk";
-    default:
-        return "Unknown";
-    }
-}
-
 // Hitag2 manufacturer-key dictionary pass for a Fiat/Marelli frame. Marelli
 // shares the Fiat V1 BCM-Hitag2 cipher, so we reuse the verified fiat_v1
 // authenticator and key list. The Marelli field mapping (confirmed against the
@@ -628,12 +446,14 @@ static const char* fiat_marelli_button_name(uint8_t btn) {
 //   button  = raw[6] >> 4
 //   control = ((raw[6] & 0x0F) << 5) | (raw[7] >> 3)   (exposed epoch4|counter5)
 //   hop(ks) = raw[8..11]
-// The frame's hidden high counter bits are modelled by the fiat_v1 epoch, swept
-// over a small window (epoch outermost). ~95 keys x 256 epochs is cheap enough
-// to run once on the info screen; the result is cached in the instance.
+// The frame's hidden high counter bits are modelled by the fiat_v1 epoch. The
+// full 0..FIAT_MARELLI_HITAG2_EPOCH_MAX sweep (~95 keys x 256 epochs) measures
+// ~10-30s on the 64MHz target, so the info screen calls this epoch_max=1 only
+// (epoch-0 quick check, matching fiat_v1's inline verify); the full sweep runs
+// off the GUI thread (worker). Result cached in the instance.
 #define FIAT_MARELLI_HITAG2_EPOCH_MAX 256U
 static int16_t
-    fiat_marelli_find_hitag2_key(const uint8_t* raw, uint32_t* out_epoch) {
+    fiat_marelli_find_hitag2_key(const uint8_t* raw, uint32_t* out_epoch, uint32_t epoch_max) {
     uint32_t uid = ((uint32_t)raw[2] << 24) | ((uint32_t)raw[3] << 16) |
                    ((uint32_t)raw[4] << 8) | (uint32_t)raw[5];
     uint8_t button = (raw[6] >> 4) & 0x0FU;
@@ -642,7 +462,7 @@ static int16_t
                    ((uint32_t)raw[10] << 8) | (uint32_t)raw[11];
 
     const uint8_t(*keys)[6] = subghz_protocol_fiat_v1_get_known_keys();
-    for(uint32_t epoch = 0U; epoch < FIAT_MARELLI_HITAG2_EPOCH_MAX; epoch++) {
+    for(uint32_t epoch = 0U; epoch < epoch_max; epoch++) {
         for(uint8_t i = 0U; i < FIAT_V1_KNOWN_KEY_COUNT; i++) {
             if(subghz_protocol_fiat_v1_compute_auth(uid, button, control, keys[i], epoch) ==
                hop) {
@@ -657,66 +477,22 @@ static int16_t
 void subghz_protocol_decoder_fiat_marelli_get_string(void* context, FuriString* output) {
     furi_check(context);
     SubGhzProtocolDecoderFiatMarelli* instance = context;
-
-    uint8_t epoch = instance->raw_data[6] & 0xF;
-    uint8_t counter = (instance->raw_data[7] >> 3) & 0x1F;
-    const char* variant = (instance->te_detected &&
-                           instance->te_detected < FIAT_MARELLI_TE_TYPE_AB_BOUNDARY)
-                              ? "B"
-                              : "A";
-    uint8_t scramble = (instance->raw_data[7] >> 1) & 0x3;
-    uint8_t fixed    =  instance->raw_data[7] & 0x1;
-
-    const char* crc_str = "";
-    bool crc_ok = false;
-    if(instance->bit_count >= 104) {
-        uint8_t calc = fiat_marelli_crc8(instance->raw_data, 12);
-        crc_ok = (calc == instance->raw_data[12]);
-        crc_str = crc_ok ? " CRC:OK" : " CRC:FAIL";
-    }
-
-    // Once per decoded frame, try the Hitag2 manufacturer-key dictionary (only
-    // on a CRC-valid frame; the pass is otherwise meaningless). Cached so the
-    // ~95x256 authenticator run happens once, not on every screen refresh.
-    if(crc_ok && !instance->hitag2_checked) {
+    // Detect/decode split (FoxFW2.0 v2.1): the epoch-0 dictionary check uses the
+    // Fiat V1 cipher (not exported), so it stays internal, same condition and
+    // caching as before; nothing it computes is displayed.
+    if(instance->bit_count >= 104 && !instance->hitag2_checked &&
+       fiat_marelli_crc8(instance->raw_data, 12) == instance->raw_data[12]) {
         instance->hitag2_key_index =
-            fiat_marelli_find_hitag2_key(instance->raw_data, &instance->hitag2_epoch);
+            fiat_marelli_find_hitag2_key(instance->raw_data, &instance->hitag2_epoch, 1U);
         instance->hitag2_checked = true;
     }
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit%s\r\n"
-        "Enc:%02X%02X%02X%02X%02X Scr:%02X\r\n"
-        "Raw:%02X%02X Fixed:%X\r\n"
-        "Sn:%08X Cnt:%02X\r\n"
-        "Btn:%02X:[%s] Ep:%02X\r\n"
-        "Tp:%s\r\n",
-        instance->generic.protocol_name,
-        (int)instance->bit_count,
-        crc_str,
-        instance->raw_data[8], instance->raw_data[9],
-        instance->raw_data[10], instance->raw_data[11],
-        instance->raw_data[12],
-        (unsigned)scramble,
-        instance->raw_data[6], instance->raw_data[7],
-        (unsigned)fixed,
-        (unsigned int)instance->generic.serial,
-        (unsigned)counter,
-        (unsigned)instance->generic.btn,
-        fiat_marelli_button_name(instance->generic.btn),
-        (unsigned)epoch,
-        variant);
-
-    // Show the recovered manufacturer key when the dictionary pass authenticated
-    // the frame (proves it's a genuine BCM key, not just a structurally-valid
-    // capture). Nothing is shown when no known key matched.
-    if(instance->hitag2_key_index >= 0) {
-        const uint8_t(*keys)[6] = subghz_protocol_fiat_v1_get_known_keys();
-        const uint8_t* k = keys[instance->hitag2_key_index];
-        furi_string_cat_printf(
-            output,
-            "MfKey:%02X%02X%02X%02X%02X%02X Ep:%lu\r\n",
-            k[0], k[1], k[2], k[3], k[4], k[5], (unsigned long)instance->hitag2_epoch);
-    }
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+

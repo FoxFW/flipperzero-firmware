@@ -89,3 +89,42 @@ inline uint64_t
     subghz_protocol_keeloq_common_magic_serial_type3_learning(uint32_t data, uint64_t man) {
     return (man & 0xFFFFFFFFFF000000) | (data & 0xFFFFFF);
 }
+
+
+/* ---- AERF (type 14) manufacturer derivation (JCM-family manufacturer_nl_extend) ----
+ * Explicit shift guards (n>=32 -> 0) match the ARM target AND KeeLoq-RX kl_crack.py
+ * (NOT x86 mask-mod-32), so host and device agree. See
+ * claude/KEELOQ_AERF_JCM_DECODER_REVIEW.md for why the raw decompiled shifts were unsafe. */
+static uint32_t keeloq_common_nl_extend(uint32_t x, uint32_t k_lo, uint32_t k_hi, uint32_t outer_limit) {
+    uint32_t r5 = 0u;
+    while(r5 != outer_limit) {
+        if(r5 < 0x210u) {
+            uint32_t r7 = ((x >> 15) & 1u) ^ ((x >> 1) | (x << 31));
+            uint32_t sh = (15u - r5) & 0x3Fu;
+            uint32_t lr = ((32u - sh) >= 32u) ? 0u : (k_hi << (32u - sh));
+            uint32_t klo = (sh >= 32u) ? 0u : (k_lo >> sh);
+            uint32_t ip = (klo < 32u) ? (((sh - 32u) >= 32u) ? 0u : (k_hi >> (sh - 32u))) : 0u;
+            uint32_t r1 = ((klo | lr | ip) & 1u) ^ r7;
+            uint32_t t = ((x >> 25) & 1u) + (((x >> 30) & 1u) << 1);
+            t = ((x >> 19) & 1u) + (t << 1);
+            t = ((x >> 8) & 1u) + (t << 1);
+            t = (x & 1u) + (t << 1);
+            x = ((KEELOQ_NLF >> (t & 31u)) & 1u) ^ r1;
+        }
+        r5 += 1u;
+    }
+    return x;
+}
+
+uint64_t subghz_protocol_keeloq_common_learning_aerf(uint32_t fix, const uint64_t key) {
+    uint32_t k_lo = (uint32_t)key;
+    uint32_t k_hi = (uint32_t)(key >> 32);
+    uint32_t d = fix & 0x0FFFFFFFu;
+    uint32_t k1 = keeloq_common_nl_extend(d | 0x20000000u, k_lo, k_hi, 0x40u);
+    uint32_t k2 = keeloq_common_nl_extend(d | 0x60000000u, k_lo, k_hi, 0x40u);
+    return ((uint64_t)k2 << 32) | k1;
+}
+
+uint32_t subghz_protocol_keeloq_common_decrypt_aerf(uint32_t hop, uint64_t man, uint32_t outer_limit) {
+    return keeloq_common_nl_extend(hop, (uint32_t)man, (uint32_t)(man >> 32), outer_limit);
+}

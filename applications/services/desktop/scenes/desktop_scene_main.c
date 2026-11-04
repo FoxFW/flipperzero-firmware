@@ -66,7 +66,13 @@ bool desktop_scene_main_on_event(void* context, SceneManagerEvent event) {
     Desktop* desktop = (Desktop*)context;
     bool consumed = false;
 
-    if(event.type == SceneManagerEventTypeCustom) {
+    if(event.type == SceneManagerEventTypeTick) {
+        static bool s_first_load_defrag_checked = false;
+        if(!s_first_load_defrag_checked) {
+            s_first_load_defrag_checked = true;
+            desktop_ram_defrag_if_wedged(desktop);
+        }
+    } else if(event.type == SceneManagerEventTypeCustom) {
         switch(event.event) {
         case DesktopMainEventOpenMenu: {
             Loader* loader = furi_record_open(RECORD_LOADER);
@@ -93,9 +99,11 @@ bool desktop_scene_main_on_event(void* context, SceneManagerEvent event) {
             break;
 
         case DesktopMainEventOpenArchive:
-
-            loader_start_detached_with_gui_error(
-                desktop->loader, EXT_PATH("apps/Fox/ffb.fap"), NULL);
+            /* Down-short: now a configurable favorite, default FFB. Repurposes the
+             * otherwise-dead RightLong slot (Right-long is hardcoded to wallpaper).
+             * open_app_or_profile() falls back to ffb.fap when the slot is cleared. */
+            desktop_scene_main_open_app_or_profile(
+                desktop, &desktop->settings.favorite_apps[FavoriteAppRightLong]);
             consumed = true;
             break;
 

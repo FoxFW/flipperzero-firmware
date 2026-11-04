@@ -210,6 +210,11 @@ void furi_hal_power_suppress_charge_enter(void);
  */
 void furi_hal_power_suppress_charge_exit(void);
 
+/** Force light sleep instead of deep STOP2 while set. The loader keeps this
+ * on for the lifetime of any running app (deep STOP2 can disrupt an active
+ * radio/USB stream). Does NOT force the device to sleep. */
+void furi_hal_power_set_force_light_sleep(bool force);
+
 /** Get power information
  *
  * @param[in]  callback     callback to provide with new data

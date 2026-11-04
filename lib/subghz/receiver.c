@@ -27,6 +27,13 @@ struct SubGhzReceiver {
 };
 
 SubGhzReceiver* subghz_receiver_alloc_init(SubGhzEnvironment* environment) {
+    return subghz_receiver_alloc_init_ex(environment, 0, 0);
+}
+
+SubGhzReceiver* subghz_receiver_alloc_init_ex(
+    SubGhzEnvironment* environment,
+    SubGhzProtocolFlag modulation,
+    SubGhzProtocolFlag exclude_flags) {
     SubGhzReceiver* instance = malloc(sizeof(SubGhzReceiver));
     SubGhzReceiverSlotArray_init(instance->slots);
     const SubGhzProtocolRegistry* protocol_registry_items =
@@ -35,6 +42,11 @@ SubGhzReceiver* subghz_receiver_alloc_init(SubGhzEnvironment* environment) {
     for(size_t i = 0; i < subghz_protocol_registry_count(protocol_registry_items); ++i) {
         const SubGhzProtocol* protocol =
             subghz_protocol_registry_get_by_index(protocol_registry_items, i);
+
+        const SubGhzProtocolFlag protocol_modulation =
+            protocol->flag & (SubGhzProtocolFlag_AM | SubGhzProtocolFlag_FM);
+        if(exclude_flags && (protocol->flag & exclude_flags) != 0) continue;
+        if(modulation && protocol_modulation && (protocol_modulation & modulation) == 0) continue;
 
         if(protocol->decoder && protocol->decoder->alloc) {
             SubGhzReceiverSlot* slot = SubGhzReceiverSlotArray_push_new(instance->slots);
@@ -47,7 +59,7 @@ SubGhzReceiver* subghz_receiver_alloc_init(SubGhzEnvironment* environment) {
     instance->context = NULL;
     instance->protocol_enabled_callback = NULL;
     instance->protocol_enabled_context = NULL;
-    instance->modulation_filter = 0;
+    instance->modulation_filter = modulation;
     return instance;
 }
 
@@ -101,6 +113,30 @@ void subghz_receiver_reset(SubGhzReceiver* instance) {
         }
 }
 
+// Reset every decoder EXCEPT the one named `keep_name`. Used when a generic
+// decoder fires on a signal that a more-specific superset decoder is still
+// accumulating: the normal post-fire subghz_receiver_reset() would wipe the
+// superset's in-progress frame before it can complete, so the generic core
+// always wins and the specific protocol never surfaces (e.g. the 88-bit
+// "Hitag-2" core completing first and clobbering the 102-bit "Fiat V1" frame
+// of the same burst). Keeping only the named superset alive lets it finish
+// while every other decoder is cleared exactly as a full reset would clear it,
+// so no additional cross-fire is unmasked. keep_name NULL falls back to a full
+// reset.
+void subghz_receiver_reset_except_by_name(SubGhzReceiver* instance, const char* keep_name) {
+    furi_check(instance);
+    furi_check(instance->slots);
+
+    for
+        M_EACH(slot, instance->slots, SubGhzReceiverSlotArray_t) {
+            if(keep_name && slot->base->protocol->name &&
+               strcmp(slot->base->protocol->name, keep_name) == 0) {
+                continue;
+            }
+            slot->base->protocol->decoder->reset(slot->base);
+        }
+}
+
 static void subghz_receiver_rx_callback(SubGhzProtocolDecoderBase* decoder_base, void* context) {
     SubGhzReceiver* instance = context;
     if(instance->callback) {
@@ -143,6 +179,40 @@ void subghz_receiver_set_protocol_enabled_callback(
     furi_check(instance);
     instance->protocol_enabled_callback = callback;
     instance->protocol_enabled_context = context;
+}
+
+bool subghz_receiver_detach_decoder(SubGhzReceiver* instance, SubGhzProtocolDecoderBase* decoder) {
+    furi_check(instance);
+    furi_check(decoder);
+
+    size_t size = SubGhzReceiverSlotArray_size(instance->slots);
+    for(size_t i = 0; i < size; i++) {
+        SubGhzReceiverSlot* slot = SubGhzReceiverSlotArray_get(instance->slots, i);
+        if((SubGhzProtocolDecoderBase*)slot->base == decoder) {
+            SubGhzReceiverSlotArray_remove_v(instance->slots, i, i + 1);
+            subghz_protocol_decoder_base_set_decoder_callback(decoder, NULL, NULL);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool subghz_receiver_adopt_decoder(SubGhzReceiver* instance, SubGhzProtocolDecoderBase* decoder) {
+    furi_check(instance);
+    furi_check(decoder);
+
+    size_t size = SubGhzReceiverSlotArray_size(instance->slots);
+    for(size_t i = 0; i < size; i++) {
+        SubGhzReceiverSlot* slot = SubGhzReceiverSlotArray_get(instance->slots, i);
+        if(slot->base->protocol == decoder->protocol) {
+            slot->base->protocol->decoder->free(slot->base);
+            slot->base = (SubGhzProtocolEncoderBase*)decoder;
+            subghz_protocol_decoder_base_set_decoder_callback(
+                decoder, subghz_receiver_rx_callback, instance);
+            return true;
+        }
+    }
+    return false;
 }
 
 SubGhzProtocolDecoderBase* subghz_receiver_search_decoder_base_by_name(

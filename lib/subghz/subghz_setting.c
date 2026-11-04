@@ -405,6 +405,8 @@ bool subghz_setting_load_custom_preset(
         SubGhzSettingCustomPresetItemArray_push_raw(instance->preset->data);
     item->custom_preset_name = furi_string_alloc();
     furi_string_set(item->custom_preset_name, preset_name);
+    item->custom_preset_data = NULL;
+    item->custom_preset_data_size = 0;
     do {
         if(!flipper_format_get_value_count(fff_data_file, "Custom_preset_data", &temp_data32))
             break;
@@ -424,6 +426,14 @@ bool subghz_setting_load_custom_preset(
         }
         return true;
     } while(true);
+
+    furi_string_free(item->custom_preset_name);
+    free(item->custom_preset_data);
+    SubGhzSettingCustomPresetItemArray_it_t it;
+    SubGhzSettingCustomPresetItemArray_it_last(it, instance->preset->data);
+    if(!SubGhzSettingCustomPresetItemArray_end_p(it)) {
+        SubGhzSettingCustomPresetItemArray_remove(instance->preset->data, it);
+    }
     return false;
 }
 
@@ -467,8 +477,12 @@ size_t subghz_setting_get_preset_data_size(SubGhzSetting* instance, size_t idx) 
 
 uint8_t* subghz_setting_get_preset_data_by_name(SubGhzSetting* instance, const char* preset_name) {
     furi_check(instance);
-    SubGhzSettingCustomPresetItem* item = SubGhzSettingCustomPresetItemArray_get(
-        instance->preset->data, subghz_setting_get_inx_preset_by_name(instance, preset_name));
+    int idx = subghz_setting_get_inx_preset_by_name(instance, preset_name);
+    if(idx < 0) {
+        return NULL;
+    }
+    SubGhzSettingCustomPresetItem* item =
+        SubGhzSettingCustomPresetItemArray_get(instance->preset->data, idx);
     return item->custom_preset_data;
 }
 

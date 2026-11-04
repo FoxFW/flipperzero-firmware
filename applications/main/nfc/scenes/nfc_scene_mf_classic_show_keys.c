@@ -61,7 +61,7 @@ void nfc_scene_mf_classic_show_keys_on_enter(void* context) {
         num_sectors);
 
     widget_add_text_scroll_element(
-        instance->widget, 2, 2, 124, 60, furi_string_get_cstr(instance->text_box_store));
+        instance->widget, 2, 2, 124, 45, furi_string_get_cstr(instance->text_box_store));
     widget_add_button_element(
         instance->widget,
         GuiButtonTypeLeft,

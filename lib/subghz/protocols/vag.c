@@ -1,4 +1,6 @@
 #include "vag.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 #include "aut64.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
@@ -80,35 +82,6 @@ static struct aut64_key* protocol_vag_get_key(uint8_t index) {
 
 static const uint32_t vag_tea_key_schedule[] = {0x0B46502D, 0x5E253718, 0x2BF93A19, 0x622C1206};
 
-static const char* vag_button_name(uint8_t btn) {
-    switch(btn) {
-    case 0x1:
-        return "Unlock";
-    case 0x2:
-        return "Lock";
-    case 0x4:
-        return "Boot";
-    case 0x10:
-        return "Unlock";
-    case 0x20:
-        return "Lock";
-    case 0x40:
-        return "Boot";
-    default:
-        return "Unkn";
-    }
-}
-
-static uint8_t vag_custom_to_btn(uint8_t custom, uint8_t original_btn) {
-    switch(custom) {
-        case 1: return 0x20;
-        case 2: return 0x10;
-        case 3:
-        case 4: return 0x40;
-        default: return original_btn;
-    }
-}
-
 static uint8_t vag_btn_to_custom(uint8_t btn) {
     switch(btn) {
         case 0x10: return 2;
@@ -165,15 +138,6 @@ static void vag_tea_decrypt(uint32_t* v0, uint32_t* v1, const uint32_t* key_sche
         *v1 -= (((*v0 << 4) ^ (*v0 >> 5)) + *v0) ^ (sum + key_schedule[(sum >> 11) & 3]);
         sum -= VAG_TEA_DELTA;
         *v0 -= (((*v1 << 4) ^ (*v1 >> 5)) + *v1) ^ (sum + key_schedule[sum & 3]);
-    }
-}
-
-static void vag_tea_encrypt(uint32_t* v0, uint32_t* v1, const uint32_t* key_schedule) {
-    uint32_t sum = 0;
-    for(int i = 0; i < VAG_TEA_ROUNDS; i++) {
-        *v0 += (((*v1 << 4) ^ (*v1 >> 5)) + *v1) ^ (sum + key_schedule[sum & 3]);
-        sum += VAG_TEA_DELTA;
-        *v1 += (((*v0 << 4) ^ (*v0 >> 5)) + *v0) ^ (sum + key_schedule[(sum >> 11) & 3]);
     }
 }
 
@@ -407,13 +371,22 @@ const SubGhzProtocolDecoder subghz_protocol_vag_decoder = {
     .get_string = subghz_protocol_decoder_vag_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_vag_encoder = {
-    .alloc = subghz_protocol_encoder_vag_alloc,
-    .free = subghz_protocol_encoder_vag_free,
-    .deserialize = subghz_protocol_encoder_vag_deserialize,
-    .stop = subghz_protocol_encoder_vag_stop,
-    .yield = subghz_protocol_encoder_vag_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    __typeof__(&aut64_decrypt) aut64_decrypt;
+    __typeof__(&aut64_encrypt) aut64_encrypt;
+    __typeof__(&aut64_unpack) aut64_unpack;
+    void* protocol_vag_keys;
+    void* protocol_vag_keys_loaded;
+} enc_vag_host_t;
+static const enc_vag_host_t enc_vag_host = {
+    .aut64_decrypt = aut64_decrypt,
+    .aut64_encrypt = aut64_encrypt,
+    .aut64_unpack = aut64_unpack,
+    .protocol_vag_keys = (void*)&protocol_vag_keys,
+    .protocol_vag_keys_loaded = (void*)&protocol_vag_keys_loaded,
 };
+static const SubGhzEncoderExternal subghz_protocol_vag_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_vag", &enc_vag_host);
 
 const SubGhzProtocol subghz_protocol_vag = {
     .name = VAG_PROTOCOL_NAME,
@@ -421,7 +394,7 @@ const SubGhzProtocol subghz_protocol_vag = {
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_vag_decoder,
-    .encoder = &subghz_protocol_vag_encoder,
+    .encoder = &subghz_protocol_vag_encoder_ext.vtable,
 };
 
 void* subghz_protocol_decoder_vag_alloc(SubGhzEnvironment* environment) {
@@ -838,624 +811,22 @@ typedef struct SubGhzProtocolEncoderVAG {
     bool is_running;
 } SubGhzProtocolEncoderVAG;
 
-static bool vag_aut64_encrypt(uint8_t* block, int key_index) {
-    struct aut64_key* key = protocol_vag_get_key(key_index + 1);
-    if(!key) {
-        return false;
-    }
-    aut64_encrypt(*key, block);
-    return true;
-}
-
-static uint8_t vag_get_dispatch_byte(uint8_t btn, uint8_t vag_type) {
-    if(vag_type == 1 || vag_type == 2) {
-        switch(btn) {
-        case 0x20:
-        case 2:
-            return 0x2A;
-        case 0x40:
-        case 4:
-            return 0x46;
-        case 0x10:
-        case 1:
-            return 0x1C;
-        default:
-            return 0x2A;
-        }
-    } else {
-        switch(btn) {
-        case 0x20:
-        case 2:
-            return 0x2B;
-        case 0x40:
-        case 4:
-            return 0x47;
-        case 0x10:
-        case 1:
-            return 0x1D;
-        default:
-            return 0x2B;
-        }
-    }
-}
-
-static uint8_t vag_btn_to_byte(uint8_t btn, uint8_t vag_type) {
-    if(vag_type == 1) {
-        return btn;
-    } else {
-        switch(btn) {
-        case 0x1:
-            return 0x10;
-        case 0x2:
-            return 0x20;
-        case 0x4:
-            return 0x40;
-        default:
-            return btn;
-        }
-    }
-}
-
-static void vag_encoder_build_type1(SubGhzProtocolEncoderVAG* instance) {
-    size_t index = 0;
-    LevelDuration* upload = instance->upload;
-
-    uint8_t btn_byte = vag_btn_to_byte(instance->btn, 1);
-    uint8_t dispatch = vag_get_dispatch_byte(btn_byte, 1);
-    instance->dispatch_byte = dispatch;
-
-    uint8_t block[8];
-    uint8_t type_byte = (uint8_t)(instance->key1_high >> 24);
-
-    block[0] = (uint8_t)(instance->serial >> 24);
-    block[1] = (uint8_t)(instance->serial >> 16);
-    block[2] = (uint8_t)(instance->serial >> 8);
-    block[3] = (uint8_t)(instance->serial);
-
-    block[4] = (uint8_t)(instance->cnt);
-    block[5] = (uint8_t)(instance->cnt >> 8);
-    block[6] = (uint8_t)(instance->cnt >> 16);
-
-    block[7] = btn_byte;
-
-    int key_idx = (instance->key_idx != 0xFF) ? instance->key_idx : 0;
-
-    if(!vag_aut64_encrypt(block, key_idx)) {
-        instance->size_upload = 0;
-        return;
-    }
-
-    instance->key1_high =
-        ((uint32_t)type_byte << 24) | ((uint32_t)block[0] << 16) | ((uint32_t)block[1] << 8) |
-        (uint32_t)block[2];
-    instance->key1_low = ((uint32_t)block[3] << 24) | ((uint32_t)block[4] << 16) |
-                         ((uint32_t)block[5] << 8) | (uint32_t)block[6];
-    uint32_t key2_upper = ((uint32_t)(block[7] & 0xFF) << 8);
-    uint32_t key2_lower = (uint32_t)(dispatch & 0xFF);
-    instance->key2_low = (key2_upper | key2_lower) & 0xFFFF;
-    instance->key2_high = 0;
-
-    for(int i = 0; i < 220; i++) {
-        upload[index++] = level_duration_make(true, 300);
-        upload[index++] = level_duration_make(false, 300);
-    }
-    upload[index++] = level_duration_make(false, 300);
-    upload[index++] = level_duration_make(true, 300);
-
-    uint16_t prefix = 0xAF3F;
-    for(int i = 15; i >= 0; i--) {
-        bool bit = (prefix >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    uint64_t key1 = ((uint64_t)instance->key1_high << 32) | instance->key1_low;
-    uint64_t key1_inv = ~key1;
-
-    for(int i = 63; i >= 0; i--) {
-        bool bit = (key1_inv >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    uint16_t key2 = (uint16_t)(instance->key2_low & 0xFFFF);
-    uint16_t key2_inv = ~key2;
-
-    for(int i = 15; i >= 0; i--) {
-        bool bit = (key2_inv >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    upload[index++] = level_duration_make(false, 6000);
-
-    instance->size_upload = index;
-}
-
-static void vag_encoder_build_type2(SubGhzProtocolEncoderVAG* instance) {
-    size_t index = 0;
-    LevelDuration* upload = instance->upload;
-
-    uint8_t btn_byte = vag_btn_to_byte(instance->btn, 2);
-    uint8_t dispatch = vag_get_dispatch_byte(btn_byte, 2);
-    instance->dispatch_byte = dispatch;
-
-    uint8_t type_byte = (uint8_t)(instance->key1_high >> 24);
-
-    uint8_t block[8];
-    block[0] = (uint8_t)(instance->serial >> 24);
-    block[1] = (uint8_t)(instance->serial >> 16);
-    block[2] = (uint8_t)(instance->serial >> 8);
-    block[3] = (uint8_t)(instance->serial);
-
-    block[4] = (uint8_t)(instance->cnt);
-    block[5] = (uint8_t)(instance->cnt >> 8);
-    block[6] = (uint8_t)(instance->cnt >> 16);
-
-    block[7] = btn_byte;
-
-    uint32_t v0 = ((uint32_t)block[0] << 24) | ((uint32_t)block[1] << 16) |
-                  ((uint32_t)block[2] << 8) | (uint32_t)block[3];
-    uint32_t v1 = ((uint32_t)block[4] << 24) | ((uint32_t)block[5] << 16) |
-                  ((uint32_t)block[6] << 8) | (uint32_t)block[7];
-
-    vag_tea_encrypt(&v0, &v1, vag_tea_key_schedule);
-
-    block[0] = (uint8_t)(v0 >> 24);
-    block[1] = (uint8_t)(v0 >> 16);
-    block[2] = (uint8_t)(v0 >> 8);
-    block[3] = (uint8_t)(v0);
-    block[4] = (uint8_t)(v1 >> 24);
-    block[5] = (uint8_t)(v1 >> 16);
-    block[6] = (uint8_t)(v1 >> 8);
-    block[7] = (uint8_t)(v1);
-
-    instance->key1_high =
-        ((uint32_t)type_byte << 24) | ((uint32_t)block[0] << 16) | ((uint32_t)block[1] << 8) |
-        (uint32_t)block[2];
-    instance->key1_low = ((uint32_t)block[3] << 24) | ((uint32_t)block[4] << 16) |
-                         ((uint32_t)block[5] << 8) | (uint32_t)block[6];
-    uint32_t key2_upper = ((uint32_t)(block[7] & 0xFF) << 8);
-    uint32_t key2_lower = (uint32_t)(dispatch & 0xFF);
-    instance->key2_low = (key2_upper | key2_lower) & 0xFFFF;
-    instance->key2_high = 0;
-
-    for(int i = 0; i < 220; i++) {
-        upload[index++] = level_duration_make(true, 300);
-        upload[index++] = level_duration_make(false, 300);
-    }
-    upload[index++] = level_duration_make(false, 300);
-    upload[index++] = level_duration_make(true, 300);
-
-    uint16_t prefix = 0xAF1C;
-    for(int i = 15; i >= 0; i--) {
-        bool bit = (prefix >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    uint64_t key1 = ((uint64_t)instance->key1_high << 32) | instance->key1_low;
-    uint64_t key1_inv = ~key1;
-
-    for(int i = 63; i >= 0; i--) {
-        bool bit = (key1_inv >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    uint16_t key2 = (uint16_t)(instance->key2_low & 0xFFFF);
-    uint16_t key2_inv = ~key2;
-
-    for(int i = 15; i >= 0; i--) {
-        bool bit = (key2_inv >> i) & 1;
-        if(bit) {
-            upload[index++] = level_duration_make(true, 300);
-            upload[index++] = level_duration_make(false, 300);
-        } else {
-            upload[index++] = level_duration_make(false, 300);
-            upload[index++] = level_duration_make(true, 300);
-        }
-    }
-
-    upload[index++] = level_duration_make(false, 6000);
-
-    instance->size_upload = index;
-}
-
-static void vag_encoder_build_type3_4(SubGhzProtocolEncoderVAG* instance) {
-    size_t index = 0;
-    LevelDuration* upload = instance->upload;
-
-    uint8_t btn_byte = vag_btn_to_byte(instance->btn, instance->vag_type);
-    uint8_t dispatch = vag_get_dispatch_byte(btn_byte, instance->vag_type);
-    instance->dispatch_byte = dispatch;
-
-    uint8_t type_byte = (uint8_t)(instance->key1_high >> 24);
-
-    uint8_t block[8];
-    block[0] = (uint8_t)(instance->serial >> 24);
-    block[1] = (uint8_t)(instance->serial >> 16);
-    block[2] = (uint8_t)(instance->serial >> 8);
-    block[3] = (uint8_t)(instance->serial);
-    block[4] = (uint8_t)(instance->cnt);
-    block[5] = (uint8_t)(instance->cnt >> 8);
-    block[6] = (uint8_t)(instance->cnt >> 16);
-    block[7] = btn_byte;
-
-    int key_idx;
-    if(instance->key_idx != 0xFF) {
-        key_idx = instance->key_idx;
-    } else {
-        key_idx = (instance->vag_type == 4) ? 2 : 1;
-    }
-
-    if(!vag_aut64_encrypt(block, key_idx)) {
-        instance->size_upload = 0;
-        return;
-    }
-
-    instance->key1_high =
-        ((uint32_t)type_byte << 24) | ((uint32_t)block[0] << 16) | ((uint32_t)block[1] << 8) |
-        (uint32_t)block[2];
-    instance->key1_low = ((uint32_t)block[3] << 24) | ((uint32_t)block[4] << 16) |
-                         ((uint32_t)block[5] << 8) | (uint32_t)block[6];
-    uint32_t key2_upper = ((uint32_t)(block[7] & 0xFF) << 8);
-    uint32_t key2_lower = (uint32_t)(dispatch & 0xFF);
-    instance->key2_low = (key2_upper | key2_lower) & 0xFFFF;
-    instance->key2_high = 0;
-
-    uint64_t key1 = ((uint64_t)instance->key1_high << 32) | instance->key1_low;
-    uint16_t key2 = (uint16_t)(instance->key2_low & 0xFFFF);
-
-    for(int repeat = 0; repeat < 2; repeat++) {
-        for(int i = 0; i < 45; i++) {
-            upload[index++] = level_duration_make(true, 500);
-            upload[index++] = level_duration_make(false, 500);
-        }
-
-        upload[index++] = level_duration_make(true, 1000);
-        upload[index++] = level_duration_make(false, 500);
-
-        for(int i = 0; i < 3; i++) {
-            upload[index++] = level_duration_make(true, 750);
-            upload[index++] = level_duration_make(false, 750);
-        }
-
-        for(int i = 63; i >= 0; i--) {
-            bool bit = (key1 >> i) & 1;
-            if(bit) {
-                upload[index++] = level_duration_make(true, 500);
-                upload[index++] = level_duration_make(false, 500);
-            } else {
-                upload[index++] = level_duration_make(false, 500);
-                upload[index++] = level_duration_make(true, 500);
-            }
-        }
-
-        for(int i = 15; i >= 0; i--) {
-            bool bit = (key2 >> i) & 1;
-            if(bit) {
-                upload[index++] = level_duration_make(true, 500);
-                upload[index++] = level_duration_make(false, 500);
-            } else {
-                upload[index++] = level_duration_make(false, 500);
-                upload[index++] = level_duration_make(true, 500);
-            }
-        }
-
-        upload[index++] = level_duration_make(false, 10000);
-    }
-
-    instance->size_upload = index;
-}
-
 void subghz_protocol_decoder_vag_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderVAG* instance = context;
-
+    // Detect/decode split (FoxFW2.0 v2.1): AUT64 decrypt uses the runtime-loaded
+    // key table, so it stays internal; the SD plugin only formats.
     if(!instance->decrypted && instance->data_count_bit >= 80) {
         vag_parse_data(instance);
     }
-
-    uint64_t key1 = ((uint64_t)instance->key1_high << 32) | instance->key1_low;
-    uint16_t key2 = (uint16_t)(instance->key2_low & 0xFFFF);
-
-    uint8_t type_byte = (uint8_t)(instance->key1_high >> 24);
-    const char* vehicle_name;
-    switch(type_byte) {
-    case 0x00:
-        vehicle_name = "VAG NEW";
-        break;
-    case 0xC0:
-        vehicle_name = "VAG OLD";
-        break;
-    case 0xC1:
-        vehicle_name = "AUDI";
-        break;
-    case 0xC2:
-        vehicle_name = "SEAT";
-        break;
-    case 0xC3:
-        vehicle_name = "SKODA";
-        break;
-    default:
-        vehicle_name = "VAG GEN";
-        break;
-    }
-
-    if(instance->decrypted) {
-        furi_string_cat_printf(
-            output,
-            "%s %db\r\n"
-            "Key1:%08lX%08lX\r\n"
-            "Key2:%04X KeyIdx:%d\r\n"
-            "Ser:%08lX Cnt:%06lX\r\n"
-            "Btn:[%s]",
-            vehicle_name,
-            instance->data_count_bit,
-            (unsigned long)(key1 >> 32),
-            (unsigned long)(key1 & 0xFFFFFFFF),
-            key2,
-            instance->key_idx,
-            (unsigned long)instance->serial,
-            (unsigned long)instance->cnt,
-            vag_button_name(instance->btn));
-    } else {
-        furi_string_cat_printf(
-            output,
-            "%s %dbit\r\n"
-            "Key1:%08lX%08lX\r\n"
-            "Key2:%04X (corrupted)\r\n",
-            vehicle_name,
-            instance->data_count_bit,
-            (unsigned long)(key1 >> 32),
-            (unsigned long)(key1 & 0xFFFFFFFF),
-            key2);
-    }
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
 
-void* subghz_protocol_encoder_vag_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
 
-    SubGhzProtocolEncoderVAG* instance = malloc(sizeof(SubGhzProtocolEncoderVAG));
-    instance->base.protocol = &subghz_protocol_vag;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->upload = malloc(VAG_ENCODER_UPLOAD_MAX_SIZE * sizeof(LevelDuration));
-    instance->size_upload = 0;
-    instance->repeat = 1;
-    instance->front = 0;
-    instance->is_running = false;
-
-    instance->key1_low = 0;
-    instance->key1_high = 0;
-    instance->key2_low = 0;
-    instance->key2_high = 0;
-    instance->serial = 0;
-    instance->cnt = 0;
-    instance->vag_type = 0;
-    instance->btn = 0;
-    instance->dispatch_byte = 0;
-    instance->key_idx = 0xFF;
-
-    protocol_vag_load_keys();
-
-    return instance;
-}
-
-void subghz_protocol_encoder_vag_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderVAG* instance = context;
-    if(instance->upload) {
-        free(instance->upload);
-    }
-    free(instance);
-}
-
-void subghz_protocol_encoder_vag_stop(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderVAG* instance = context;
-    instance->is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_vag_yield(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderVAG* instance = context;
-
-    if(!instance->is_running || instance->repeat == 0) {
-        instance->is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->upload[instance->front];
-    instance->front++;
-
-    if(instance->front >= instance->size_upload) {
-        instance->front = 0;
-        if(!subghz_block_generic_global.endless_tx) instance->repeat--;
-    }
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_vag_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderVAG* instance = context;
-
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        uint64_t key1 = instance->generic.data;
-        instance->key1_low = (uint32_t)key1;
-        instance->key1_high = (uint32_t)(key1 >> 32);
-
-        uint8_t key2_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-        flipper_format_rewind(flipper_format);
-        if(!flipper_format_read_hex(flipper_format, "Key2", key2_bytes, 8)) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        uint16_t key2_16bit = ((uint16_t)key2_bytes[6] << 8) | (uint16_t)key2_bytes[7];
-        instance->key2_low = (uint32_t)key2_16bit & 0xFFFF;
-        instance->key2_high = 0;
-
-        uint32_t type = 0;
-        flipper_format_rewind(flipper_format);
-        if(!flipper_format_read_uint32(flipper_format, "Type", &type, 1)) {
-            type = 0;
-        }
-        instance->vag_type = (uint8_t)type;
-
-        uint32_t file_key_idx = 0xFF;
-        flipper_format_rewind(flipper_format);
-        bool has_key_idx = flipper_format_read_uint32(flipper_format, "KeyIdx", &file_key_idx, 1);
-        instance->key_idx = has_key_idx ? (uint8_t)file_key_idx : 0xFF;
-
-        SubGhzProtocolDecoderVAG decoder;
-        memset(&decoder, 0, sizeof(decoder));
-        decoder.key1_low = instance->key1_low;
-        decoder.key1_high = instance->key1_high;
-        decoder.key2_low = instance->key2_low;
-        decoder.key2_high = instance->key2_high;
-        decoder.vag_type = instance->vag_type;
-        decoder.data_count_bit = 80;
-        decoder.key_idx = instance->key_idx;
-        vag_parse_data(&decoder);
-
-        if(decoder.decrypted) {
-            instance->serial = decoder.serial;
-            instance->cnt = decoder.cnt;
-            instance->btn = decoder.btn;
-            if(instance->key_idx == 0xFF) {
-                instance->key_idx = decoder.key_idx;
-            }
-        } else {
-            instance->serial = 0;
-            instance->cnt = 0;
-            instance->btn = 0x20;
-        }
-
-        if(subghz_custom_btn_get_original() == 0) {
-            subghz_custom_btn_set_original(vag_btn_to_custom(instance->btn));
-        }
-        subghz_custom_btn_set_max(4);
-
-        uint8_t selected_custom;
-        if(subghz_custom_btn_get() == SUBGHZ_CUSTOM_BTN_OK) {
-            selected_custom = subghz_custom_btn_get_original();
-        } else {
-            selected_custom = subghz_custom_btn_get();
-        }
-
-        uint8_t new_btn = vag_custom_to_btn(selected_custom, instance->btn);
-        instance->btn = new_btn;
-
-        uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-        instance->cnt = (instance->cnt + mult) & 0xFFFFFF;
-
-        uint8_t type_byte = (uint8_t)(instance->key1_high >> 24);
-        if(instance->vag_type == 1 && type_byte == 0x00) {
-            instance->vag_type = 2;
-        }
-
-        switch(instance->vag_type) {
-        case 1:
-            vag_encoder_build_type1(instance);
-            break;
-        case 2:
-            vag_encoder_build_type2(instance);
-            break;
-        case 3:
-        case 4:
-            vag_encoder_build_type3_4(instance);
-            break;
-        default:
-            instance->vag_type = 1;
-            vag_encoder_build_type1(instance);
-            break;
-        }
-
-        if(instance->size_upload == 0) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-
-        flipper_format_rewind(flipper_format);
-        uint8_t key1_bytes[8];
-        key1_bytes[0] = (uint8_t)(instance->key1_high >> 24);
-        key1_bytes[1] = (uint8_t)(instance->key1_high >> 16);
-        key1_bytes[2] = (uint8_t)(instance->key1_high >> 8);
-        key1_bytes[3] = (uint8_t)(instance->key1_high);
-        key1_bytes[4] = (uint8_t)(instance->key1_low >> 24);
-        key1_bytes[5] = (uint8_t)(instance->key1_low >> 16);
-        key1_bytes[6] = (uint8_t)(instance->key1_low >> 8);
-        key1_bytes[7] = (uint8_t)(instance->key1_low);
-        if(!flipper_format_update_hex(flipper_format, "Key", key1_bytes, 8)) {
-        }
-
-        flipper_format_rewind(flipper_format);
-        instance->key2_high = 0;
-        uint16_t key2_write = (uint16_t)(instance->key2_low & 0xFFFF);
-        instance->key2_low = (uint32_t)key2_write;
-        uint8_t key2_write_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-        key2_write_bytes[6] = (uint8_t)((key2_write >> 8) & 0xFF);
-        key2_write_bytes[7] = (uint8_t)(key2_write & 0xFF);
-        if(!flipper_format_update_hex(flipper_format, "Key2", key2_write_bytes, 8)) {
-        }
-
-        if(instance->key_idx != 0xFF) {
-            flipper_format_rewind(flipper_format);
-            uint32_t key_idx32 = instance->key_idx;
-            if(!flipper_format_update_uint32(flipper_format, "KeyIdx", &key_idx32, 1)) {
-                flipper_format_rewind(flipper_format);
-                flipper_format_insert_or_update_uint32(flipper_format, "KeyIdx", &key_idx32, 1);
-            }
-        }
-
-        flipper_format_rewind(flipper_format);
-        uint32_t type32 = instance->vag_type;
-        if(!flipper_format_update_uint32(flipper_format, "Type", &type32, 1)) {
-            flipper_format_rewind(flipper_format);
-            flipper_format_insert_or_update_uint32(flipper_format, "Type", &type32, 1);
-        }
-
-        instance->repeat = 1;
-        instance->front = 0;
-        instance->is_running = true;
-
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}

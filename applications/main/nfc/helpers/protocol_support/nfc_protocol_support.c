@@ -97,6 +97,7 @@ const char* nfc_protocol_support_plugin_names[NfcProtocolNum] = {
     [NfcProtocolNtag4xx] = "ntag4xx",
     [NfcProtocolType4Tag] = "type_4_tag",
     [NfcProtocolEmv] = "emv",
+    [NfcProtocolTexkom] = "texkom",
 
 };
 
@@ -572,7 +573,7 @@ static void nfc_protocol_support_scene_read_success_on_enter(NfcApp* instance) {
     FuriString* temp_str = furi_string_alloc();
     if(nfc_supported_cards_parse(instance->nfc_supported_cards, instance->nfc_device, temp_str)) {
         widget_add_text_scroll_element(
-            instance->widget, 0, 0, 128, 52, furi_string_get_cstr(temp_str));
+            instance->widget, 0, 0, 128, 47, furi_string_get_cstr(temp_str));
     } else {
         const NfcProtocol protocol = nfc_device_get_protocol(instance->nfc_device);
         nfc_protocol_support_get(protocol, instance)->scene_read_success.on_enter(instance);

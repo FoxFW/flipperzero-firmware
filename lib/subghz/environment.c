@@ -37,7 +37,7 @@ void subghz_environment_free(SubGhzEnvironment* instance) {
 bool subghz_environment_load_keystore(SubGhzEnvironment* instance, const char* filename) {
     furi_check(instance);
 
-    return subghz_keystore_load(instance->keystore, filename);
+    return subghz_keystore_attach_file(instance->keystore, filename);
 }
 
 SubGhzKeystore* subghz_environment_get_keystore(SubGhzEnvironment* instance) {

@@ -133,6 +133,7 @@ void nfc_cli_soft_lock(NfcApp* instance) {
     if(instance->cli_sessions_soft_locked) return;
 
     FURI_LOG_I("Nfc", "Read entry: detaching USB/CLI + suppressing screen stream to free RAM");
+    rpc_gui_screen_stream_set_placeholder_label("NFC");
     rpc_gui_screen_stream_set_suppressed(true);
 
     CliVcp* cli_vcp = furi_record_open(RECORD_CLI_VCP);
@@ -158,6 +159,7 @@ void nfc_cli_soft_unlock(NfcApp* instance) {
     furi_record_close(RECORD_CLI_VCP);
 
     rpc_gui_screen_stream_set_suppressed(false);
+    rpc_gui_screen_stream_set_placeholder_label(NULL);
     instance->cli_sessions_soft_locked = false;
     FURI_LOG_I("Nfc", "Read exit: restored USB/CLI + screen stream");
 }

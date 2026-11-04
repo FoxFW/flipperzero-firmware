@@ -1,5 +1,6 @@
 // scenes/protopirate_scene_timing_tuner.c
 #include "../protopirate_app_i.h"
+#include "../protopirate_lowram_guard.h"
 #ifdef ENABLE_TIMING_TUNER_SCENE
 
 void protopirate_scene_timing_tuner_on_enter(void* context) {
@@ -14,6 +15,8 @@ void protopirate_scene_timing_tuner_on_enter(void* context) {
         scene_manager_previous_scene(app->scene_manager);
         return;
     }
+
+    protopirate_lowram_mitigate(PROTOPIRATE_LOWRAM_THRESHOLD);
 
     app->running_plugin.shared_plugin->set_host_api(&protopirate_shared_plugin_host_api);
     app->running_plugin.shared_plugin->on_enter(app);
@@ -37,6 +40,8 @@ bool protopirate_scene_timing_tuner_on_event(void* context, SceneManagerEvent ev
 void protopirate_scene_timing_tuner_on_exit(void* context) {
     if(!context) return;
     ProtoPirateApp* app = context;
+
+    protopirate_lowram_softlock_release();
 
     if(app->running_plugin.shared_plugin) {
         if(app->running_plugin.shared_plugin->on_exit) {

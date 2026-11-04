@@ -1,4 +1,5 @@
 #include "plugin_manager.h"
+#include <string.h>
 
 #include <loader/firmware_api/firmware_api.h>
 #include <storage/storage.h>
@@ -108,7 +109,10 @@ PluginManagerError plugin_manager_load_single(PluginManager* manager, const char
     return error;
 }
 
-PluginManagerError plugin_manager_load_all(PluginManager* manager, const char* path) {
+PluginManagerError plugin_manager_load_all_ex(
+    PluginManager* manager,
+    const char* path,
+    const char* name_prefix) {
     furi_check(manager);
     File* directory = storage_file_alloc(manager->storage);
     char file_name_buffer[256];
@@ -128,11 +132,20 @@ PluginManagerError plugin_manager_load_all(PluginManager* manager, const char* p
                 continue;
             }
 
+            if(name_prefix && strncmp(file_name_buffer, name_prefix, strlen(name_prefix)) != 0) {
+                continue;
+            }
+
             path_concat(path, file_name_buffer, file_name);
             FURI_LOG_D(TAG, "Loading %s", furi_string_get_cstr(file_name));
             PluginManagerError error =
                 plugin_manager_load_single(manager, furi_string_get_cstr(file_name));
 
+            if(error == PluginManagerErrorApplicationIdMismatch ||
+               error == PluginManagerErrorAPIVersionMismatch) {
+                FURI_LOG_D(TAG, "Skipping %s (foreign plugin)", furi_string_get_cstr(file_name));
+                continue;
+            }
             if(error != PluginManagerErrorNone) {
                 FURI_LOG_E(TAG, "Failed to load %s", furi_string_get_cstr(file_name));
                 break;
@@ -164,4 +177,8 @@ const void* plugin_manager_get_ep(PluginManager* manager, uint32_t index) {
     const FlipperAppPluginDescriptor* lib_descr = plugin_manager_get(manager, index);
     furi_check(lib_descr);
     return lib_descr->entry_point;
+}
+
+PluginManagerError plugin_manager_load_all(PluginManager* manager, const char* path) {
+    return plugin_manager_load_all_ex(manager, path, NULL);
 }

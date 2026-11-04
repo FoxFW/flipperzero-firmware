@@ -54,3 +54,42 @@ size_t subghz_protocol_blocks_get_upload_from_bit_array(
         subghz_protocol_blocks_get_bit_array(data_array, index_bit - 1), duration);
     return size_upload;
 }
+
+#include "../protocols/base.h"
+#include "generic.h"
+#include <furi.h>
+
+typedef struct {
+    SubGhzProtocolEncoderBase base;
+    SubGhzProtocolBlockEncoder encoder;
+} SubGhzProtocolEncoderGenericView;
+
+void subghz_protocol_encoder_generic_free(void* context) {
+    furi_assert(context);
+    SubGhzProtocolEncoderGenericView* instance = context;
+    free(instance->encoder.upload);
+    free(instance);
+}
+
+void subghz_protocol_encoder_generic_stop(void* context) {
+    furi_assert(context);
+    SubGhzProtocolEncoderGenericView* instance = context;
+    instance->encoder.is_running = false;
+    instance->encoder.front = 0;
+}
+
+LevelDuration subghz_protocol_encoder_generic_yield(void* context) {
+    furi_assert(context);
+    SubGhzProtocolEncoderGenericView* instance = context;
+    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
+       instance->encoder.size_upload == 0) {
+        instance->encoder.is_running = false;
+        return level_duration_reset();
+    }
+    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
+    if(++instance->encoder.front == instance->encoder.size_upload) {
+        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
+        instance->encoder.front = 0;
+    }
+    return ret;
+}

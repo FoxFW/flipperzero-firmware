@@ -78,6 +78,93 @@ static bool gui_redraw_fs(Gui* gui) {
     }
 }
 
+static void gui_draw_desktop_notification(Gui* gui) {
+    if(!gui->desktop_notify_active) return;
+    int reveal = gui->desktop_notify_reveal;
+    if(reveal <= 0) return;
+    if(reveal > GUI_STATUS_BAR_HEIGHT - 1) reveal = GUI_STATUS_BAR_HEIGHT - 1; /* <= 12 */
+
+    Canvas* canvas = gui->canvas;
+    canvas_frame_set(canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);
+
+    /* Erase the covered status-bar strip (rows 1..reveal) to background. The
+     * double border is redrawn after us, so it always stays on top and the
+     * banner appears to slide out from underneath it. */
+    canvas_set_color(canvas, ColorBlack);
+    {
+        /* Soft bottom-left/right corners; top stays square (flush under the border). */
+        const int banner_rad = 3;
+        if((int)reveal >= 2 * banner_rad) {
+            canvas_draw_rbox(canvas, 3, 1, GUI_DISPLAY_WIDTH - 6, (size_t)reveal, banner_rad);
+            canvas_draw_box(canvas, 3, 1, GUI_DISPLAY_WIDTH - 6, (size_t)banner_rad);
+        } else {
+            canvas_draw_box(canvas, 3, 1, GUI_DISPLAY_WIDTH - 6, (size_t)reveal);
+        }
+    }
+
+    /* Text (+ optional info glyph). Baseline rides the revealed edge so the text
+     * slides down with the banner and is masked by the border while still high. */
+    canvas_set_color(canvas, ColorWhite);
+    canvas_set_font(canvas, FontPrimary);
+    const char* text = gui->desktop_notify_text;
+    int tw = (int)canvas_string_width(canvas, text);
+    int icon_w = 0;
+    if(gui->desktop_notify_icon == GuiDesktopNotifyIconInfo)
+        icon_w = 10; /* 7px glyph + 3px gap */
+    else if(gui->desktop_notify_icon == GuiDesktopNotifyIconWarning)
+        icon_w = 12; /* 9px glyph + 3px gap */
+    int x = (GUI_DISPLAY_WIDTH - (icon_w + tw)) / 2;
+    if(x < 4) x = 4;
+    int baseline = reveal - 1;
+    if(gui->desktop_notify_icon == GuiDesktopNotifyIconInfo) {
+        /* (i) in a circle */
+        int cx = x + 3;
+        int cy = baseline - 4;
+        canvas_draw_circle(canvas, cx, cy, 3);
+        canvas_draw_dot(canvas, cx, cy - 1);
+        canvas_draw_line(canvas, cx, cy + 1, cx, cy + 2);
+        x += icon_w;
+    } else if(gui->desktop_notify_icon == GuiDesktopNotifyIconWarning) {
+        /* (!) in an upward triangle */
+        int cx = x + 4;
+        int b = baseline;
+        canvas_draw_line(canvas, cx, b - 8, cx - 4, b);
+        canvas_draw_line(canvas, cx, b - 8, cx + 4, b);
+        canvas_draw_line(canvas, cx - 4, b, cx + 4, b);
+        canvas_draw_line(canvas, cx, b - 5, cx, b - 3); /* stem */
+        canvas_draw_dot(canvas, cx, b - 1);             /* dot */
+        x += icon_w;
+    }
+    canvas_draw_str(canvas, x, baseline, text);
+}
+
+void gui_desktop_notification_set(
+    Gui* gui,
+    const char* text,
+    int8_t reveal,
+    GuiDesktopNotifyIcon icon) {
+    furi_check(gui);
+    gui_lock(gui);
+    gui->desktop_notify_active = true;
+    gui->desktop_notify_reveal = reveal;
+    gui->desktop_notify_icon = icon;
+    if(text) {
+        strncpy(gui->desktop_notify_text, text, sizeof(gui->desktop_notify_text) - 1);
+        gui->desktop_notify_text[sizeof(gui->desktop_notify_text) - 1] = '\0';
+    }
+    gui_unlock(gui);
+    gui_update(gui);
+}
+
+void gui_desktop_notification_clear(Gui* gui) {
+    furi_check(gui);
+    gui_lock(gui);
+    gui->desktop_notify_active = false;
+    gui->desktop_notify_reveal = 0;
+    gui_unlock(gui);
+    gui_update(gui);
+}
+
 static void gui_redraw_status_bar(Gui* gui, bool need_attention) {
     ViewPortArray_it_t it;
     uint8_t left_used = 0;
@@ -254,6 +341,7 @@ static void gui_redraw(Gui* gui) {
                 if(!gui->hide_status_bar) {
                     gui_redraw_status_bar(gui, false);
                 }
+                gui_draw_desktop_notification(gui);
                 canvas_frame_set(gui->canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);
                 canvas_set_color(gui->canvas, ColorBlack);
                 canvas_draw_frame(gui->canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);

@@ -31,7 +31,12 @@ typedef struct {
     bool btn_down_vis;
     bool btn_left_vis;
     bool btn_right_vis;
+    bool btn_up_active;
+    bool btn_down_active;
+    bool btn_left_active;
+    bool btn_right_active;
     bool labels_ready;
+    uint8_t send_progress;
 } SubGhzViewTransmitterModel;
 
 void subghz_view_transmitter_set_callback(
@@ -76,6 +81,17 @@ void subghz_view_transmitter_set_radio_device_type(
         true);
 }
 
+void subghz_view_transmitter_set_send_progress(
+    SubGhzViewTransmitter* subghz_transmitter,
+    uint8_t progress) {
+    furi_assert(subghz_transmitter);
+    with_view_model(
+        subghz_transmitter->view,
+        SubGhzViewTransmitterModel * model,
+        { model->send_progress = progress; },
+        true);
+}
+
 static void txv_first_line(const char* s, char* d, size_t n) {
     size_t i = 0;
     while(s[i] && s[i] != '\n' && i < n-1) { d[i]=s[i]; i++; }
@@ -114,6 +130,17 @@ static void txv_btn_box(
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str_aligned(canvas, x+w/2, y+h/2+1, AlignCenter, AlignCenter, label);
     canvas_set_color(canvas, ColorBlack);
+}
+
+/* Same framed button, but with a centered d-pad arrow ICON instead of text -- used for directions
+ * that have no custom label (inert). iw/ih are the icon's pixel size (ButtonUp/Down 7x4, Left/Right
+ * 4x7) so it centers without pulling in icon_get_width. */
+static void txv_btn_box_icon(
+    Canvas* canvas, uint8_t x, uint8_t y, uint8_t w, uint8_t h,
+    const Icon* icon, uint8_t iw, uint8_t ih) {
+    canvas_set_color(canvas, ColorBlack);
+    canvas_draw_rframe(canvas, x, y, w, h, 3);
+    canvas_draw_icon(canvas, (uint8_t)(x + (w - iw) / 2), (uint8_t)(y + (h - ih) / 2), icon);
 }
 
 void subghz_view_transmitter_draw(Canvas* canvas, SubGhzViewTransmitterModel* model) {
@@ -160,38 +187,42 @@ void subghz_view_transmitter_draw(Canvas* canvas, SubGhzViewTransmitterModel* mo
         snprintf(line3, sizeof(line3), "F:%-10s %s", freq, mod);
     canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignTop, line3);
 
-    if(has_custom) {
+    {
+        /* Always draw the full d-pad: centre SEND (or the protocol's custom centre
+         * label), and all four directions as inert arrow ICONS -- replaced by a
+         * text label only where the protocol defines one (Lock/Unlock/Trunk...). */
         const uint8_t bw=34, bh=9;
         const uint8_t cx=47, lx=4, rx=90;
-        const uint8_t row1=31, row2=43, row3=55;
+        const uint8_t row1=31, row2=42, row3=53;
+        bool ready = has_custom && model->labels_ready;
 
-        const char* clabel = model->labels_ready ? model->btn_center : "SEND";
-        const char* ulabel = model->labels_ready ? model->btn_up    : "UP";
-        const char* dlabel = model->labels_ready ? model->btn_down  : "DOWN";
-        const char* llabel = model->labels_ready ? model->btn_left  : "LEFT";
-        const char* rlabel = model->labels_ready ? model->btn_right : "RIGHT";
+        txv_btn_box(canvas, cx, row2, bw, bh, ready ? model->btn_center : "SEND", true);
 
-        bool up_vis = !model->labels_ready || model->btn_up_vis;
-        bool dn_vis = !model->labels_ready || model->btn_down_vis;
-        bool lt_vis = !model->labels_ready || model->btn_left_vis;
-        bool rt_vis = !model->labels_ready || model->btn_right_vis;
+        if(ready && model->btn_up_active)
+            txv_btn_box(canvas, cx, row1, bw, bh, model->btn_up, false);
+        else
+            txv_btn_box_icon(canvas, cx, row1, bw, bh, &I_ButtonUp_7x4, 7, 4);
 
-        if(up_vis) txv_btn_box(canvas, cx, row1, bw, bh, ulabel, false);
-        if(lt_vis) txv_btn_box(canvas, lx, row2, bw, bh, llabel, false);
-        txv_btn_box(canvas, cx, row2, bw, bh, clabel, true);
-        if(rt_vis) txv_btn_box(canvas, rx, row2, bw, bh, rlabel, false);
-        if(dn_vis) txv_btn_box(canvas, cx, row3, bw, bh, dlabel, false);
+        if(ready && model->btn_left_active)
+            txv_btn_box(canvas, lx, row2, bw, bh, model->btn_left, false);
+        else
+            txv_btn_box_icon(canvas, lx, row2, bw, bh, &I_ButtonLeft_4x7, 4, 7);
 
-    } else if(model->show_button) {
+        if(ready && model->btn_right_active)
+            txv_btn_box(canvas, rx, row2, bw, bh, model->btn_right, false);
+        else
+            txv_btn_box_icon(canvas, rx, row2, bw, bh, &I_ButtonRight_4x7, 4, 7);
 
-        const uint8_t bw=34, bh=9;
-        const uint8_t cx=47, lx=4, rx=90;
-        const uint8_t row1=31, row2=43, row3=55;
-        txv_btn_box(canvas, cx, row1, bw, bh, "", false);
-        txv_btn_box(canvas, lx, row2, bw, bh, "", false);
-        txv_btn_box(canvas, cx, row2, bw, bh, "SEND", true);
-        txv_btn_box(canvas, rx, row2, bw, bh, "", false);
-        txv_btn_box(canvas, cx, row3, bw, bh, "", false);
+        if(ready && model->btn_down_active)
+            txv_btn_box(canvas, cx, row3, bw, bh, model->btn_down, false);
+        else
+            txv_btn_box_icon(canvas, cx, row3, bw, bh, &I_ButtonDown_7x4, 7, 4);
+    }
+
+    if(model->send_progress <= 100) {
+        canvas_set_color(canvas, ColorBlack);
+        uint8_t w = (uint8_t)((uint16_t)128 * model->send_progress / 100);
+        if(w > 0) canvas_draw_box(canvas, 0, 63, w, 1);
     }
 
     if(model->draw_temp_button) {
@@ -222,6 +253,13 @@ bool subghz_view_transmitter_input(InputEvent* event, void* context) {
         return false;
     }
 
+    if(event->key == InputKeyBack && event->type == InputTypeShort) {
+        subghz_transmitter->callback(
+            SubGhzCustomEventViewTransmitterBack, subghz_transmitter->context);
+        return true;
+    }
+
+    bool dir_up_v = false, dir_dn_v = false, dir_lt_v = false, dir_rt_v = false;
     with_view_model(
         subghz_transmitter->view,
         SubGhzViewTransmitterModel * model,
@@ -229,22 +267,26 @@ bool subghz_view_transmitter_input(InputEvent* event, void* context) {
             if(model->show_button) {
                 can_be_sent = true;
             }
+            dir_up_v = model->labels_ready && model->btn_up_active;
+            dir_dn_v = model->labels_ready && model->btn_down_active;
+            dir_lt_v = model->labels_ready && model->btn_left_active;
+            dir_rt_v = model->labels_ready && model->btn_right_active;
         },
         true);
 
     if(can_be_sent) {
 
         if(event->type == InputTypeLong) {
-            if(event->key == InputKeyUp) {
+            if(event->key == InputKeyUp && dir_up_v) {
                 subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_UP);
                 subghz_custom_btn_set_long(true);
-            } else if(event->key == InputKeyDown) {
+            } else if(event->key == InputKeyDown && dir_dn_v) {
                 subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_DOWN);
                 subghz_custom_btn_set_long(true);
-            } else if(event->key == InputKeyLeft) {
+            } else if(event->key == InputKeyLeft && dir_lt_v) {
                 subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_LEFT);
                 subghz_custom_btn_set_long(true);
-            } else if(event->key == InputKeyRight) {
+            } else if(event->key == InputKeyRight && dir_rt_v) {
                 subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_RIGHT);
                 subghz_custom_btn_set_long(true);
             }
@@ -298,15 +340,25 @@ bool subghz_view_transmitter_input(InputEvent* event, void* context) {
 
         if(subghz_custom_btn_is_allowed()) {
             uint8_t temp_btn_id;
+            bool temp_btn_vis;
             if(event->key == InputKeyUp) {
                 temp_btn_id = SUBGHZ_CUSTOM_BTN_UP;
+                temp_btn_vis = dir_up_v;
             } else if(event->key == InputKeyDown) {
                 temp_btn_id = SUBGHZ_CUSTOM_BTN_DOWN;
+                temp_btn_vis = dir_dn_v;
             } else if(event->key == InputKeyLeft) {
                 temp_btn_id = SUBGHZ_CUSTOM_BTN_LEFT;
+                temp_btn_vis = dir_lt_v;
             } else if(event->key == InputKeyRight) {
                 temp_btn_id = SUBGHZ_CUSTOM_BTN_RIGHT;
+                temp_btn_vis = dir_rt_v;
             } else {
+
+                return true;
+            }
+
+            if(!temp_btn_vis) {
 
                 return true;
             }
@@ -345,10 +397,10 @@ bool subghz_view_transmitter_input(InputEvent* event, void* context) {
 void subghz_view_transmitter_set_btn_labels(
     SubGhzViewTransmitter* t,
     const char* center,
-    const char* up,   bool up_vis,
-    const char* down, bool down_vis,
-    const char* left, bool left_vis,
-    const char* right, bool right_vis) {
+    const char* up,   bool up_vis,   bool up_active,
+    const char* down, bool down_vis, bool down_active,
+    const char* left, bool left_vis, bool left_active,
+    const char* right, bool right_vis, bool right_active) {
     furi_assert(t);
     with_view_model(
         t->view,
@@ -363,6 +415,10 @@ void subghz_view_transmitter_set_btn_labels(
             model->btn_down_vis  = down_vis;
             model->btn_left_vis  = left_vis;
             model->btn_right_vis = right_vis;
+            model->btn_up_active    = up_active;
+            model->btn_down_active  = down_active;
+            model->btn_left_active  = left_active;
+            model->btn_right_active = right_active;
             model->labels_ready  = true;
         },
         true);
@@ -375,6 +431,7 @@ void subghz_view_transmitter_reset_labels(SubGhzViewTransmitter* t) {
         SubGhzViewTransmitterModel * model,
         {
             model->labels_ready     = false;
+            model->send_progress    = 255;
             model->draw_temp_button = false;
             furi_string_reset(model->temp_button_id);
         },
@@ -392,16 +449,16 @@ void subghz_view_transmitter_update_direction(
             switch(btn_id) {
             case SUBGHZ_CUSTOM_BTN_UP:
                 snprintf(model->btn_up,    sizeof(model->btn_up),    "%s", label);
-                model->btn_up_vis    = !dup; break;
+                model->btn_up_vis    = !dup; model->btn_up_active    = !dup; break;
             case SUBGHZ_CUSTOM_BTN_DOWN:
                 snprintf(model->btn_down,  sizeof(model->btn_down),  "%s", label);
-                model->btn_down_vis  = !dup; break;
+                model->btn_down_vis  = !dup; model->btn_down_active  = !dup; break;
             case SUBGHZ_CUSTOM_BTN_LEFT:
                 snprintf(model->btn_left,  sizeof(model->btn_left),  "%s", label);
-                model->btn_left_vis  = !dup; break;
+                model->btn_left_vis  = !dup; model->btn_left_active  = !dup; break;
             case SUBGHZ_CUSTOM_BTN_RIGHT:
                 snprintf(model->btn_right, sizeof(model->btn_right), "%s", label);
-                model->btn_right_vis = !dup; break;
+                model->btn_right_vis = !dup; model->btn_right_active = !dup; break;
             default: break;
             }
         },

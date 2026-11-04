@@ -88,6 +88,18 @@ void subghz_file_encoder_worker_get_text_progress(
     furi_string_printf(output, "%03u%%", 100 * (current_offset - buffer_avail) / total_size);
 }
 
+uint8_t subghz_file_encoder_worker_get_progress(SubGhzFileEncoderWorker* instance) {
+    furi_check(instance);
+    Stream* stream = flipper_format_get_raw_stream(instance->flipper_format);
+    size_t total_size = stream_size(stream);
+    if(total_size == 0) return 0;
+    size_t current_offset = stream_tell(stream);
+    size_t buffer_avail = furi_stream_buffer_bytes_available(instance->stream);
+    size_t done = (current_offset > buffer_avail) ? (current_offset - buffer_avail) : 0;
+    uint32_t pct = (uint32_t)(100u * done / total_size);
+    return (pct > 100u) ? 100u : (uint8_t)pct;
+}
+
 LevelDuration subghz_file_encoder_worker_get_level_duration(void* context) {
     furi_assert(context);
     SubGhzFileEncoderWorker* instance = context;
@@ -142,11 +154,12 @@ static int32_t subghz_file_encoder_worker_thread(void* context) {
         if((stream_free_byte / sizeof(int32_t)) >= SUBGHZ_FILE_ENCODER_LOAD) {
             if(stream_read_line(stream, instance->str_data)) {
                 furi_string_trim(instance->str_data);
-                if(!subghz_file_encoder_worker_data_parse(
-                       instance, furi_string_get_cstr(instance->str_data))) {
-                    subghz_file_encoder_worker_add_level_duration(instance, LEVEL_DURATION_RESET);
-                    break;
-                }
+                /* Skip any non-RAW_Data line (e.g. Bit/Key in a combined key+raw
+                   .sub where RAW_Data is appended after the key fields) instead of
+                   stopping; a pure RAW file has only RAW_Data lines and still ends
+                   at EOF below, so its behaviour is unchanged. */
+                subghz_file_encoder_worker_data_parse(
+                    instance, furi_string_get_cstr(instance->str_data));
             } else {
                 subghz_file_encoder_worker_add_level_duration(instance, LEVEL_DURATION_RESET);
                 break;

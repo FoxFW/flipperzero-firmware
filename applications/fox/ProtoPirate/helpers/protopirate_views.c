@@ -6,7 +6,6 @@
 #define TAG "PPViews"
 
 bool protopirate_ensure_widget(ProtoPirateApp* app) {
-    furi_check(app);
     if(app->widget) {
         return true;
     }
@@ -53,7 +52,6 @@ void protopirate_free_text_input(ProtoPirateApp* app) {
 }
 
 bool protopirate_ensure_view_about(ProtoPirateApp* app) {
-    furi_check(app);
     if(app->view_about) {
         return true;
     }
@@ -68,7 +66,6 @@ bool protopirate_ensure_view_about(ProtoPirateApp* app) {
 }
 
 bool protopirate_ensure_receiver_view(ProtoPirateApp* app) {
-    furi_check(app);
     if(app->protopirate_receiver) {
         return true;
     }
@@ -86,19 +83,11 @@ bool protopirate_ensure_receiver_view(ProtoPirateApp* app) {
 }
 
 void protopirate_views_free(ProtoPirateApp* app) {
-    furi_check(app);
-
     if(app->submenu) {
         FURI_LOG_D(TAG, "Removing submenu view");
         view_dispatcher_remove_view(app->view_dispatcher, ProtoPirateViewSubmenu);
         submenu_free(app->submenu);
         app->submenu = NULL;
-    }
-
-    if(app->variable_item_list) {
-        FURI_LOG_D(TAG, "Removing variable_item_list view");
-        view_dispatcher_remove_view(app->view_dispatcher, ProtoPirateViewVariableItemList);
-        app->variable_item_list = NULL;
     }
 
     if(app->view_about) {
@@ -127,14 +116,6 @@ void protopirate_views_free(ProtoPirateApp* app) {
         view_dispatcher_remove_view(app->view_dispatcher, ProtoPirateViewReceiver);
         protopirate_view_receiver_free(app->protopirate_receiver);
         app->protopirate_receiver = NULL;
-    }
-}
-
-void protopirate_variable_item_list_free(ProtoPirateApp* app) {
-    if(app->variable_item_list) {
-        view_dispatcher_remove_view(app->view_dispatcher, ProtoPirateViewVariableItemList);
-        variable_item_list_free(app->variable_item_list);
-        app->variable_item_list = NULL;
     }
 }
 

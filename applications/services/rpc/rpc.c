@@ -412,7 +412,7 @@ void rpc_wait_for_subsystems_ready(void) {
     while(!furi_record_exists(RECORD_STORAGE) || !furi_record_exists(RECORD_GUI) ||
           !furi_record_exists(RECORD_NOTIFICATION) || !furi_record_exists(RECORD_DESKTOP) ||
           !furi_record_exists(RECORD_GPS) || !furi_record_exists(RECORD_NETWORK) ||
-          !furi_record_exists(RECORD_INPUT_EVENTS)) {
+          !furi_record_exists(RECORD_INPUT_EVENTS) || !desktop_boot_is_ready()) {
         furi_delay_ms(10);
     }
 }

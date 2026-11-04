@@ -264,7 +264,7 @@ static void file_browser_cb(void* ctx, uint32_t index) {
         app->script_name,
         (unsigned long)app->script_size,
         app->script_line_count);
-    widget_add_text_scroll_element(app->script_info, 0, 0, 128, 64, info_buf);
+    widget_add_text_scroll_element(app->script_info, 0, 0, 128, 47, info_buf);
 
     widget_add_button_element(
         app->script_info, GuiButtonTypeCenter, "OK", script_info_run_cb, app);

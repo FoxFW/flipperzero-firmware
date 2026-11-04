@@ -1,4 +1,7 @@
 #include "renault_v0.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -173,7 +176,8 @@ typedef struct SubGhzProtocolEncoderRenaultV0 {
     uint8_t tx_button;
     uint8_t preamble_bits;
     uint32_t key2;
-} SubGhzProtocolEncoderRenaultV0;
+} 
+SubGhzProtocolEncoderRenaultV0;
 
 typedef struct {
     uint8_t preamble_pairs;
@@ -183,20 +187,6 @@ typedef struct {
     uint32_t final_low;
 } RenaultV0UploadShape;
 
-static void renault_v0_set_split_bit(uint32_t* low, uint32_t* high, uint8_t bit);
-static uint8_t renault_v0_parity32(uint32_t value);
-static bool renault_v0_type_button_valid(RenaultV0TypeId type_id, uint8_t button);
-static const RenaultV0TypeEntry* renault_v0_find_type_by_checks(
-    uint8_t checksum,
-    uint32_t key2,
-    bool* c1_ok,
-    bool* c2_ok);
-static bool renault_v0_checksum_hi2xor_valid(uint8_t hi2xor);
-static bool renault_v0_button_valid_generic(uint8_t button);
-static bool renault_v0_preamble_bits_valid(uint8_t preamble_bits);
-static uint8_t renault_v0_default_preamble_bits(RenaultV0TypeId type_id);
-static bool renault_v0_type_preamble_bits_valid(RenaultV0TypeId type_id, uint8_t preamble_bits);
-static const char* renault_v0_get_button_name(RenaultV0TypeId type_id, uint8_t button);
 static void renault_v0_parse_fields(uint64_t data, uint32_t* serial, uint8_t* button, uint8_t* counter);
 static void renault_v0_build_key(
     uint32_t serial,
@@ -211,7 +201,6 @@ static bool renault_v0_classify_event_profile(
     uint8_t* event_code);
 static bool renault_v0_classify_event(uint32_t duration, bool level, uint8_t* event_code);
 static bool renault_v0_is_end_burst(bool level, uint32_t duration, uint8_t bit_count);
-static RenaultV0TypeId renault_v0_detect_type(uint8_t checksum, uint32_t key2, uint8_t button);
 static bool renault_v0_classify_frame(uint64_t data, uint32_t key2, RenaultV0DecodeAttempt* attempt);
 static uint8_t renault_v0_checksum(uint64_t data, uint32_t key2);
 static bool renault_v0_model_matches(
@@ -227,55 +216,28 @@ static bool renault_v0_attempt_at_offset(
 static bool renault_v0_confirm_attempt(
     SubGhzProtocolDecoderRenaultV0* instance,
     const RenaultV0DecodeAttempt* attempt);
-static bool renault_v0_get_bit_msb82(uint64_t data, uint32_t key2, uint8_t bit_index);
 static void renault_v0_apply_attempt(
     SubGhzProtocolDecoderRenaultV0* instance,
     const RenaultV0DecodeAttempt* attempt);
 static void renault_v0_decode_candidate(SubGhzProtocolDecoderRenaultV0* instance);
 
-static bool renault_v0_upload_shape_for_type(RenaultV0TypeId type_id, RenaultV0UploadShape* shape);
-static bool
-    renault_v0_upload_shape_for_preamble(uint8_t preamble_bits, RenaultV0UploadShape* shape);
-static uint32_t renault_v0_upload_te_for_preamble(uint8_t preamble_bits);
-static bool renault_v0_emit(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    size_t* index,
-    bool level,
-    uint32_t duration);
-static bool renault_v0_emit_decoded_bit(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    size_t* index,
-    uint8_t* state,
-    uint32_t te_short,
-    bool bit);
-static bool renault_v0_build_upload(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    RenaultV0TypeId type_id,
-    uint8_t preamble_bits);
 
-static void subghz_protocol_decoder_renault_v0_free(void* context) {
-    furi_assert(context);
-    free(context);
-}
+
 
 const SubGhzProtocolDecoder subghz_protocol_renault_v0_decoder = {
     .alloc = subghz_protocol_decoder_renault_v0_alloc,
-    .free = subghz_protocol_decoder_renault_v0_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_renault_v0_feed,
     .reset = subghz_protocol_decoder_renault_v0_reset,
     .get_hash_data = subghz_protocol_decoder_renault_v0_get_hash_data,
-    .get_string = subghz_protocol_decoder_renault_v0_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
     .serialize = subghz_protocol_decoder_renault_v0_serialize,
     .deserialize = subghz_protocol_decoder_renault_v0_deserialize,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_renault_v0_encoder = {
-    .alloc = subghz_protocol_encoder_renault_v0_alloc,
-    .free = subghz_protocol_encoder_renault_v0_free,
-    .deserialize = subghz_protocol_encoder_renault_v0_deserialize,
-    .stop = subghz_protocol_encoder_renault_v0_stop,
-    .yield = subghz_protocol_encoder_renault_v0_yield,
-};
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderRenaultV0);
+
+static const SubGhzEncoderExternal subghz_protocol_renault_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_renault_v0");
 
 const SubGhzProtocol renault_v0_protocol = {
     .name = RENAULT_PROTOCOL_V0_NAME,
@@ -284,7 +246,7 @@ const SubGhzProtocol renault_v0_protocol = {
             SubGhzProtocolFlag_868 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Send,
 
-    .encoder = &subghz_protocol_renault_v0_encoder,
+    .encoder = &subghz_protocol_renault_v0_encoder_ext.vtable,
     .decoder = &subghz_protocol_renault_v0_decoder,
 };
 
@@ -418,28 +380,6 @@ static bool renault_v0_type_preamble_bits_valid(RenaultV0TypeId type_id, uint8_t
     }
 
     return preamble_bits == renault_v0_default_preamble_bits(type_id);
-}
-
-static const char* renault_v0_get_button_name(RenaultV0TypeId type_id, uint8_t button) {
-    if(type_id == RenaultV0Type13) {
-        switch(button) {
-        case 0x06:
-            return "Lock";
-        case 0x0A:
-            return "Unlock";
-        default:
-            return "??";
-        }
-    }
-
-    const uint8_t low_nibble = button & 0x0FU;
-    if((low_nibble >= 0x04U) && (low_nibble <= 0x07U)) {
-        return "Lock";
-    }
-    if((low_nibble >= 0x08U) && (low_nibble <= 0x0BU)) {
-        return "Unlock";
-    }
-    return "??";
 }
 
 static void renault_v0_parse_fields(uint64_t data, uint32_t* serial, uint8_t* button, uint8_t* counter) {
@@ -596,16 +536,6 @@ static bool renault_v0_is_end_burst(bool level, uint32_t duration, uint8_t bit_c
            (duration >= RENAULT_V0_END_BURST_MIN_US) && (duration <= RENAULT_V0_END_BURST_MAX_US);
 }
 
-static RenaultV0TypeId renault_v0_detect_type(uint8_t checksum, uint32_t key2, uint8_t button) {
-    const RenaultV0TypeEntry* type =
-        renault_v0_find_type_by_checks(checksum, key2, NULL, NULL);
-    if(type && renault_v0_type_button_valid(type->id, button)) {
-        return type->id;
-    }
-
-    return RenaultV0TypeUnknown;
-}
-
 static bool renault_v0_classify_frame(uint64_t data, uint32_t key2, RenaultV0DecodeAttempt* attempt) {
     furi_check(attempt);
 
@@ -739,14 +669,6 @@ static bool renault_v0_confirm_attempt(
     return false;
 }
 
-static bool renault_v0_get_bit_msb82(uint64_t data, uint32_t key2, uint8_t bit_index) {
-    if(bit_index <= 0x3FU) {
-        return ((data >> (63U - bit_index)) & 1ULL) != 0ULL;
-    }
-
-    return ((key2 >> (0x51U - bit_index)) & 1U) != 0U;
-}
-
 static void renault_v0_apply_attempt(
     SubGhzProtocolDecoderRenaultV0* instance,
     const RenaultV0DecodeAttempt* attempt) {
@@ -805,411 +727,6 @@ static void renault_v0_decode_candidate(SubGhzProtocolDecoderRenaultV0* instance
     if(instance->packet_bit_count && instance->base.callback) {
         instance->base.callback(&instance->base, instance->base.context);
     }
-}
-
-static bool renault_v0_upload_shape_for_type(RenaultV0TypeId type_id, RenaultV0UploadShape* shape) {
-    furi_check(shape);
-
-    switch(type_id) {
-    case RenaultV0Type13:
-        shape->preamble_pairs = 16U;
-        shape->burst_count = 3U;
-        shape->te_short = RENAULT_V0_TE_DEFAULT_US;
-        shape->inter_burst_low = 0x61A8U;
-        shape->final_low = 250U;
-        return true;
-    case RenaultV0Type04:
-    case RenaultV0Type0C:
-    case RenaultV0Type1A:
-    case RenaultV0Type3B:
-    case RenaultV0Type3F:
-        return renault_v0_upload_shape_for_preamble(
-            renault_v0_default_preamble_bits(type_id), shape);
-    default:
-        return false;
-    }
-}
-
-static bool renault_v0_upload_shape_for_preamble(uint8_t preamble_bits, RenaultV0UploadShape* shape) {
-    furi_check(shape);
-
-    if(!renault_v0_preamble_bits_valid(preamble_bits)) {
-        return false;
-    }
-
-    shape->preamble_pairs = preamble_bits;
-    shape->burst_count = 3U;
-    shape->te_short = renault_v0_upload_te_for_preamble(preamble_bits);
-    shape->inter_burst_low = 1500U;
-    shape->final_low = 1500U;
-    return true;
-}
-
-static uint32_t renault_v0_upload_te_for_preamble(uint8_t preamble_bits) {
-    if(preamble_bits == 12U) {
-        return RENAULT_V0_TE_PREAMBLE_12_US;
-    }
-    return RENAULT_V0_TE_DEFAULT_US;
-}
-
-static bool renault_v0_emit(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    size_t* index,
-    bool level,
-    uint32_t duration) {
-    furi_check(instance);
-    furi_check(index);
-
-    size_t idx = *index;
-    if(idx > 0 && level_duration_get_level(instance->encoder.upload[idx - 1]) == level) {
-        uint32_t prev = level_duration_get_duration(instance->encoder.upload[idx - 1]);
-        instance->encoder.upload[idx - 1] = level_duration_make(level, prev + duration);
-        *index = idx;
-        return true;
-    }
-
-    if(idx >= RENAULT_V0_UPLOAD_CAPACITY) {
-        return false;
-    }
-    instance->encoder.upload[idx] = level_duration_make(level, duration);
-    *index = idx + 1;
-    return true;
-}
-
-static bool renault_v0_emit_decoded_bit(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    size_t* index,
-    uint8_t* state,
-    uint32_t te_short,
-    bool bit) {
-    furi_check(state);
-
-    const uint32_t te_long = te_short * 2U;
-
-    if(*state == 1U) {
-        if(bit) {
-            return renault_v0_emit(instance, index, false, te_short) &&
-                   renault_v0_emit(instance, index, true, te_short);
-        }
-
-        *state = 2U;
-        return renault_v0_emit(instance, index, false, te_long);
-    }
-
-    if(bit) {
-        *state = 1U;
-        return renault_v0_emit(instance, index, true, te_long);
-    }
-
-    return renault_v0_emit(instance, index, true, te_short) &&
-           renault_v0_emit(instance, index, false, te_short);
-}
-
-static bool renault_v0_build_upload(
-    SubGhzProtocolEncoderRenaultV0* instance,
-    RenaultV0TypeId type_id,
-    uint8_t preamble_bits) {
-    furi_check(instance);
-
-    RenaultV0UploadShape shape;
-    if(type_id == RenaultV0Type13) {
-        if(!renault_v0_upload_shape_for_type(type_id, &shape)) {
-            return false;
-        }
-    } else if(renault_v0_preamble_bits_valid(preamble_bits)) {
-        if(!renault_v0_upload_shape_for_preamble(preamble_bits, &shape)) {
-            return false;
-        }
-    } else {
-        if(!renault_v0_upload_shape_for_type(type_id, &shape)) {
-            return false;
-        }
-    }
-
-    size_t write_index = 0U;
-    for(uint8_t burst = 0U; burst < shape.burst_count; burst++) {
-        if(!renault_v0_emit(instance, &write_index, true, 1000U)) {
-            return false;
-        }
-
-        uint8_t state = 1U;
-        for(uint8_t pair = 0U; pair < shape.preamble_pairs; pair++) {
-            if(!renault_v0_emit_decoded_bit(
-                   instance, &write_index, &state, shape.te_short, true)) {
-                return false;
-            }
-        }
-
-        for(uint8_t bit_index = 0U; bit_index < RENAULT_V0_MIN_BITS; bit_index++) {
-            const bool bit =
-                renault_v0_get_bit_msb82(instance->generic.data, instance->key2, bit_index);
-            if(!renault_v0_emit_decoded_bit(
-                   instance, &write_index, &state, shape.te_short, bit)) {
-                return false;
-            }
-        }
-
-        if(state == 2U) {
-            if(!renault_v0_emit(instance, &write_index, true, shape.te_short)) {
-                return false;
-            }
-        }
-
-        const uint32_t trailing_low =
-            (burst + 1U < shape.burst_count) ? shape.inter_burst_low : shape.final_low;
-        if(!renault_v0_emit(instance, &write_index, false, trailing_low)) {
-            return false;
-        }
-    }
-
-    instance->encoder.size_upload = write_index;
-    instance->encoder.front = 0U;
-    return true;
-}
-
-void* subghz_protocol_encoder_renault_v0_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-
-    SubGhzProtocolEncoderRenaultV0* instance = calloc(1, sizeof(SubGhzProtocolEncoderRenaultV0));
-    furi_check(instance);
-
-    instance->base.protocol = &renault_v0_protocol;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 1U;
-    instance->encoder.front = 0;
-    instance->encoder.is_running = false;
-    instance->encoder.upload = malloc(RENAULT_V0_UPLOAD_CAPACITY * sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-
-    return instance;
-}
-
-void subghz_protocol_encoder_renault_v0_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV0* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_renault_v0_stop(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV0* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_renault_v0_yield(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV0* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_renault_v0_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-
-    SubGhzProtocolEncoderRenaultV0* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-
-    do {
-        flipper_format_rewind(flipper_format);
-        FuriString* temp_str = furi_string_alloc();
-        if(!temp_str) break;
-        if(!flipper_format_read_string(flipper_format, "Protocol", temp_str)) {
-            furi_string_free(temp_str);
-            break;
-        }
-        if(!furi_string_equal(temp_str, instance->base.protocol->name)) {
-            furi_string_free(temp_str);
-            break;
-        }
-        furi_string_free(temp_str);
-
-        flipper_format_rewind(flipper_format);
-        SubGhzProtocolStatus load_st = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic, flipper_format, RENAULT_V0_MIN_BITS);
-        if(load_st != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        if(!flipper_format_rewind(flipper_format)) {
-            break;
-        }
-
-        uint32_t key2 = 0U;
-        if(!flipper_format_read_uint32(flipper_format, RENAULT_V0_KEY2_FIELD, &key2, 1)) {
-            break;
-        }
-        instance->key2 = key2;
-        const uint64_t captured_data = instance->generic.data;
-        const uint32_t captured_key2 = instance->key2;
-
-        uint32_t preamble_bits = 0U;
-        flipper_format_rewind(flipper_format);
-        if(flipper_format_read_uint32(
-               flipper_format, RENAULT_V0_PREAMBLE_FIELD, &preamble_bits, 1) &&
-           renault_v0_preamble_bits_valid((uint8_t)preamble_bits)) {
-            instance->preamble_bits = (uint8_t)preamble_bits;
-        } else {
-            instance->preamble_bits = 0U;
-        }
-
-        uint32_t serial = 0;
-        uint8_t button = 0;
-        uint8_t counter = 0;
-        renault_v0_parse_fields(instance->generic.data, &serial, &button, &counter);
-        const uint32_t captured_serial = serial;
-        const uint8_t captured_button = button;
-        const uint8_t captured_counter = counter;
-
-        RenaultV0DecodeAttempt captured_attempt = {0};
-        if(!renault_v0_classify_frame(captured_data, captured_key2, &captured_attempt)) {
-            break;
-        }
-        const RenaultV0TypeId captured_type = captured_attempt.type_id;
-        if(instance->preamble_bits == 0U) {
-            instance->preamble_bits = renault_v0_default_preamble_bits(captured_type);
-        }
-        captured_attempt.preamble_bits = instance->preamble_bits;
-        if((captured_type == RenaultV0TypeDynamic) &&
-           !renault_v0_preamble_bits_valid(instance->preamble_bits)) {
-            break;
-        }
-        const bool rolling_supported = (captured_type == RenaultV0Type13) && captured_attempt.ic_ok;
-
-        if(rolling_supported) {
-            uint32_t serial_u32 = serial;
-            uint32_t btn_u32 = button;
-            uint32_t cnt_u32 = counter;
-
-            flipper_format_rewind(flipper_format);
-            flipper_format_read_uint32(flipper_format, "Serial", &serial_u32, 1);
-            flipper_format_rewind(flipper_format);
-            const bool got_btn = flipper_format_read_uint32(flipper_format, "Btn", &btn_u32, 1);
-            flipper_format_rewind(flipper_format);
-            const bool got_cnt = flipper_format_read_uint32(flipper_format, "Cnt", &cnt_u32, 1);
-
-            if(!got_cnt) {
-                uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-                if(mult == 0U) mult = 1U;
-                cnt_u32 = (cnt_u32 + mult) & 0xFFU;
-            }
-
-            if(!got_btn) {
-                subghz_custom_btn_set_max(4);
-                switch(subghz_custom_btn_get()) {
-                case SUBGHZ_CUSTOM_BTN_UP:
-                    btn_u32 = 0x06U;
-                    break;
-                case SUBGHZ_CUSTOM_BTN_DOWN:
-                    btn_u32 = 0x0AU;
-                    break;
-                case SUBGHZ_CUSTOM_BTN_OK:
-                case SUBGHZ_CUSTOM_BTN_LEFT:
-                case SUBGHZ_CUSTOM_BTN_RIGHT:
-                default:
-                    break;
-                }
-            }
-
-            instance->tx_button = (uint8_t)btn_u32;
-            if(!renault_v0_type_button_valid(captured_type, instance->tx_button)) {
-                break;
-            }
-            counter = (uint8_t)(cnt_u32 & 0xFFU);
-            serial = serial_u32 & 0x00FFFFFFU;
-
-            renault_v0_build_key(
-                serial, instance->tx_button, counter, &instance->generic.data, &instance->key2);
-            const uint8_t generated_checksum =
-                renault_v0_checksum(instance->generic.data, instance->key2);
-            if(renault_v0_detect_type(
-                   generated_checksum, instance->key2, instance->tx_button) != RenaultV0Type13) {
-                break;
-            }
-        } else {
-            instance->tx_button = captured_button;
-            serial = captured_serial;
-            counter = captured_counter;
-            instance->generic.data = captured_data;
-            instance->key2 = captured_key2;
-        }
-
-        instance->packet_bit_count = RENAULT_V0_MIN_BITS;
-        instance->generic.data_count_bit = RENAULT_V0_MIN_BITS;
-        instance->generic.serial = serial;
-        instance->generic.btn = instance->tx_button;
-        instance->generic.cnt = counter;
-
-        const uint32_t default_repeat =
-            rolling_supported ? RENAULT_V0_ROLLING_REPEAT : RENAULT_V0_REPLAY_REPEAT;
-        uint32_t tx_repeat = default_repeat;
-        flipper_format_rewind(flipper_format);
-        flipper_format_read_uint32(flipper_format, "Repeat", &tx_repeat, 1);
-        if(tx_repeat == 0U) {
-            tx_repeat = default_repeat;
-        }
-        if(!rolling_supported && (tx_repeat < RENAULT_V0_REPLAY_REPEAT)) {
-            tx_repeat = RENAULT_V0_REPLAY_REPEAT;
-        }
-        instance->encoder.repeat = tx_repeat;
-
-        if(!renault_v0_build_upload(instance, captured_type, instance->preamble_bits)) {
-            break;
-        }
-        if(instance->encoder.size_upload == 0) {
-            break;
-        }
-
-        if(rolling_supported) {
-            flipper_format_rewind(flipper_format);
-            uint8_t key_data[8];
-            renault_v0_u64_to_bytes_be(instance->generic.data, key_data);
-            if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(key_data))) {
-                flipper_format_rewind(flipper_format);
-                if(!flipper_format_insert_or_update_hex(
-                       flipper_format, "Key", key_data, sizeof(key_data))) {
-                    break;
-                }
-            }
-
-            flipper_format_rewind(flipper_format);
-            if(!flipper_format_update_uint32(
-                   flipper_format, RENAULT_V0_KEY2_FIELD, &instance->key2, 1)) {
-                flipper_format_rewind(flipper_format);
-                if(!flipper_format_insert_or_update_uint32(
-                       flipper_format, RENAULT_V0_KEY2_FIELD, &instance->key2, 1)) {
-                    break;
-                }
-            }
-
-            flipper_format_rewind(flipper_format);
-            uint32_t cnt_store = instance->generic.cnt;
-            flipper_format_insert_or_update_uint32(flipper_format, "Cnt", &cnt_store, 1);
-        }
-
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
 }
 
 void* subghz_protocol_decoder_renault_v0_alloc(SubGhzEnvironment* environment) {
@@ -1340,51 +857,6 @@ uint8_t subghz_protocol_decoder_renault_v0_get_hash_data(void* context) {
 
     const uint32_t key2_mix = instance->key2 ^ (instance->key2 >> 2U) ^ (instance->key2 >> 10U);
     return (uint8_t)(hash ^ key2_mix);
-}
-
-void subghz_protocol_decoder_renault_v0_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-
-    SubGhzProtocolDecoderRenaultV0* instance = context;
-
-    uint8_t display_btn = (uint8_t)instance->generic.btn;
-    if(instance->type_id == RenaultV0Type13) {
-        subghz_custom_btn_set_max(4);
-        switch(subghz_custom_btn_get()) {
-        case SUBGHZ_CUSTOM_BTN_UP:
-            display_btn = 0x06U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_DOWN:
-            display_btn = 0x0AU;
-            break;
-        case SUBGHZ_CUSTOM_BTN_OK:
-        case SUBGHZ_CUSTOM_BTN_LEFT:
-        case SUBGHZ_CUSTOM_BTN_RIGHT:
-        default:
-            display_btn = (uint8_t)instance->generic.btn;
-            break;
-        }
-    }
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%016llX\r\n"
-        "Key2:%05lX Sn:%06lX\r\n"
-        "Btn:%01X [%s] Cnt:%02lX\r\n"
-        "C1:[%s] C2:[%s]\r\n"
-        "IC:[%s]",
-        instance->generic.protocol_name,
-        instance->packet_bit_count,
-        instance->generic.data,
-        instance->key2,
-        instance->generic.serial,
-        display_btn,
-        renault_v0_get_button_name(instance->type_id, display_btn),
-        instance->generic.cnt,
-        instance->check_c1 ? "ERR" : "OK",
-        instance->check_c2 ? "ERR" : "OK",
-        instance->check_ic ? "MISS" : "MATCH");
 }
 
 bool renault_v0_flipper_is_rolling(FlipperFormat* flipper_format) {
@@ -1525,3 +997,8 @@ SubGhzProtocolStatus
 
     return status;
 }
+
+/* Layout asserts placed at EOF: these structs typedef the bare name
+ * later in this file, so the assert must follow all type definitions. */
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderRenaultV0);
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderRenaultV0);

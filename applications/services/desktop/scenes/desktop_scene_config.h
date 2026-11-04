@@ -1,6 +1,8 @@
 ADD_SCENE(desktop, main, Main)
 ADD_SCENE(desktop, lock_menu, LockMenu)
+#ifdef FURI_DEBUG
 ADD_SCENE(desktop, debug, Debug)
+#endif
 ADD_SCENE(desktop, hw_mismatch, HwMismatch)
 ADD_SCENE(desktop, fault, Fault)
 ADD_SCENE(desktop, locked, Locked)

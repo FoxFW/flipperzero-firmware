@@ -4,6 +4,7 @@
 #include <toolbox/path.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../helpers/subghz_lowram_guard.h"
 
 #define RAW_FILE_NAME "RAW_"
 #define TAG           "SubGhzSceneReadRAW"
@@ -694,6 +695,10 @@ bool subghz_scene_read_raw_on_event(void* context, SceneManagerEvent event) {
                     if(s_start_countdown_sec == 0) {
                         s_start_countdown_fired = true;
 
+                        subghz_lowram_mitigate(
+                            SUBGHZ_LOWRAM_SOFTLOCK_THRESHOLD +
+                            subghz_txrx_receiver_heap_needed(subghz->txrx));
+
                         subghz_read_raw_set_status(
                             subghz->subghz_read_raw,
                             SubGhzReadRAWStatusREC,
@@ -712,6 +717,8 @@ bool subghz_scene_read_raw_on_event(void* context, SceneManagerEvent event) {
 
 void subghz_scene_read_raw_on_exit(void* context) {
     SubGhz* subghz = context;
+
+    subghz_lowram_softlock_release();
 
     subghz_txrx_stop(subghz->txrx);
     subghz->state_notifications = SubGhzNotificationStateIDLE;

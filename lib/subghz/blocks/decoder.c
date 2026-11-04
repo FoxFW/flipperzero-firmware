@@ -25,3 +25,10 @@ uint8_t subghz_protocol_blocks_get_hash_data(SubGhzBlockDecoder* decoder, size_t
     }
     return hash;
 }
+
+#include <furi.h>
+
+void subghz_protocol_decoder_generic_free(void* context) {
+    furi_assert(context);
+    free(context);
+}

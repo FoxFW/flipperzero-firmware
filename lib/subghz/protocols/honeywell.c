@@ -7,6 +7,9 @@
 #include "../blocks/encoder.h"
 #include "../blocks/generic.h"
 #include "../blocks/math.h"
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 #define TAG "SubGhzProtocolHoneywell"
 
@@ -32,7 +35,7 @@ struct SubGhzProtocolEncoderHoneywell {
 
 const SubGhzProtocolDecoder subghz_protocol_honeywell_decoder = {
     .alloc = subghz_protocol_decoder_honeywell_alloc,
-    .free = subghz_protocol_decoder_honeywell_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_honeywell_feed,
     .reset = subghz_protocol_decoder_honeywell_reset,
     .get_hash_data = subghz_protocol_decoder_honeywell_get_hash_data,
@@ -41,13 +44,7 @@ const SubGhzProtocolDecoder subghz_protocol_honeywell_decoder = {
     .get_string = subghz_protocol_decoder_honeywell_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_honeywell_encoder = {
-    .alloc = subghz_protocol_encoder_honeywell_alloc,
-    .free = subghz_protocol_encoder_honeywell_free,
-    .deserialize = subghz_protocol_encoder_honeywell_deserialize,
-    .stop = subghz_protocol_encoder_honeywell_stop,
-    .yield = subghz_protocol_encoder_honeywell_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_honeywell_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_honeywell");
 
 const SubGhzProtocol subghz_protocol_honeywell = {
     .name = SUBGHZ_PROTOCOL_HONEYWELL_NAME,
@@ -55,7 +52,7 @@ const SubGhzProtocol subghz_protocol_honeywell = {
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send |
             SubGhzProtocolFlag_Sensors,
-    .encoder = &subghz_protocol_honeywell_encoder,
+    .encoder = &subghz_protocol_honeywell_encoder_ext.vtable,
     .decoder = &subghz_protocol_honeywell_decoder,
 
 };
@@ -67,34 +64,10 @@ void* subghz_protocol_decoder_honeywell_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderHoneywell* instance = malloc(sizeof(SubGhzProtocolDecoderHoneywell));
     instance->base.protocol = &subghz_protocol_honeywell;
     instance->generic.protocol_name = instance->base.protocol->name;
+    instance->decoder.decode_data = 0;
+    instance->decoder.decode_count_bit = 0;
+    instance->manchester_saved_state = ManchesterStateMid1;
     return instance;
-}
-
-void* subghz_protocol_encoder_honeywell_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderHoneywell* instance = malloc(sizeof(SubGhzProtocolEncoderHoneywell));
-
-    instance->base.protocol = &subghz_protocol_honeywell;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 4;
-    instance->encoder.size_upload = 64 * 2 + 10;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_honeywell_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHoneywell* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_decoder_honeywell_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoneywell* instance = context;
-    free(instance);
 }
 
 uint16_t subghz_protocol_honeywell_crc16(
@@ -118,121 +91,12 @@ uint16_t subghz_protocol_honeywell_crc16(
     return remainder;
 }
 
-static LevelDuration
-    subghz_protocol_encoder_honeywell_add_duration_to_upload(ManchesterEncoderResult result) {
-    LevelDuration data = {.duration = 0, .level = 0};
-    switch(result) {
-    case ManchesterEncoderResultShortLow:
-        data.duration = subghz_protocol_honeywell_const.te_short;
-        data.level = false;
-        break;
-    case ManchesterEncoderResultLongLow:
-        data.duration = subghz_protocol_honeywell_const.te_long;
-        data.level = false;
-        break;
-    case ManchesterEncoderResultLongHigh:
-        data.duration = subghz_protocol_honeywell_const.te_long;
-        data.level = true;
-        break;
-    case ManchesterEncoderResultShortHigh:
-        data.duration = subghz_protocol_honeywell_const.te_short;
-        data.level = true;
-        break;
-
-    default:
-        furi_crash("SubGhz: ManchesterEncoderResult is incorrect.");
-        break;
-    }
-    return level_duration_make(data.level, data.duration);
-}
-
-static void
-    subghz_protocol_encoder_honeywell_get_upload(SubGhzProtocolEncoderHoneywell* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    ManchesterEncoderState enc_state;
-    manchester_encoder_reset(&enc_state);
-    ManchesterEncoderResult result;
-
-    for(uint8_t i = 63; i > 0; i--) {
-        if(!manchester_encoder_advance(
-               &enc_state, bit_read(instance->generic.data, i - 1), &result)) {
-            instance->encoder.upload[index++] =
-                subghz_protocol_encoder_honeywell_add_duration_to_upload(result);
-            manchester_encoder_advance(
-                &enc_state, bit_read(instance->generic.data, i - 1), &result);
-        }
-        instance->encoder.upload[index++] =
-            subghz_protocol_encoder_honeywell_add_duration_to_upload(result);
-    }
-    instance->encoder.upload[index] = subghz_protocol_encoder_honeywell_add_duration_to_upload(
-        manchester_encoder_finish(&enc_state));
-    if(level_duration_get_level(instance->encoder.upload[index])) {
-        index++;
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_honeywell_const.te_long * 300);
-
-    instance->encoder.size_upload = index;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_honeywell_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHoneywell* instance = context;
-    SubGhzProtocolStatus res = SubGhzProtocolStatusError;
-    do {
-        if(SubGhzProtocolStatusOk !=
-           subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        subghz_protocol_encoder_honeywell_get_upload(instance);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-
-        instance->encoder.is_running = true;
-
-        res = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return res;
-}
-
-void subghz_protocol_encoder_honeywell_stop(void* context) {
-    SubGhzProtocolEncoderHoneywell* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_honeywell_yield(void* context) {
-    SubGhzProtocolEncoderHoneywell* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-    return ret;
-}
-
 void subghz_protocol_decoder_honeywell_reset(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderHoneywell* instance = context;
     instance->decoder.decode_data = 0;
     instance->decoder.decode_count_bit = 0;
+    instance->manchester_saved_state = ManchesterStateMid1;
 }
 
 void subghz_protocol_decoder_honeywell_feed(void* context, bool level, uint32_t duration) {
@@ -375,41 +239,14 @@ SubGhzProtocolStatus
 }
 
 void subghz_protocol_decoder_honeywell_get_string(void* context, FuriString* output) {
-    furi_assert(context);
     SubGhzProtocolDecoderHoneywell* instance = context;
-
-    uint32_t code_found_hi = instance->generic.data >> 32;
-    uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
-
-    instance->generic.serial = (instance->generic.data >> 24) & 0xFFFFF;
-    uint8_t sensor_status = (instance->generic.data >> 16) & 0xFF;
-
-    uint8_t channel = (instance->generic.data >> 44) & 0xF;
-    uint8_t contact = (sensor_status & 0x80) >> 7;
-    uint8_t tamper = (sensor_status & 0x40) >> 6;
-    uint8_t reed = (sensor_status & 0x20) >> 5;
-    uint8_t alarm = (sensor_status & 0x10) >> 4;
-    uint8_t battery_low = (sensor_status & 0x08) >> 3;
-    uint8_t heartbeat = (sensor_status & 0x04) >> 2;
-
-    furi_string_cat_printf(
-        output,
-        "%s\r\n%dbit  "
-        "Sn:%07lu  Ch:%u\r\n"
-        "LowBat:%d  HB: %d  Cont: %s\r\n"
-        "Key:%08lX%08lX\r\n"
-        "State: L1:%u  L2:%u  L3:%u  L4:%u",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->generic.serial,
-        channel,
-        battery_low,
-        heartbeat,
-        contact ? "open" : "closed",
-        code_found_hi,
-        code_found_lo,
-        contact,
-        reed,
-        alarm,
-        tamper);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+

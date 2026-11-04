@@ -17,6 +17,8 @@ typedef enum {
     SubGhzCustomEventSceneReceiverInfoTxFull,
     SubGhzCustomEventSceneReceiverInfoDecrypt,
     SubGhzCustomEventSceneReceiverInfoPsaDecryptGo,
+    SubGhzCustomEventSceneReceiverInfoSend,
+    SubGhzCustomEventSceneReceiverInfoSendRaw,
     SubGhzCustomEventSceneSaveName,
     SubGhzCustomEventSceneSignalSettings,
     SubGhzCustomEventSceneSaveSuccess,
@@ -87,6 +89,11 @@ typedef enum {
     SubGhzCustomEventSceneCustomFreqAdd,
     SubGhzCustomEventSceneCustomFreqRemove,
     SubGhzCustomEventSceneCustomFreqDone,
+
+    SubGhzCustomEventViewReceiverNextFrequency,
+    SubGhzCustomEventViewReceiverPrevFrequency,
+    SubGhzCustomEventViewReceiverNextPreset,
+    SubGhzCustomEventViewReceiverPrevPreset,
 } SubGhzCustomEvent;
 
 typedef enum {
@@ -125,6 +132,8 @@ typedef enum {
     SetTypeGibidi433,
     SetTypeGSN,
     SetTypeAprimatic,
+    SetTypeErreka433,
+    SetTypeErreka868,
     SetTypeElmesElectronic,
     SetTypeNormstahl_433_92,
     SetTypeJCM_433_92,

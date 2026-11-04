@@ -1,53 +1,116 @@
+/*
+ * Packer Structure:
+ *   - Preamble: ~250 short pulses (~125μs each, alternating high/low).
+ *   - Transit: 1500μs lo + 1000μs hi pulse. 
+ *   - Sync word: 15 short lo-hi + 1 short hi-lo (16 Manchester bits).
+ *   - Data: 88 Manchester bits.
+ *   - Check: transit + sync word + 10 Manchester bits of extra data.
+ *   - 1 is short hi-lo, 0 is short lo-hi ?
+ *   - While holding the button max emission time is 3 seconds.
+ *   - Preamble goes once, then transit & sync word & data repeat 3 times.
+ *   - Then goes check part which repeats more than 50 times with ~21500μs pause.
+ *   - Approx half of check repeats is not visible on .sal records:
+ *   - this could be a drifting keyfob radio or receiving issues.
+ *
+ * Constants from largus.cpp source file:
+ *   - PULSE_MIN   50 uS    
+ *   - PULSE_MID   180 uS    
+ *   - PULSE_MAX   300 uS   
+ *   - PRE_COUNT   10    
+ *   - BITS_TOTAL  88   
+ *   - CRC_INDEX   10    
+ *   - DATA_SIZE   11 bytes
+ *   - TE          125    
+ *   - PRE_CNT     245   
+ *   - SYNC_HIGH   1500 uS   
+ *   - SYNC_LOW    1000 uS  
+ *   - SYNC_NUM    15  
+ *   - DATA_LEN    11 bytes    
+ *   - CRC_LEN     12    
+ *   - BITS        8   
+ */
 #include "renault_v1.h"
 
-#include "fiat_v1.h"
-#include <lib/subghz/blocks/custom_btn_i.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
+#include "renault_v1_crypto.h"
 #include <lib/toolbox/manchester_decoder.h>
-#include <stdlib.h>
-#include <string.h>
 
-#define TAG "RenaultV1Protocol"
+#include "../blocks/const.h"
+#include "../blocks/decoder.h"
+#include "../blocks/encoder.h"
+#include "../blocks/generic.h"
+#include "../blocks/math.h"
 
-#define HITAG2_TE_US           125U
-#define HITAG2_HEADER_LOW_US   1500U
-#define HITAG2_HEADER_HIGH_US  1000U
-#define HITAG2_SHORT_GAP_US    21500U
-#define HITAG2_PREAMBLE_PAIRS  250U
-#define HITAG2_LONG_FRAMES     3U
-#define HITAG2_SHORT_FRAMES    3U
-#define HITAG2_UPLOAD_CAPACITY 1295U
-#define HITAG2_MIN_COUNT_BIT     88U
-#define HITAG2_HEADER_BITS       16U
-#define HITAG2_KEY_BITS          64U
-#define HITAG2_KEY2_BITS         24U
-#define HITAG2_SHORT_KEY_BITS    10U
-#define HITAG2_KEY_END_BITS      (HITAG2_HEADER_BITS + HITAG2_KEY_BITS)
-#define HITAG2_LONG_FRAME_BITS   (HITAG2_KEY_END_BITS + HITAG2_KEY2_BITS)
-#define HITAG2_RECOVERED_YES     1U
-#define HITAG2_RECOVERED_BF_MISS 2U
-#define HITAG2_KEY_FIELD         "Hitag2 Key"
-#define HITAG2_EPOCH_FIELD       "Hitag2 Epoch"
+#include "../blocks/custom_btn_i.h"
 
-#define HITAG2_HEADER_LOW_MIN_US  1150U
-#define HITAG2_HEADER_LOW_MAX_US  2200U
-#define HITAG2_HEADER_HIGH_MIN_US 800U
-#define HITAG2_HEADER_HIGH_MAX_US 1150U
-#define HITAG2_DATA_IGNORE_US     49U
-#define HITAG2_DATA_RESET_US      520U
-#define HITAG2_TE_HIGH_INIT_US    120U
-#define HITAG2_TE_LOW_INIT_US     150U
-#define HITAG2_HOP_FIELD          "Hop"
+#define TAG "RenaultV1"
 
-#define FF_SERIAL                 "Serial"
-#define FF_BTN                    "Btn"
-#define FF_CNT                    "Cnt"
-#define FF_KEY                    "Key"
+static const SubGhzBlockConst subghz_protocol_renault_v1_const = {
+    .te_short = 125, // Manchester short pulse
+    .te_long = 250, // Manchester long pulse, 2× short
+    .te_delta = 100, // Tolerance window for FEED
+    .min_count_bit_for_found = 88, // Total data bits
+};
 
-static const SubGhzBlockConst renault_v1_const = {
-    .te_short = HITAG2_TE_US,
-    .te_long = HITAG2_TE_US * 2U,
-    .te_delta = 50,
-    .min_count_bit_for_found = HITAG2_MIN_COUNT_BIT,
+#define RENAULT_V1_LO_GAP 1500
+#define RENAULT_V1_HI_GAP 1000
+#define RENAULT_V1_PRE_COUNT       250
+#define RENAULT_V1_SYNC_BIT_COUNT 16
+#define RENAULT_V1_CHECK_BIT_COUNT 10
+#define RENAULT_V1_SYNC_WORD       0x0001
+#define RENAULT_V1_DATA_1_SIZE     64
+#define RENAULT_V1_DATA_2_SIZE     24
+#define RENAULT_V1_DATA_REPEAT     3
+#define RENAULT_V1_TAIL_REPEAT_GAP 21500
+#define RENAULT_V1_CUSTOM_BTN_MAX  2 // D-pad custom buttons: this fob has only Lock(0x1) + Unlock(0x2)
+#define RENAULT_V1_COUNTER_BITS    16 // rolling counter (push_clock) width, carved from the plaintext IV
+#define RENAULT_V1_COUNTER_MAX     ((1u << RENAULT_V1_COUNTER_BITS) - 1)
+#define RENAULT_V1_PULSE_MIN       50 // Below this: envelope glitch -- ignored, does NOT reset a frame
+#define RENAULT_V1_PULSE_MAX \
+    520 // long ceiling: 2TE-LOW stretches to ~499 under OOK duty asymmetry
+
+/* Adaptive short/long split, tracked per level. No fixed threshold serves both populations at once:
+ * genuine fobs put 1TE up to ~204 and 2TE from ~205, while a Pandora emulating a fob compresses its
+ * 2TE HIGH down to ~192. Any single constant either clips the Pandora 2TE (its frames die mid-payload)
+ * or lets an OEM 2TE-LOW read as short. So each frame tracks the 1TE duration SEPARATELY for HIGH and
+ * LOW -- they differ by ~40us from OOK duty asymmetry (carrier-on shorter than carrier-off) -- seeded,
+ * then refined from every pulse it classes as short, with the boundary at 1.5x that estimate. The
+ * 16-bit sync word is all-short and calibrates the estimate before the data bits arrive.
+ *
+ * The threshold is CLAMPED to [RENAULT_V1_THR_MIN, RENAULT_V1_THR_MAX]: the floor keeps a compressed Pandora 2TE-HIGH (~192)
+ * reading long, the ceiling stops the LOW estimate drifting up until an OEM 2TE-LOW (~205) reads short.
+ * Swept over all 25 captures this strictly beat the best fixed value on EVERY file (Pandora 5 -> 23
+ * valid frames, fobs equal-or-better, min frames/capture unchanged at 2). False frames stayed ZERO --
+ * the sync+CRC gate, not this threshold, is what rejects garbage. */
+#define RENAULT_V1_TE_SEED_HI 120 // 1TE HIGH is the shorter half (carrier-on, measured ~104..122)
+#define RENAULT_V1_TE_SEED_LO 150 // 1TE LOW is the longer half (carrier-off, measured ~145)
+#define RENAULT_V1_TE_TRACK_MIN \
+    70 // clamp on the tracked estimate so a noise run can't drag it away
+#define RENAULT_V1_TE_TRACK_MAX    185
+#define RENAULT_V1_THR_MIN         150
+#define RENAULT_V1_THR_MAX         210
+// Transit-gap acceptance windows. Measured across all six fobs: gap LOW 1250..2094, gap HIGH 851..1075.
+// Wide on purpose -- the gap drifts a lot while a button is held, and nothing in the data is this long.
+#define RENAULT_V1_GAP_LO_MIN      1150
+#define RENAULT_V1_GAP_LO_MAX      2200
+#define RENAULT_V1_GAP_HI_MIN      800
+#define RENAULT_V1_GAP_HI_MAX      1150
+
+/* Exact LevelDuration count get_upload() produces, written as the layout itself so the buffer and the
+ * bound check can never drift apart. Per frame: a 2-entry transit gap plus 2 entries per Manchester
+ * bit. Preamble is one pair per RENAULT_V1_PRE_COUNT; each data frame carries sync+88 bits; each tail frame
+ * carries sync+10 bits and a trailing silence entry. An enum, not a macro, so it needs no line
+ * continuations and stays a typed constant. Works out to 1295. */
+enum {
+    RENAULT_V1_DATA_FRAME_ENTRIES =
+        2 + (RENAULT_V1_SYNC_BIT_COUNT + RENAULT_V1_DATA_1_SIZE + RENAULT_V1_DATA_2_SIZE) * 2,
+    RENAULT_V1_TAIL_FRAME_ENTRIES =
+        2 + (RENAULT_V1_SYNC_BIT_COUNT + RENAULT_V1_CHECK_BIT_COUNT) * 2 + 1,
+    RENAULT_V1_UPLOAD_SIZE = RENAULT_V1_PRE_COUNT * 2 +
+                             RENAULT_V1_DATA_REPEAT * RENAULT_V1_DATA_FRAME_ENTRIES +
+                             RENAULT_V1_DATA_REPEAT * RENAULT_V1_TAIL_FRAME_ENTRIES,
 };
 
 struct SubGhzProtocolDecoderRenaultV1 {
@@ -56,50 +119,39 @@ struct SubGhzProtocolDecoderRenaultV1 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    ManchesterState manchester_state;
-    uint16_t te_high;
-    uint16_t te_low;
-    uint16_t header;
-    uint8_t recovered;
-    uint8_t hitag2_key[6];
-    uint32_t hop;
-    uint8_t tail_bits;
-    bool hitag2_key_valid;
-    uint64_t last_data;
-    uint64_t last_data_2;
-    bool last_frame_valid;
-    uint32_t seed;
-    uint64_t data_2;
+    ManchesterState manchester_saved_state;
+    /* Inverted 16-bit Hitag-2 sync word, captured at RENAULT_V1_SYNC_BIT_COUNT and then used
+     * as a frame gate and as hash input. It used to squat on SubGhzBlockGeneric.disc, whose
+     * own comment describes a KeeLoq 12-bit discriminator -- one shared field carrying two
+     * unrelated meanings, with only one of them documented. Decoder-local, never serialized. */
+    uint16_t sync;
+    uint16_t te_hi; // running 1TE estimate for HIGH pulses, reseeded each frame
+    uint16_t te_lo; // running 1TE estimate for LOW pulses, reseeded each frame
 };
+SUBGHZ_ASSERT_DECODER_PREFIX(SubGhzProtocolDecoderRenaultV1);
 
 struct SubGhzProtocolEncoderRenaultV1 {
     SubGhzProtocolEncoderBase base;
 
     SubGhzProtocolBlockEncoder encoder;
     SubGhzBlockGeneric generic;
-
-    uint32_t seed;
-    uint64_t data_2;
-    uint8_t recovered;
-    uint8_t hitag2_key[6];
-    uint8_t tail_bits;
-    bool hitag2_key_valid;
 };
+
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderRenaultV1);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderRenaultV1);
+
+SUBGHZ_ASSERT_ENCODER_PREFIX(SubGhzProtocolEncoderRenaultV1);
 
 typedef enum {
     RenaultV1DecoderStepReset = 0,
-    RenaultV1DecoderStepCheckSync = 2,
-    RenaultV1DecoderStepData = 3,
+    RenaultV1DecoderStepCheckPreamble,
+    RenaultV1DecoderStepCheckSync,
+    RenaultV1DecoderStepDecodeData,
 } RenaultV1DecoderStep;
 
-static void subghz_protocol_decoder_renault_v1_free(void* context) {
-    furi_assert(context);
-    free(context);
-}
-
-const SubGhzProtocolDecoder renault_v1_decoder = {
+const SubGhzProtocolDecoder subghz_protocol_renault_v1_decoder = {
     .alloc = subghz_protocol_decoder_renault_v1_alloc,
-    .free = subghz_protocol_decoder_renault_v1_free,
+    .free = subghz_protocol_decoder_generic_free,
 
     .feed = subghz_protocol_decoder_renault_v1_feed,
     .reset = subghz_protocol_decoder_renault_v1_reset,
@@ -110,1303 +162,455 @@ const SubGhzProtocolDecoder renault_v1_decoder = {
     .get_string = subghz_protocol_decoder_renault_v1_get_string,
 };
 
-const SubGhzProtocolEncoder renault_v1_encoder = {
-    .alloc = subghz_protocol_encoder_renault_v1_alloc,
-    .free = subghz_protocol_encoder_renault_v1_free,
-    .deserialize = subghz_protocol_encoder_renault_v1_deserialize,
-    .stop = subghz_protocol_encoder_renault_v1_stop,
-    .yield = subghz_protocol_encoder_renault_v1_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    __typeof__(&subghz_protocol_renault_v1_encrypt) subghz_protocol_renault_v1_encrypt;
+} enc_renault_v1_host_t;
+static const enc_renault_v1_host_t enc_renault_v1_host = {
+    .subghz_protocol_renault_v1_encrypt = subghz_protocol_renault_v1_encrypt,
 };
+static const SubGhzEncoderExternal subghz_protocol_renault_v1_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_renault_v1", &enc_renault_v1_host);
 
-const SubGhzProtocol renault_v1_protocol = {
-    .name = RENAULT_PROTOCOL_V1_NAME,
+const SubGhzProtocol subghz_protocol_renault_v1 = {
+    .name = SUBGHZ_PROTOCOL_RENAULT_V1_NAME,
+    /* 1295 upload entries (RENAULT_V1_UPLOAD_SIZE) x 4 B = 5180 B in ONE malloc, plus the
+     * ~5 KB margin every other heavy protocol uses, rounded up to 512: mazda_v2 640 entries ->
+     * 7680, kia_v3_v4 2628 -> 15872, ford_v1 6452 -> 31744. Shipped commented out, which left
+     * this the WORST of the registered protocols running on
+     * SUBGHZ_TX_HEAP_DEFAULT (6144, documented for uploads <= 1 KB) -- secplus_v2 was over it
+     * too and now carries its own. Here it was a 5.2 KB contiguous
+     * allocation admitted on a 6 KB check, and pvPortMalloc reboots rather than returning
+     * NULL. The commented value was ford_v1's, copied with the line; at 3x the real need it
+     * would over-gate instead, refusing TX whenever contiguous free heap is under 31 KB --
+     * the same failure the VAG special case in subghz_i.c had to undo. */
+    .tx_heap_budget = 10752,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_868 |
-            SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_868 | SubGhzProtocolFlag_315 |
+            SubGhzProtocolFlag_FM | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send |
+            SubGhzProtocolFlag_Bruteforce,
 
-    .decoder = &renault_v1_decoder,
-    .encoder = &renault_v1_encoder,
+    .decoder = &subghz_protocol_renault_v1_decoder,
+    .encoder = &subghz_protocol_renault_v1_encoder_ext.vtable,
 };
 
-static const char* hitag2_get_button_name(uint8_t btn) {
-    static const char* const names[] = {
-        "Sync",
-        "Lock",
-        "Unlock",
-        "??",
-        "Trunk",
-        "??",
-        "??",
-        "??",
-        "Panic",
-    };
-    return (btn < COUNT_OF(names)) ? names[btn] : "??";
-}
-
-static void hitag2_u64_to_bytes_be(uint64_t value, uint8_t* out, size_t nbytes) {
-    for(size_t i = 0; i < nbytes; i++) {
-        out[i] = (uint8_t)(value >> (8U * (nbytes - 1U - i)));
-    }
-}
-
-static uint64_t hitag2_bytes_to_u64_be(const uint8_t* data, size_t nbytes) {
-    uint64_t value = 0;
-    for(size_t i = 0; i < nbytes; i++) {
-        value = (value << 8U) | data[i];
-    }
-    return value;
-}
-
-static void hitag2_pack_key_bytes(uint64_t key, uint64_t key_2, uint8_t raw[11]) {
-    hitag2_u64_to_bytes_be(key, raw, 8);
-    raw[8] = (uint8_t)(key_2 >> 16U);
-    raw[9] = (uint8_t)(key_2 >> 8U);
-    raw[10] = (uint8_t)key_2;
-}
-
-static uint8_t hitag2_frame_xor(const uint8_t raw[11]) {
-    uint8_t value = 0;
-    for(size_t i = 0; i < 10; i++) {
-        value ^= raw[i];
-    }
-    return value;
-}
-
-static uint8_t hitag2_i4(uint64_t x, uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
-    return (uint8_t)((((x >> a) & 1U) << 3U) | (((x >> b) & 1U) << 2U) | (((x >> c) & 1U) << 1U) |
-                     ((x >> d) & 1U));
-}
-
-static uint8_t hitag2_f20(uint64_t state) {
-    const uint8_t s0 = (uint8_t)((0x3C65U >> hitag2_i4(state, 2U, 3U, 5U, 6U)) & 1U);
-    const uint8_t s1 = (uint8_t)((0x0EE5U >> hitag2_i4(state, 8U, 12U, 14U, 15U)) & 1U);
-    const uint8_t s2 = (uint8_t)((0x0EE5U >> hitag2_i4(state, 17U, 21U, 23U, 26U)) & 1U);
-    const uint8_t s3 = (uint8_t)((0x0EE5U >> hitag2_i4(state, 28U, 29U, 31U, 33U)) & 1U);
-    const uint8_t s4 = (uint8_t)((0x3C65U >> hitag2_i4(state, 34U, 43U, 44U, 46U)) & 1U);
-    return (uint8_t)((0x0DD3929BUL >> ((s0 << 4U) | (s1 << 3U) | (s2 << 2U) | (s3 << 1U) | s4)) &
-                     1U);
-}
-
-static uint64_t hitag2_lfsr(uint64_t state) {
-    const uint64_t fb =
-        (state ^ (state >> 2U) ^ (state >> 3U) ^ (state >> 6U) ^ (state >> 7U) ^ (state >> 8U) ^
-         (state >> 16U) ^ (state >> 22U) ^ (state >> 23U) ^ (state >> 26U) ^ (state >> 30U) ^
-         (state >> 41U) ^ (state >> 42U) ^ (state >> 43U) ^ (state >> 46U) ^ (state >> 47U)) &
-        1ULL;
-    return (state >> 1U) | (fb << 47U);
-}
-
-static uint64_t hitag2_key_to_u64(const uint8_t key[6]) {
-    uint64_t key64 = 0ULL;
-    for(size_t i = 0; i < 6U; i++) {
-        key64 = (key64 << 8U) | key[i];
-    }
-    return key64;
-}
-
-static uint32_t __attribute__((unused))
-    hitag2_authenticator(uint32_t uid, uint8_t button, uint32_t counter, const uint8_t key[6]) {
-    const uint64_t key64 = hitag2_key_to_u64(key);
-    const uint32_t nonce = (counter << 4U) | ((uint32_t)button & 0x0FU);
-    uint64_t state = 0ULL;
-    for(uint8_t i = 32U; i < 48U; i++) {
-        state = (state << 1U) | ((key64 >> i) & 1ULL);
-    }
-    for(uint8_t i = 0U; i < 32U; i++) {
-        state = (state << 1U) | ((uint64_t)((uid >> i) & 1U));
-    }
-    for(uint8_t i = 0U; i < 32U; i++) {
-        const uint64_t nonce_bit = (uint64_t)hitag2_f20(state) ^ ((nonce >> (31U - i)) & 1U);
-        state = (state >> 1U) | (((nonce_bit ^ ((key64 >> (31U - i)) & 1ULL)) & 1ULL) << 47U);
-    }
-    uint32_t hop = 0U;
-    for(uint8_t i = 0U; i < 32U; i++) {
-        hop = (hop << 1U) | hitag2_f20(state);
-        state = hitag2_lfsr(state);
-    }
-    return hop;
-}
-
-static uint16_t hitag2_frame_cnt10(const uint8_t raw[11]) {
-    return (uint16_t)(((uint16_t)(raw[4] & 0x0FU) << 6U) | (raw[5] >> 2U));
-}
-
-static uint32_t hitag2_frame_hop(const uint8_t raw[11]) {
-    return ((uint32_t)(raw[5] & 3U) << 30U) | ((uint32_t)raw[6] << 22U) |
-           ((uint32_t)raw[7] << 14U) | ((uint32_t)raw[8] << 6U) | (raw[9] >> 2U);
-}
-
-static uint8_t hitag2_frame_tail(const uint8_t raw[11]) {
-    return (uint8_t)(raw[9] & 3U);
-}
-
-static void hitag2_pack_auth_frame(
-    uint32_t uid,
-    uint8_t btn,
-    uint16_t cnt10,
-    uint32_t hop,
-    uint8_t tail,
-    uint8_t raw[11]) {
-    raw[0] = (uint8_t)(uid >> 24U);
-    raw[1] = (uint8_t)(uid >> 16U);
-    raw[2] = (uint8_t)(uid >> 8U);
-    raw[3] = (uint8_t)uid;
-    raw[4] = (uint8_t)(((btn & 0x0FU) << 4U) | ((cnt10 >> 6U) & 0x0FU));
-    raw[5] = (uint8_t)(((cnt10 & 0x3FU) << 2U) | ((hop >> 30U) & 3U));
-    raw[6] = (uint8_t)(hop >> 22U);
-    raw[7] = (uint8_t)(hop >> 14U);
-    raw[8] = (uint8_t)(hop >> 6U);
-    raw[9] = (uint8_t)(((hop << 2U) & 0xFCU) | (tail & 3U));
-    raw[10] = hitag2_frame_xor(raw);
-}
-
-static void hitag2_apply_raw(uint8_t raw[11], uint64_t* data, uint64_t* data_2) {
-    *data = hitag2_bytes_to_u64_be(raw, 8);
-    *data_2 = ((uint64_t)raw[8] << 16U) | ((uint64_t)raw[9] << 8U) | raw[10];
-}
-
-static bool hitag2_key_nonzero(const uint8_t key[6]) {
-    for(size_t i = 0; i < 6U; i++) {
-        if(key[i]) return true;
-    }
-    return false;
-}
-
-static void hitag2_flipper_u32(FlipperFormat* ff, const char* key, uint32_t value) {
-    flipper_format_rewind(ff);
-    if(!flipper_format_update_uint32(ff, key, &value, 1)) {
-        flipper_format_rewind(ff);
-        flipper_format_insert_or_update_uint32(ff, key, &value, 1);
-    }
-}
-
-static bool hitag2_read_hex_be(
-    FlipperFormat* flipper_format,
-    const char* name,
-    uint8_t* data,
-    size_t nbytes);
-
-static bool hitag2_read_key(FlipperFormat* ff, uint8_t key[6]) {
-    memset(key, 0, 6U);
-    if(!hitag2_read_hex_be(ff, HITAG2_KEY_FIELD, key, 6U)) {
-        return false;
-    }
-    return hitag2_key_nonzero(key);
-}
-
-static bool hitag2_key_matches_hop(
-    const uint8_t key[6],
-    uint32_t uid,
-    uint8_t btn,
-    uint16_t cnt10,
-    uint32_t hop) {
-    return subghz_protocol_fiat_v1_compute_auth(uid, btn, cnt10 & 0x3FFU, key, 0U) == hop;
-}
-
-static bool hitag2_find_known_key(
-    uint32_t uid,
-    uint8_t btn,
-    uint16_t cnt10,
-    uint32_t hop,
-    uint8_t out_key[6]) {
-    const uint8_t(*known_keys)[6] = subghz_protocol_fiat_v1_get_known_keys();
-    for(uint8_t i = 0; i < FIAT_V1_KNOWN_KEY_COUNT; i++) {
-        if(subghz_protocol_fiat_v1_compute_auth(uid, btn, cnt10 & 0x3FFU, known_keys[i], 0U) ==
-           hop) {
-            memcpy(out_key, known_keys[i], 6U);
-            return true;
-        }
-    }
-    return false;
-}
-
-static void hitag2_unpack_frame(
-    uint64_t data,
-    uint64_t data_2,
-    uint32_t* serial,
-    uint8_t* btn,
-    uint16_t* cnt10,
-    uint32_t* hop,
-    uint8_t* tail) {
-    uint8_t raw[11];
-    hitag2_pack_key_bytes(data, data_2, raw);
-    if(serial) {
-        *serial = (uint32_t)(data >> 32U);
-    }
-    if(btn) {
-        *btn = (uint8_t)((raw[4] >> 4U) & 0x0FU);
-    }
-    if(cnt10) {
-        *cnt10 = hitag2_frame_cnt10(raw);
-    }
-    if(hop) {
-        *hop = hitag2_frame_hop(raw);
-    }
-    if(tail) {
-        *tail = hitag2_frame_tail(raw);
-    }
-}
-
-static bool hitag2_read_hex_be(
-    FlipperFormat* flipper_format,
-    const char* name,
-    uint8_t* data,
-    size_t nbytes) {
-    if(!flipper_format_rewind(flipper_format)) {
-        return false;
-    }
-    return flipper_format_read_hex(flipper_format, name, data, nbytes);
-}
-
-static bool hitag2_write_hex_be(
-    FlipperFormat* flipper_format,
-    const char* name,
-    uint64_t value,
-    size_t nbytes) {
-    uint8_t data[8] = {0};
-    furi_check(nbytes <= sizeof(data));
-    hitag2_u64_to_bytes_be(value, data, nbytes);
-    return flipper_format_insert_or_update_hex(flipper_format, name, data, nbytes);
-}
-
-static uint8_t hitag2_extract_bits(uint32_t value, uint8_t lsb, uint8_t width) {
-    return (uint8_t)((value >> lsb) & ((1U << width) - 1U));
-}
-
-static void hitag2_serial_permute(const uint8_t serial[4], uint8_t perm[6]) {
-    const uint8_t sn0 = serial[0];
-    const uint8_t sn1 = serial[1];
-    const uint8_t sn2 = serial[2];
-    const uint8_t sn3 = serial[3];
-
-    uint8_t acc =
-        (uint8_t)(((sn0 >> 6) & 2U) | ((sn1 >> 4) & 8U) | hitag2_extract_bits(sn0 ^ 0x10U, 4, 1));
-    acc |= (uint8_t)((~(uint32_t)(sn0 << 2)) & 0x20U);
-    acc |= (uint8_t)((sn0 << 5) & 0x40U);
-    acc |= (uint8_t)((sn2 << 1) & 0x80U);
-    acc |= (uint8_t)((~(uint32_t)(sn2 >> 5)) & 4U);
-    acc |= (uint8_t)((~(uint32_t)(sn0 >> 2)) & 0x10U);
-    perm[0] = acc;
-
-    const uint8_t sn1_inv_shr3 = (uint8_t) ~(sn1 >> 3);
-    const uint8_t sn3_inv_shl3 = (uint8_t) ~(sn3 << 3);
-    acc = (uint8_t)(hitag2_extract_bits(sn1, 5, 1) | (sn1_inv_shr3 & 4U) | (sn0 & 0x20U));
-    acc |= (uint8_t)(sn3_inv_shl3 & 8U);
-    acc |= (uint8_t)((~(uint32_t)(sn2 << 2)) & 0x10U);
-    acc |= (uint8_t)((~(uint32_t)(sn2 << 3)) & 0x40U);
-    acc |= 0x80U;
-    perm[1] = acc;
-
-    const uint8_t sn0_shr3 = (uint8_t)(sn0 >> 3);
-    acc = (uint8_t)(hitag2_extract_bits(sn0, 2, 1) | (sn0_shr3 & 2U) |
-                    ((~(uint32_t)(sn3 >> 2)) & 4U) | (sn1 & 0x10U));
-    acc |= (uint8_t)((~(uint32_t)(sn1 << 4)) & 0x20U);
-    acc |= (uint8_t)(sn3_inv_shl3 & 0x40U);
-    acc |= 0x80U;
-    perm[2] = acc;
-
-    const uint8_t sn2_inv_shl6 = (uint8_t) ~(sn2 << 6);
-    acc =
-        (uint8_t)(((sn0 >> 2) & 2U) | ((sn1 >> 3) & 8U) | hitag2_extract_bits(sn2 ^ 0x20U, 5, 1));
-    acc |= (uint8_t)((sn1 << 5) & 0x20U);
-    acc |= (uint8_t)((sn3 << 1) & 0x40U);
-    acc |= (uint8_t)(((uint8_t)~sn0_shr3) & 4U);
-    acc |= (uint8_t)(sn1_inv_shr3 & 0x10U);
-    acc |= (uint8_t)(sn2_inv_shl6 & 0x80U);
-    perm[3] = acc;
-
-    uint8_t perm4_lo =
-        (uint8_t)(((sn3 << 2) & 8U) | ((sn0 << 4) & 0x10U) | hitag2_extract_bits(sn0 ^ 4U, 2, 1));
-    perm4_lo |= (uint8_t)((~(uint32_t)(sn3 >> 1)) & 2U);
-    perm4_lo |= (uint8_t)((~(uint32_t)(sn1 >> 4)) & 4U);
-    uint8_t perm4_hi = (uint8_t)((~(uint32_t)(sn0 << 4)) & 0x20U);
-    perm4_hi |= (uint8_t)(sn2_inv_shl6 & 0x40U);
-    const uint8_t sn1_inv_shl3 = (uint8_t) ~(sn1 << 3);
-    perm4_hi |= (uint8_t)(sn1_inv_shl3 & 0x80U);
-    perm[4] = (uint8_t)(perm4_lo | perm4_hi);
-
-    uint8_t perm5 =
-        (uint8_t)(((sn3 >> 2) & 0x10U) | ((sn2 >> 3) & 2U) | (((uint8_t)~sn0) & 0x80U));
-    perm5 |= (uint8_t)((~(uint32_t)(sn0 << 3)) & 8U);
-    perm5 |= (uint8_t)((sn0 >> 2) & 0x10U);
-    perm5 |= (uint8_t)(sn1_inv_shl3 & 0x20U);
-    perm5 |= (uint8_t)((sn3 >> 1) & 0x40U);
-    perm5 |= (uint8_t)((~(uint32_t)(sn1 >> 1)) & 4U);
-    perm[5] = perm5;
-}
-
-static uint8_t hitag2_truth(uint32_t table, uint8_t index) {
-    return (uint8_t)((table >> index) & 1U);
-}
-
-static uint8_t hitag2_filter_index(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
-    return (uint8_t)((a << 3U) | (b << 2U) | (c << 1U) | d);
-}
-
-static uint8_t hitag2_byte_bit(uint8_t byte, uint8_t bit) {
-    return (uint8_t)((byte >> bit) & 1U);
-}
-
-static uint8_t hitag2_filter(const uint8_t state[6]) {
-    uint8_t group = 0;
-    group |= hitag2_truth(
-        0x2C79U,
-        hitag2_filter_index(
-            hitag2_byte_bit(state[0], 1),
-            hitag2_byte_bit(state[0], 2),
-            hitag2_byte_bit(state[0], 4),
-            hitag2_byte_bit(state[0], 5)));
-    group |= (uint8_t)(hitag2_truth(
-                           0x6671U,
-                           hitag2_filter_index(
-                               hitag2_byte_bit(state[1], 0),
-                               hitag2_byte_bit(state[1], 1),
-                               hitag2_byte_bit(state[1], 3),
-                               hitag2_byte_bit(state[1], 7)))
-                       << 1U);
-    group |= (uint8_t)(hitag2_truth(
-                           0x6671U,
-                           hitag2_filter_index(
-                               hitag2_byte_bit(state[3], 5),
-                               hitag2_byte_bit(state[2], 0),
-                               hitag2_byte_bit(state[2], 2),
-                               hitag2_byte_bit(state[2], 6)))
-                       << 2U);
-    group |= (uint8_t)(hitag2_truth(
-                           0x6671U,
-                           hitag2_filter_index(
-                               hitag2_byte_bit(state[4], 6),
-                               hitag2_byte_bit(state[3], 0),
-                               hitag2_byte_bit(state[3], 2),
-                               hitag2_byte_bit(state[3], 3)))
-                       << 3U);
-    group |= (uint8_t)(hitag2_truth(
-                           0x2C79U,
-                           hitag2_filter_index(
-                               hitag2_byte_bit(state[5], 1),
-                               hitag2_byte_bit(state[5], 3),
-                               hitag2_byte_bit(state[5], 4),
-                               hitag2_byte_bit(state[4], 5)))
-                       << 4U);
-    return hitag2_truth(0x7907287BUL, group);
-}
-
-static uint8_t hitag2_parity8(uint8_t value) {
-    value ^= (uint8_t)(value >> 4U);
-    value ^= (uint8_t)(value >> 2U);
-    value ^= (uint8_t)(value >> 1U);
-    return (uint8_t)(value & 1U);
-}
-
-static uint8_t hitag2_feedback(const uint8_t state[6]) {
-    static const uint8_t masks[6] = {0xB3U, 0x80U, 0x83U, 0x22U, 0x00U, 0x73U};
-    uint8_t feedback = 0;
-    for(uint8_t i = 0; i < 6; i++) {
-        feedback ^= hitag2_parity8((uint8_t)(state[i] & masks[i]));
-    }
-    return (uint8_t)(feedback & 1U);
-}
-
-static void hitag2_shift_state(uint8_t state[6], uint8_t input) {
-    for(uint8_t i = 0; i < 5; i++) {
-        state[i] = (uint8_t)((state[i] << 1U) | (state[i + 1U] >> 7U));
-    }
-    state[5] = (uint8_t)((state[5] << 1U) | (input & 1U));
-}
-
-static void hitag2_shift_u32(uint8_t buf[4], uint8_t inject) {
-    const uint8_t b0 = buf[0];
-    const uint8_t b1 = buf[1];
-    const uint8_t b2 = buf[2];
-    const uint8_t b3 = buf[3];
-    buf[3] = (uint8_t)((b2 >> 7U) | (b3 << 1U));
-    buf[2] = (uint8_t)((b1 >> 7U) | (b2 << 1U));
-    buf[1] = (uint8_t)((b0 >> 7U) | (b1 << 1U));
-    buf[0] = (uint8_t)((b0 << 1U) | (inject & 1U));
-}
-
-static void hitag2_clock_cipher(uint8_t state[6], uint8_t iv_work[4], uint8_t iv_orig[4]) {
-    for(uint8_t i = 0; i < 32; i++) {
-        const uint8_t filter = hitag2_filter(state);
-        uint8_t mix = (iv_work[3] & 0x80U) ? (filter ? 0U : 1U) : (filter ? 1U : 0U);
-        if(iv_orig[3] & 0x80U) {
-            mix ^= 5U;
-        }
-        hitag2_shift_state(state, (uint8_t)(mix & 1U));
-        hitag2_shift_u32(iv_work, 0);
-        hitag2_shift_u32(iv_orig, (uint8_t)((mix >> 2U) & 1U));
-    }
-
-    for(uint8_t i = 0; i < 32; i++) {
-        hitag2_shift_u32(iv_work, 0);
-        if(hitag2_filter(state)) {
-            iv_work[0] |= 1U;
-        }
-        hitag2_shift_state(state, hitag2_feedback(state));
-    }
-}
-
-static void hitag2_build_iv(uint32_t cnt, uint8_t btn, uint32_t seed, uint8_t iv[4]) {
-    iv[0] = (uint8_t)(((cnt << 4U) & 0xF0U) | (btn & 0x0FU));
-    iv[1] = (uint8_t)((cnt >> 4U) & 0xFFU);
-    iv[2] = (uint8_t)(((seed >> 8U) & 0xF0U) | ((cnt >> 12U) & 0x0FU));
-    iv[3] = (uint8_t)(seed & 0xFFU);
-}
-
-static void
-    hitag2_encrypt_from_iv(const uint8_t serial_be[4], const uint8_t iv[4], uint8_t out[11]) {
-    uint8_t perm[6];
-    uint8_t state[6];
-    uint8_t iv_work[4];
-    uint8_t iv_orig[4];
-
-    hitag2_serial_permute(serial_be, perm);
-    state[0] = serial_be[0];
-    state[1] = serial_be[1];
-    state[2] = serial_be[2];
-    state[3] = serial_be[3];
-    state[4] = perm[4];
-    state[5] = perm[5];
-    iv_work[0] = perm[0];
-    iv_work[1] = perm[1];
-    iv_work[2] = perm[2];
-    iv_work[3] = perm[3];
-    iv_orig[0] = iv[0];
-    iv_orig[1] = iv[1];
-    iv_orig[2] = iv[2];
-    iv_orig[3] = iv[3];
-    hitag2_clock_cipher(state, iv_work, iv_orig);
-
-    const uint8_t hop0 = iv_work[0];
-    uint8_t hop1 = (uint8_t)((hop0 >> 7U) | (iv_work[1] << 1U));
-    uint8_t hop2 = (uint8_t)((iv_work[1] >> 7U) | (iv_work[2] << 1U));
-    const uint8_t hop_ext = (uint8_t)(((hop0 >> 6U) & 1U) | (hop1 << 1U));
-    uint8_t hop3 = (uint8_t)((iv_work[2] >> 7U) | (iv_work[3] << 1U));
-    uint8_t hop4 = (uint8_t)((iv_work[3] >> 7U) | (state[5] << 1U));
-    hop1 = (uint8_t)((hop1 >> 7U) | (hop2 << 1U));
-    hop2 = (uint8_t)((hop2 >> 7U) | (hop3 << 1U));
-    hop3 = (uint8_t)((hop3 >> 7U) | (hop4 << 1U));
-
-    uint32_t mix = ((uint32_t)iv[1] << 4U) | ((uint32_t)iv[0] >> 4U);
-    mix = (mix | (((uint32_t)iv[2] << 12U) & 0xFFFFU)) & 0xFFFFU;
-
-    out[0] = serial_be[0];
-    out[1] = serial_be[1];
-    out[2] = serial_be[2];
-    out[3] = serial_be[3];
-    out[4] = (uint8_t)(((mix >> 6U) & 0x0FU) | ((iv[0] << 4U) & 0xF0U));
-    out[5] = (uint8_t)((hop3 & 3U) | ((mix << 2U) & 0xFCU));
-    out[6] = hop2;
-    out[7] = hop1;
-    out[8] = hop_ext;
-    out[9] = (uint8_t)((hop0 << 2U) | 2U);
-    out[10] = hitag2_frame_xor(out);
-}
-
-static void hitag2_encrypt_frame(
-    uint32_t serial,
-    uint32_t cnt,
-    uint8_t btn,
-    uint32_t seed,
-    uint8_t out[11],
-    uint8_t iv[4]) {
-    const uint8_t serial_be[4] = {
-        (uint8_t)(serial >> 24U),
-        (uint8_t)(serial >> 16U),
-        (uint8_t)(serial >> 8U),
-        (uint8_t)serial,
-    };
-    hitag2_build_iv(cnt, btn, seed, iv);
-    hitag2_encrypt_from_iv(serial_be, iv, out);
-}
-
-#define HITAG2_SEED_BF_CANDIDATES 0x10000U
-#define HITAG2_SEED_BF_YIELD_STEP 0x1000U
-
-bool subghz_protocol_renault_v1_run_seed_bf_ex(
-    uint64_t data,
-    uint64_t data_2,
-    uint32_t serial,
-    uint8_t btn,
-    uint32_t cnt,
-    uint32_t* seed_out,
-    Hitag2SeedProgressCallback progress_cb,
-    void* progress_ctx) {
-    uint8_t captured_raw[11];
-    hitag2_pack_key_bytes(data, data_2, captured_raw);
-
-    uint8_t out[11];
-    uint8_t iv[4];
-    for(uint32_t cand = 0; cand < HITAG2_SEED_BF_CANDIDATES; cand++) {
-
-        if(progress_cb && ((cand & (HITAG2_SEED_BF_YIELD_STEP - 1U)) == 0U)) {
-            uint8_t pct = (uint8_t)(((uint64_t)cand * 100U) / HITAG2_SEED_BF_CANDIDATES);
-            if(!progress_cb(pct, cand, progress_ctx)) {
-                return false;
-            }
-        }
-
-        hitag2_encrypt_frame(serial, cnt, btn, cand, out, iv);
-        if(memcmp(out, captured_raw, sizeof(out)) == 0) {
-            if(seed_out) {
-                *seed_out = ((uint32_t)iv[0] << 24U) | ((uint32_t)iv[1] << 16U) |
-                            ((uint32_t)iv[2] << 8U) | iv[3];
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
-bool subghz_protocol_renault_v1_run_seed_bf(
-    uint64_t data,
-    uint64_t data_2,
-    uint32_t serial,
-    uint8_t btn,
-    uint32_t cnt,
-    uint32_t* seed_out) {
-    return subghz_protocol_renault_v1_run_seed_bf_ex(
-        data, data_2, serial, btn, cnt, seed_out, NULL, NULL);
-}
-
-static void hitag2_apply_check_remote(
-    uint64_t data,
-    uint64_t data_2,
-    uint8_t recovered,
-    uint32_t seed,
-    uint32_t* serial,
-    uint8_t* btn,
-    uint32_t* cnt,
-    uint32_t* hop,
-    uint8_t* tail) {
-    uint16_t cnt10 = 0;
-    hitag2_unpack_frame(data, data_2, serial, btn, &cnt10, hop, tail);
-    if(recovered == HITAG2_RECOVERED_YES) {
-        *cnt = ((seed >> 12U) & 0xFF0U) | ((seed << 4U) & 0xF000U) | (seed >> 28U);
+/* Derive serial and button from the payload. The 88-bit payload is 11 bytes; generic.data holds
+ * bytes 0..7 MSB-first, so bytes 0..3 are the serial and byte 4 carries the button in its HIGH
+ * nibble (measured across all six fobs: Lock=1, Unlock=2, matching Largus.cpp's `pushkey<<4`).
+ *
+ * Derived HERE rather than in feed() on purpose: subghz_block_generic_deserialize restores only the
+ * bit count and Key, and decoder slots are reused WITHOUT reset() between file loads, so anything set
+ * only while receiving would be stale or zero for a loaded .sub. This runs from serialize(),
+ * deserialize() AND get_string(), which is every path that can display or re-encode. */
+static void subghz_protocol_renault_v1_check_remote_controller(SubGhzBlockGeneric* instance) {
+    instance->serial = (uint32_t)(instance->data >> 32);
+    instance->btn = (uint8_t)((instance->data >> 28) & 0x0F);
+    /* Offer the D-pad button swap ONLY once recovered: on an un-recovered signal the encoder can only
+     * replay the captured payload (it cannot re-encrypt a different button), so a swap would send the
+     * original button while the on-screen label shows the chosen one. set_max(0) hides the D-pad then.
+     * status==1 only: a status of 2 (BF not found) is NOT a recovery, so it must not unlock the swap. */
+    subghz_custom_btn_set_max((instance->status == 1) ? RENAULT_V1_CUSTOM_BTN_MAX : 0);
+    /* The rolling counter is NOT in the raw ciphertext -- it is a plaintext field of the DECRYPTED IV
+     * that recovery leaves in generic.seed, so it exists only once status is set. Host-checked over 44
+     * consecutive presses of two fobs, this 16-bit field steps by exactly 1 per press (fob1 2A7A..2AA5,
+     * fob3 1208..1233) while the fixed part holds. Deriving it here, from the one stored Seed, keeps
+     * every display/serialize/deserialize path consistent and means the counter is never written to file.
+     * Layout of the decrypted IV: iv0 low nibble = button, iv0 high nibble | iv1 | iv2 low nibble =
+     * counter, iv2 high nibble | iv3 = fixed. status==1 only -- status 2 (BF not found) has no IV. */
+    if(instance->status == 1) {
+        const uint32_t iv = instance->seed;
+        instance->cnt =
+            ((iv >> 28) & 0x0F) | (((iv >> 16) & 0xFF) << 4) | (((iv >> 8) & 0x0F) << 12);
     } else {
-        *cnt = cnt10;
+        instance->cnt = 0;
     }
 }
 
-static void renault_v1_check_remote_controller(SubGhzProtocolDecoderRenaultV1* instance) {
-    hitag2_apply_check_remote(
-        instance->generic.data,
-        instance->data_2,
-        instance->recovered,
-        instance->seed,
-        &instance->generic.serial,
-        &instance->generic.btn,
-        &instance->generic.cnt,
-        &instance->hop,
-        &instance->tail_bits);
+// Pack the 4-byte decrypted IV (MSB-first) into a 32-bit word; shared by bf_apply, the encoder re-seed
+// and the bruteforce scene's "Seed:" display so the idiom lives once.
+uint32_t renault_v1_iv_to_u32(const uint8_t iv[4]) {
+    return ((uint32_t)iv[0] << 24) | ((uint32_t)iv[1] << 16) | ((uint32_t)iv[2] << 8) | iv[3];
 }
 
-static bool hitag2_encoder_next_frame(
-    SubGhzProtocolEncoderRenaultV1* instance,
-    uint32_t orig_uid,
-    uint8_t orig_btn,
-    uint16_t orig_cnt10,
-    uint32_t orig_hop,
-    uint8_t tail) {
-    uint8_t raw[11];
-    if(!hitag2_key_matches_hop(instance->hitag2_key, orig_uid, orig_btn, orig_cnt10, orig_hop)) {
-        return false;
-    }
+// ============================================================================
+// Helpers
+// ============================================================================
 
-    uint8_t tx_btn = instance->generic.btn;
-    if(tx_btn == 0U) {
-        tx_btn = orig_btn;
-    }
-    uint32_t uid = instance->generic.serial ? instance->generic.serial : orig_uid;
-    uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-    if(mult == 0U) mult = 1U;
-    uint16_t cnt10 = (uint16_t)((instance->generic.cnt + mult) & 0x3FFU);
-    uint32_t hop = subghz_protocol_fiat_v1_compute_auth(uid, tx_btn, cnt10, instance->hitag2_key, 0U);
-
-    hitag2_pack_auth_frame(uid, tx_btn, cnt10, hop, tail, raw);
-    hitag2_apply_raw(raw, &instance->generic.data, &instance->data_2);
-    instance->generic.serial = uid;
-    instance->generic.btn = tx_btn;
-    instance->generic.cnt = cnt10;
-    instance->tail_bits = tail;
-    instance->hitag2_key_valid = true;
-    return true;
-}
-
-static void hitag2_write_named_fields(
-    FlipperFormat* ff,
-    uint32_t serial,
-    uint8_t btn,
-    uint32_t cnt,
-    uint32_t hop) {
-    hitag2_flipper_u32(ff, FF_SERIAL, serial);
-    hitag2_flipper_u32(ff, FF_BTN, btn);
-    hitag2_flipper_u32(ff, FF_CNT, cnt);
-    hitag2_flipper_u32(ff, HITAG2_HOP_FIELD, hop);
-}
-
-static void hitag2_read_recovered_and_seed(
-    FlipperFormat* flipper_format,
-    uint8_t* recovered,
-    uint32_t* seed) {
-    *recovered = 0;
-    *seed = 0;
-
-    uint8_t recovered_hex = 0;
-    if(hitag2_read_hex_be(flipper_format, "Recovered", &recovered_hex, 1)) {
-        *recovered = recovered_hex;
-    } else {
-        uint32_t recovered_u32 = 0;
-        if(flipper_format_rewind(flipper_format) &&
-           flipper_format_read_uint32(flipper_format, "Recovered", &recovered_u32, 1)) {
-            *recovered = (uint8_t)recovered_u32;
-        }
-    }
-
-    uint8_t seed_be[4] = {0};
-    if(hitag2_read_hex_be(flipper_format, "Seed", seed_be, 4)) {
-        *seed = (uint32_t)hitag2_bytes_to_u64_be(seed_be, 4);
-        return;
-    }
-
-    if(flipper_format_rewind(flipper_format)) {
-        flipper_format_read_uint32(flipper_format, "Seed", seed, 1);
-    }
-}
-
-void* subghz_protocol_encoder_renault_v1_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderRenaultV1* instance = calloc(1, sizeof(SubGhzProtocolEncoderRenaultV1));
-    furi_check(instance);
-
-    instance->base.protocol = &renault_v1_protocol;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 1;
-    instance->encoder.front = 0;
-    instance->encoder.is_running = false;
-    instance->encoder.upload = malloc(HITAG2_UPLOAD_CAPACITY * sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-
-    return instance;
-}
-
-void subghz_protocol_encoder_renault_v1_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV1* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_renault_v1_stop(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV1* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_renault_v1_yield(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderRenaultV1* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
-static bool
-    hitag2_encoder_add_level(LevelDuration* upload, size_t* index, bool level, uint32_t duration) {
-    if(*index >= HITAG2_UPLOAD_CAPACITY) {
-        return false;
-    }
-    upload[(*index)++] = level_duration_make(level, duration);
-    return true;
-}
-
-static bool hitag2_encoder_add_bits(
-    LevelDuration* upload,
-    size_t* index,
-    uint64_t value,
-    uint8_t bit_count) {
-    for(uint8_t i = bit_count; i > 0; i--) {
-        const bool one = ((value >> (i - 1U)) & 1ULL) != 0;
-        if(one) {
-            if(!hitag2_encoder_add_level(upload, index, true, HITAG2_TE_US)) return false;
-            if(!hitag2_encoder_add_level(upload, index, false, HITAG2_TE_US)) return false;
-        } else {
-            if(!hitag2_encoder_add_level(upload, index, false, HITAG2_TE_US)) return false;
-            if(!hitag2_encoder_add_level(upload, index, true, HITAG2_TE_US)) return false;
-        }
-    }
-    return true;
-}
-
-static bool renault_v1_encoder_get_upload(SubGhzProtocolEncoderRenaultV1* instance) {
-    furi_check(instance);
-
-    size_t index = 0;
-    LevelDuration* upload = instance->encoder.upload;
-    const uint64_t key = instance->generic.data;
-    const uint64_t key_2 = instance->data_2 & 0xFFFFFFULL;
-
-    for(size_t i = 0; i < HITAG2_PREAMBLE_PAIRS; i++) {
-        if(!hitag2_encoder_add_level(upload, &index, true, HITAG2_TE_US)) return false;
-        if(!hitag2_encoder_add_level(upload, &index, false, HITAG2_TE_US)) return false;
-    }
-
-    for(uint8_t frame = 0; frame < HITAG2_LONG_FRAMES; frame++) {
-        if(!hitag2_encoder_add_level(upload, &index, false, HITAG2_HEADER_LOW_US)) return false;
-        if(!hitag2_encoder_add_level(upload, &index, true, HITAG2_HEADER_HIGH_US)) return false;
-        if(!hitag2_encoder_add_bits(upload, &index, 1, HITAG2_HEADER_BITS)) return false;
-        if(!hitag2_encoder_add_bits(upload, &index, key, HITAG2_KEY_BITS)) return false;
-        if(!hitag2_encoder_add_bits(upload, &index, key_2, HITAG2_KEY2_BITS)) return false;
-    }
-
-    const uint64_t short_key = (key >> 18U) & 0x3FFULL;
-    for(uint8_t frame = 0; frame < HITAG2_SHORT_FRAMES; frame++) {
-        if(!hitag2_encoder_add_level(upload, &index, false, HITAG2_HEADER_LOW_US)) return false;
-        if(!hitag2_encoder_add_level(upload, &index, true, HITAG2_HEADER_HIGH_US)) return false;
-        if(!hitag2_encoder_add_bits(upload, &index, 1, HITAG2_HEADER_BITS)) return false;
-        if(!hitag2_encoder_add_bits(upload, &index, short_key, HITAG2_SHORT_KEY_BITS))
-            return false;
-        if(!hitag2_encoder_add_level(upload, &index, false, HITAG2_SHORT_GAP_US)) return false;
-    }
-
-    instance->encoder.size_upload = index;
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_renault_v1_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderRenaultV1* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic, flipper_format, renault_v1_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        uint8_t key2[8] = {0};
-        if(!hitag2_read_hex_be(flipper_format, "Key_2", key2, sizeof(key2))) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        instance->data_2 = hitag2_bytes_to_u64_be(key2, sizeof(key2));
-
-        hitag2_read_recovered_and_seed(flipper_format, &instance->recovered, &instance->seed);
-
-        uint8_t custom_btn_original = 0;
-        hitag2_unpack_frame(
-            instance->generic.data, instance->data_2, NULL, &custom_btn_original, NULL, NULL, NULL);
-        if(subghz_custom_btn_get_original() == 0) {
-            subghz_custom_btn_set_original(custom_btn_original);
-        }
-        subghz_custom_btn_set_max(4U);
-        switch(subghz_custom_btn_get()) {
-        case SUBGHZ_CUSTOM_BTN_UP:
-            instance->generic.btn = 0x01U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_DOWN:
-            instance->generic.btn = 0x02U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_LEFT:
-            instance->generic.btn = 0x04U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_RIGHT:
-            instance->generic.btn = 0x08U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_OK:
-        default:
-            instance->generic.btn = 0U;
-            break;
-        }
-
-        if(!flipper_format_rewind(flipper_format)) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-
-        uint32_t hop = 0;
-        uint8_t tail = 0;
-        uint32_t wire_serial = 0;
-        uint8_t wire_btn = 0;
-        uint16_t wire_cnt10 = 0;
-        hitag2_unpack_frame(
-            instance->generic.data,
-            instance->data_2,
-            &wire_serial,
-            &wire_btn,
-            &wire_cnt10,
-            &hop,
-            &tail);
-        hitag2_apply_check_remote(
-            instance->generic.data,
-            instance->data_2,
-            instance->recovered,
-            instance->seed,
-            &instance->generic.serial,
-            &instance->generic.btn,
-            &instance->generic.cnt,
-            &hop,
-            &tail);
-        instance->tail_bits = tail;
-
-        const uint32_t orig_uid = wire_serial;
-        const uint8_t orig_btn = wire_btn;
-        const uint16_t orig_cnt10 = wire_cnt10;
-        const uint32_t orig_hop = hop;
-
-        instance->hitag2_key_valid = false;
-        memset(instance->hitag2_key, 0, 6U);
-        bool have_hitag2_key = hitag2_read_key(flipper_format, instance->hitag2_key);
-        if(!have_hitag2_key) {
-            have_hitag2_key = hitag2_find_known_key(
-                orig_uid, orig_btn, orig_cnt10, orig_hop, instance->hitag2_key);
-        }
-        if(have_hitag2_key) {
-            if(!hitag2_encoder_next_frame(
-                   instance, orig_uid, orig_btn, orig_cnt10, orig_hop, tail) &&
-               instance->recovered != HITAG2_RECOVERED_YES) {
-                ret = SubGhzProtocolStatusErrorParserOthers;
-                break;
-            }
-        }
-
-        uint32_t tx_repeat = 1U;
-        flipper_format_rewind(flipper_format);
-        flipper_format_read_uint32(flipper_format, "Repeat", &tx_repeat, 1);
-        if(tx_repeat == 0U) {
-            tx_repeat = 1U;
-        }
-        instance->encoder.repeat = tx_repeat;
-
-        if(!instance->hitag2_key_valid && instance->recovered == HITAG2_RECOVERED_YES) {
-            uint8_t out[11];
-            uint8_t iv[4];
-            uint32_t seed_mult = furi_hal_subghz_get_rolling_counter_mult();
-            if(seed_mult == 0U) seed_mult = 1U;
-            instance->generic.cnt = (instance->generic.cnt + seed_mult) & 0xFFFFU;
-            hitag2_encrypt_frame(
-                instance->generic.serial,
-                instance->generic.cnt,
-                instance->generic.btn,
-                instance->seed,
-                out,
-                iv);
-            instance->generic.data = hitag2_bytes_to_u64_be(out, 8);
-            instance->data_2 = ((uint64_t)out[8] << 16U) | ((uint64_t)out[9] << 8U) | out[10];
-            instance->seed = ((uint32_t)iv[0] << 24U) | ((uint32_t)iv[1] << 16U) |
-                             ((uint32_t)iv[2] << 8U) | iv[3];
-        } else if(!instance->hitag2_key_valid && instance->recovered != HITAG2_RECOVERED_YES) {
-
-        }
-
-        if(!renault_v1_encoder_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-
-        if(!flipper_format_rewind(flipper_format)) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        uint8_t key_data[8];
-        hitag2_u64_to_bytes_be(instance->generic.data, key_data, 8);
-        if(!flipper_format_insert_or_update_hex(
-               flipper_format, FF_KEY, key_data, sizeof(key_data))) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        hitag2_u64_to_bytes_be(instance->data_2, key_data, 8);
-        if(!flipper_format_insert_or_update_hex(
-               flipper_format, "Key_2", key_data, sizeof(key_data))) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        if(instance->recovered == HITAG2_RECOVERED_YES) {
-            const uint8_t recovered_hex = HITAG2_RECOVERED_YES;
-            if(!flipper_format_insert_or_update_hex(
-                   flipper_format, "Recovered", &recovered_hex, 1)) {
-                ret = SubGhzProtocolStatusErrorParserOthers;
-                break;
-            }
-            if(!hitag2_write_hex_be(flipper_format, "Seed", instance->seed, 4)) {
-                ret = SubGhzProtocolStatusErrorParserOthers;
-                break;
-            }
-        }
-
-        {
-            uint32_t hop_out = 0;
-            hitag2_unpack_frame(
-                instance->generic.data, instance->data_2, NULL, NULL, NULL, &hop_out, NULL);
-            hitag2_write_named_fields(
-                flipper_format,
-                instance->generic.serial,
-                instance->generic.btn,
-                instance->generic.cnt,
-                hop_out);
-        }
-        if(instance->hitag2_key_valid) {
-            flipper_format_rewind(flipper_format);
-            flipper_format_insert_or_update_hex(
-                flipper_format, HITAG2_KEY_FIELD, instance->hitag2_key, 6U);
-            hitag2_flipper_u32(flipper_format, HITAG2_EPOCH_FIELD, 0U);
-        }
-
-        instance->encoder.front = 0;
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}
-
+/* Remap table [custom_id-1][orig_pos] over renault_v1_btns. OK re-sends the captured button; UP forces
+ * Lock, DOWN forces Unlock (LEFT/RIGHT unused). Every orig_pos maps to the same target because the
+ * choice is absolute, not relative to what was captured. Unlike the old Ford-template map, this is now
+ * live: get_upload re-encrypts (ciphertext + CRC) for the chosen button, so the swap is a real frame. */
+/* One Manchester symbol pair. Which way round is NOT a matter of convention here: the decoder is
+ * validated against real fobs, so the encoder is written to match it. Under this mapping the bits
+ * recovered by the decoder are the COMPLEMENT of the ones written -- which is why the payload below
+ * is emitted verbatim rather than inverted, and why RENAULT_V1_SYNC_WORD is written plain and still reads back
+ * as 0x0001. Proven by round-tripping a captured frame through both, and by comparing the generated
+ * waveform against the fob's own capture symbol for symbol. */
+/* @p count bits of @p value, MSB first -- the order the fob transmits.
+ *
+ * This replaces six hand-unrolled copies that all read `bit_read(x, i - 1)`. That index is wrong
+ * twice over: at i = 0 it shifts by -1, which is undefined behaviour (in practice a 0 bit), and the
+ * remaining bits then come out LSB-ward, so the sync word went out as 0100...0 instead of 0000...1
+ * and the payload was scrambled. Nothing a receiver could decode. */
 void* subghz_protocol_decoder_renault_v1_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderRenaultV1* instance = calloc(1, sizeof(SubGhzProtocolDecoderRenaultV1));
-    furi_check(instance);
-    instance->base.protocol = &renault_v1_protocol;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    return instance;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderRenaultV1), &subghz_protocol_renault_v1);
 }
 
 void subghz_protocol_decoder_renault_v1_reset(void* context) {
-    furi_check(context);
+    furi_assert(context);
     SubGhzProtocolDecoderRenaultV1* instance = context;
     instance->decoder.parser_step = RenaultV1DecoderStepReset;
     manchester_advance(
-        instance->manchester_state, ManchesterEventReset, &instance->manchester_state, NULL);
+        instance->manchester_saved_state,
+        ManchesterEventReset,
+        &instance->manchester_saved_state,
+        NULL);
 }
 
-static bool hitag2_duration_is_header_low(uint32_t duration) {
-    return (duration >= HITAG2_HEADER_LOW_MIN_US) && (duration <= HITAG2_HEADER_LOW_MAX_US);
+/* Unpack the 88-bit payload into 11 bytes: generic.data holds bytes 0..7 (MSB first, inverted as
+ * decoded), generic.data_2 holds bytes 8..10. Shared by the CRC gate and the bruteforce init so the two
+ * never drift. */
+static void renault_v1_pack_payload(uint64_t data, uint64_t data_2, uint8_t out[11]) {
+    for(int i = 0; i < 8; i++)
+        out[i] = (uint8_t)(data >> (56 - 8 * i));
+    for(int i = 0; i < 3; i++)
+        out[8 + i] = (uint8_t)(data_2 >> (16 - 8 * i));
 }
 
-static uint32_t hitag2_data_threshold(uint16_t te) {
-    const uint32_t triple = (uint32_t)te * 3U;
-    if(triple < 300U) {
-        return 150U;
-    }
-    if(triple >= 422U) {
-        return 210U;
-    }
-    return triple / 2U;
-}
-
-static uint16_t hitag2_adapt_te(uint16_t te, uint32_t duration) {
-    const uint32_t mixed = ((uint32_t)te * 7U) + duration;
-    if(mixed < 560U) {
-        return 70;
-    }
-    if(mixed >= 1488U) {
-        return 185;
-    }
-    return (uint16_t)(mixed / 8U);
-}
-
-static bool hitag2_accept_frame(SubGhzProtocolDecoderRenaultV1* instance, uint64_t key_2) {
-    if(instance->header != 1U) {
-        return false;
-    }
-
-    uint8_t raw[11];
-    hitag2_pack_key_bytes(instance->generic.data, key_2, raw);
-    if(hitag2_frame_xor(raw) != raw[10]) {
-        return false;
-    }
-
-    if(instance->last_frame_valid && instance->last_data == instance->generic.data &&
-       instance->last_data_2 == key_2) {
-        return false;
-    }
-
-    instance->data_2 = key_2;
-    instance->generic.data_count_bit = HITAG2_MIN_COUNT_BIT;
-    instance->recovered = 0;
-    instance->seed = 0;
-    uint16_t cnt10 = 0;
-    hitag2_unpack_frame(
-        instance->generic.data,
-        instance->data_2,
-        &instance->generic.serial,
-        &instance->generic.btn,
-        &cnt10,
-        &instance->hop,
-        &instance->tail_bits);
-    instance->generic.cnt = cnt10;
-    instance->last_data = instance->generic.data;
-    instance->last_data_2 = key_2;
-    instance->last_frame_valid = true;
-    return true;
+/* Largus data_crc, verified against real captures of all six fobs: byte 10 == XOR(byte0..byte9). Gating
+ * the callback on this (plus the fixed sync word) stops a mis-phased or noisy frame from surfacing as a
+ * bogus key -- the "catches 2 / garbage / false PSA" symptoms. */
+static bool renault_v1_payload_crc_ok(uint64_t data, uint64_t data_2) {
+    uint8_t p[11];
+    renault_v1_pack_payload(data, data_2, p);
+    uint8_t crc = 0;
+    for(int i = 0; i < 10; i++)
+        crc ^= p[i];
+    return crc == p[10];
 }
 
 void subghz_protocol_decoder_renault_v1_feed(void* context, bool level, uint32_t duration) {
-    furi_check(context);
+    furi_assert(context);
     SubGhzProtocolDecoderRenaultV1* instance = context;
 
-    while(true) {
-        switch(instance->decoder.parser_step) {
-        case RenaultV1DecoderStepReset:
-            if((!level) && hitag2_duration_is_header_low(duration)) {
-                instance->decoder.te_last = duration;
-                instance->decoder.parser_step = RenaultV1DecoderStepCheckSync;
-            }
-            return;
-
-        case RenaultV1DecoderStepCheckSync:
-            if(level) {
-                if((duration < HITAG2_HEADER_HIGH_MIN_US) ||
-                   (duration > HITAG2_HEADER_HIGH_MAX_US) ||
-                   (instance->decoder.te_last < HITAG2_HEADER_LOW_MIN_US) ||
-                   (instance->decoder.te_last > HITAG2_HEADER_LOW_MAX_US)) {
-                    instance->decoder.parser_step = RenaultV1DecoderStepReset;
-                    return;
-                }
-                instance->decoder.decode_data = 0;
-                instance->decoder.decode_count_bit = 0;
-                instance->manchester_state = ManchesterStateStart1;
-                instance->te_high = HITAG2_TE_HIGH_INIT_US;
-                instance->te_low = HITAG2_TE_LOW_INIT_US;
-                instance->decoder.parser_step = RenaultV1DecoderStepData;
-                return;
-            }
-            instance->decoder.parser_step = RenaultV1DecoderStepReset;
-            if(hitag2_duration_is_header_low(duration)) {
-                instance->decoder.te_last = duration;
-                instance->decoder.parser_step = RenaultV1DecoderStepCheckSync;
-            }
-            return;
-
-        case RenaultV1DecoderStepData:
-            if(duration <= HITAG2_DATA_IGNORE_US) {
-                return;
-            }
-            if(duration > HITAG2_DATA_RESET_US) {
-                instance->decoder.parser_step = RenaultV1DecoderStepReset;
-                continue;
-            }
-
-            uint16_t* te = level ? &instance->te_high : &instance->te_low;
-            ManchesterEvent event;
-            if(duration > hitag2_data_threshold(*te)) {
-                event = level ? ManchesterEventLongHigh : ManchesterEventLongLow;
-            } else {
-                event = level ? ManchesterEventShortHigh : ManchesterEventShortLow;
-                *te = hitag2_adapt_te(*te, duration);
-            }
-
-            bool bit = false;
-            if(!manchester_advance(
-                   instance->manchester_state, event, &instance->manchester_state, &bit)) {
-                return;
-            }
-
-            instance->decoder.decode_data = (instance->decoder.decode_data << 1U) |
-                                            (bit ? 1ULL : 0ULL);
-            instance->decoder.decode_count_bit++;
-
-            if(instance->decoder.decode_count_bit == HITAG2_HEADER_BITS) {
-                instance->header = (uint16_t)~instance->decoder.decode_data;
-                instance->decoder.decode_data = 0;
-                return;
-            }
-            if(instance->decoder.decode_count_bit == HITAG2_KEY_END_BITS) {
-                instance->generic.data = ~instance->decoder.decode_data;
-                instance->decoder.decode_data = 0;
-                return;
-            }
-            if(instance->decoder.decode_count_bit == HITAG2_LONG_FRAME_BITS) {
-                const uint64_t key_2 = (~instance->decoder.decode_data) & 0xFFFFFFULL;
-                if(hitag2_accept_frame(instance, key_2) && instance->base.callback) {
-                    instance->base.callback(&instance->base, instance->base.context);
-                }
-                instance->decoder.decode_data = 0;
-                instance->decoder.decode_count_bit = 0;
-                instance->decoder.parser_step = RenaultV1DecoderStepData;
-            }
-            return;
-
-        default:
-            instance->decoder.parser_step = RenaultV1DecoderStepReset;
-            return;
+    switch(instance->decoder.parser_step) {
+    case RenaultV1DecoderStepReset:
+        /* Frame start = the transit gap, a LONG low (~1500) then LONG high (~1000). Detected on its
+         * own, NOT off the back of the preamble, so every repeat -- 2nd, 3rd, the tail -- re-arms
+         * here on its own gap; the preamble ships only once, ahead of the first frame. The gap is
+         * unmistakable: no data symbol is anywhere near this long.
+         *
+         * Gating on the preamble INSTEAD was measured across all six fobs' captures, and it is not a
+         * free win either way. Requiring it before every frame is simply wrong: the preamble runs
+         * 508..511 short pulses ahead of the FIRST gap and 1..6 ahead of the others, so that form
+         * decodes only frame 1 -- and on five of the captures frame 1 is the one that fails CRC while
+         * frames 2/3 are clean, i.e. it recovers nothing at all there (126 valid frames vs 600).
+         * Arming ONCE per burst and re-triggering per gap scores identically (600) on captures that
+         * start at the beginning, and costs a third of the decode attempts; it was NOT taken because
+         * it drops a whole burst whenever the preamble was never heard -- the preamble is ~64 ms out
+         * of a ~3 s hold, so tuning in mid-burst (AGC settling, hopping, RX opened after the press)
+         * is the common case, not the corner one. False triggers are handled at the other end
+         * instead: 16 sync bits AND the payload CRC must both agree before anything is emitted. */
+        if((!level) && (duration >= RENAULT_V1_GAP_LO_MIN) &&
+           (duration <= RENAULT_V1_GAP_LO_MAX)) {
+            instance->decoder.te_last = duration;
+            instance->decoder.parser_step = RenaultV1DecoderStepCheckSync;
         }
+        break;
+
+    case RenaultV1DecoderStepCheckSync:
+        // Second half of the transit gap: the LONG high that follows the LONG low.
+        if(level && (duration >= RENAULT_V1_GAP_HI_MIN) && (duration <= RENAULT_V1_GAP_HI_MAX) &&
+           (instance->decoder.te_last >= RENAULT_V1_GAP_LO_MIN) &&
+           (instance->decoder.te_last <= RENAULT_V1_GAP_LO_MAX)) {
+            instance->decoder.decode_data = 0;
+            instance->decoder.decode_count_bit = 0;
+            /* Manchester phase: enter at Start1, NOT the toolbox reset state (Mid1). The gap ends
+             * HIGH and the first sync half-bit is LOW; Start1 is the alignment under which the 0x0001
+             * sync and the 88 data bits decode. Mid1 mis-phases and the frame dies ~26 bits in. */
+            instance->manchester_saved_state = ManchesterStateStart1;
+            instance->te_hi = RENAULT_V1_TE_SEED_HI;
+            instance->te_lo = RENAULT_V1_TE_SEED_LO;
+            instance->decoder.parser_step = RenaultV1DecoderStepDecodeData;
+        } else {
+            // Not the expected gap-high. Re-arm if THIS pulse is itself a fresh gap-low.
+            instance->decoder.parser_step = RenaultV1DecoderStepReset;
+            if((!level) && (duration >= RENAULT_V1_GAP_LO_MIN) &&
+               (duration <= RENAULT_V1_GAP_LO_MAX)) {
+                instance->decoder.te_last = duration;
+                instance->decoder.parser_step = RenaultV1DecoderStepCheckSync;
+            }
+        }
+        break;
+
+    case RenaultV1DecoderStepDecodeData: {
+        /* A pulse shorter than RENAULT_V1_PULSE_MIN = envelope glitch. Ignore it, do NOT tear the frame down -- one runt
+         * mid-frame otherwise costs the whole capture. (The subghz worker already coalesces <30us;
+         * this covers the residue.) */
+        if(duration < RENAULT_V1_PULSE_MIN) break;
+
+        if(duration > RENAULT_V1_PULSE_MAX) {
+            /* Longer than any data symbol -> the frame is over. Re-arm on this very pulse if it is
+             * already the next frame's gap-low, so back-to-back repeats never miss a beat. */
+            instance->decoder.parser_step = RenaultV1DecoderStepReset;
+            if((!level) && (duration >= RENAULT_V1_GAP_LO_MIN) &&
+               (duration <= RENAULT_V1_GAP_LO_MAX)) {
+                instance->decoder.te_last = duration;
+                instance->decoder.parser_step = RenaultV1DecoderStepCheckSync;
+            }
+            break;
+        }
+
+        /* Adaptive short/long decision against this level's tracked 1TE (see the note by the
+         * RENAULT_V1_TE_SEED_* defines). Threshold = 1.5x te, clamped; a short pulse also refines the
+         * estimate toward it. */
+        uint16_t* te = level ? &instance->te_hi : &instance->te_lo;
+        uint32_t thr = ((uint32_t)*te * 3u) / 2u;
+        if(thr < RENAULT_V1_THR_MIN) thr = RENAULT_V1_THR_MIN;
+        if(thr > RENAULT_V1_THR_MAX) thr = RENAULT_V1_THR_MAX;
+
+        ManchesterEvent event;
+        if(duration <= thr) {
+            event = level ? ManchesterEventShortHigh : ManchesterEventShortLow;
+            uint32_t upd = ((uint32_t)*te * 7u + duration) / 8u;
+            if(upd < RENAULT_V1_TE_TRACK_MIN) upd = RENAULT_V1_TE_TRACK_MIN;
+            if(upd > RENAULT_V1_TE_TRACK_MAX) upd = RENAULT_V1_TE_TRACK_MAX;
+            *te = (uint16_t)upd;
+        } else {
+            event = level ? ManchesterEventLongHigh : ManchesterEventLongLow;
+        }
+
+        bool data;
+        if(!manchester_advance(
+               instance->manchester_saved_state, event, &instance->manchester_saved_state, &data)) {
+            break;
+        }
+        instance->decoder.decode_data = (instance->decoder.decode_data << 1) | data;
+        instance->decoder.decode_count_bit++;
+
+        if(instance->decoder.decode_count_bit == RENAULT_V1_SYNC_BIT_COUNT) {
+            instance->sync = ~instance->decoder.decode_data;
+            instance->decoder.decode_data = 0;
+        } else if(
+            instance->decoder.decode_count_bit ==
+            (RENAULT_V1_SYNC_BIT_COUNT + RENAULT_V1_DATA_1_SIZE)) {
+            instance->generic.data = ~instance->decoder.decode_data;
+            instance->decoder.decode_data = 0;
+        } else if(
+            instance->decoder.decode_count_bit ==
+            (RENAULT_V1_SYNC_BIT_COUNT + RENAULT_V1_DATA_1_SIZE + RENAULT_V1_DATA_2_SIZE)) {
+            instance->generic.data_2 = (~instance->decoder.decode_data) & 0xFFFFFF;
+            instance->generic.data_count_bit = (RENAULT_V1_DATA_1_SIZE + RENAULT_V1_DATA_2_SIZE);
+            /* A newly decoded frame is raw ciphertext -- nothing is recovered for it yet. This decoder
+             * instance is reused across signals, so clear the recovery marker and IV a previous recover
+             * left on it; otherwise the next frame -- the SAME fob's next press (a different rolling
+             * counter) or a different fob -- would be saved and shown with the prior IV and its Recover
+             * button suppressed. The counter is derived from the IV in check_remote_controller, so
+             * clearing the IV clears it too. Rolling codes change every press, so every frame must start
+             * un-recovered and be brute-forced afresh. */
+            instance->generic.status = 0;
+            instance->generic.seed = 0;
+            /* Two independent gates before the frame is trusted: the fixed sync word AND the payload's
+             * own XOR checksum. The 10-bit tail is deliberately NOT decoded -- it is derived byte-for-
+             * byte from payload bytes 4 and 5 (Largus package[11]/[12]) and carries nothing new. */
+            const uint8_t family = (uint8_t)(instance->generic.data >> 32);
+            if(((instance->sync & 0xFFFF) == RENAULT_V1_SYNC_WORD) &&
+               ((family & 0xF0) != 0x30) &&
+               renault_v1_payload_crc_ok(instance->generic.data, instance->generic.data_2)) {
+                if(instance->base.callback)
+                    instance->base.callback(&instance->base, instance->base.context);
+            }
+            instance->decoder.decode_data = 0;
+            instance->decoder.decode_count_bit = 0;
+            instance->decoder.parser_step = RenaultV1DecoderStepReset;
+        }
+    } break;
     }
 }
+
+static const char* renault_v1_get_name_button(uint8_t btn);
 
 uint8_t subghz_protocol_decoder_renault_v1_get_hash_data(void* context) {
-    furi_check(context);
+    furi_assert(context);
     SubGhzProtocolDecoderRenaultV1* instance = context;
-    return (uint8_t)instance->generic.serial ^ (uint8_t)(instance->generic.serial >> 8) ^
-           (uint8_t)(instance->generic.serial >> 16) ^ (uint8_t)(instance->generic.serial >> 24) ^
-           instance->generic.btn ^ (uint8_t)instance->generic.cnt ^
-           (uint8_t)(instance->generic.cnt >> 8);
-}
-
-static SubGhzProtocolStatus hitag2_write_extra_fields(
-    FlipperFormat* flipper_format,
-    uint64_t key_2,
-    uint8_t recovered,
-    uint32_t seed) {
-    if(!hitag2_write_hex_be(flipper_format, "Key_2", key_2, 8)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-    uint8_t recovered_hex = 0;
-    if(recovered == HITAG2_RECOVERED_YES) {
-        recovered_hex = HITAG2_RECOVERED_YES;
-    } else if(recovered == HITAG2_RECOVERED_BF_MISS) {
-        recovered_hex = HITAG2_RECOVERED_BF_MISS;
-    }
-    if(!flipper_format_insert_or_update_hex(flipper_format, "Recovered", &recovered_hex, 1)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-    if(!hitag2_write_hex_be(flipper_format, "Seed", seed, 4)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-    return SubGhzProtocolStatusOk;
+    uint8_t hash =
+        subghz_protocol_blocks_xor_bytes((uint8_t*)&instance->sync, sizeof(uint16_t));
+    hash ^= subghz_protocol_blocks_xor_bytes((uint8_t*)&instance->generic.data, sizeof(uint64_t));
+    hash ^=
+        subghz_protocol_blocks_xor_bytes((uint8_t*)&instance->generic.data_2, sizeof(uint64_t));
+    return hash;
 }
 
 SubGhzProtocolStatus subghz_protocol_decoder_renault_v1_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
-    furi_check(context);
+    furi_assert(context);
     SubGhzProtocolDecoderRenaultV1* instance = context;
-    renault_v1_check_remote_controller(instance);
-
-    const uint32_t serial = instance->generic.serial;
-    const uint8_t btn = instance->generic.btn;
-    const uint32_t cnt = instance->generic.cnt;
-    const uint32_t seed = instance->seed;
-    const uint64_t data_2 = instance->data_2;
-    instance->generic.serial = 0;
-    instance->generic.btn = 0;
-    instance->generic.cnt = 0;
-    instance->seed = 0;
-    instance->data_2 = 0;
-    SubGhzProtocolStatus ret =
+    SubGhzProtocolStatus res =
         subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-    instance->generic.serial = serial;
-    instance->generic.btn = btn;
-    instance->generic.cnt = cnt;
-    instance->seed = seed;
-    instance->data_2 = data_2;
-    if(ret != SubGhzProtocolStatusOk) {
-        return ret;
-    }
 
-    ret = hitag2_write_extra_fields(
-        flipper_format, instance->data_2, instance->recovered, instance->seed);
-    if(ret != SubGhzProtocolStatusOk) {
-        return ret;
+    subghz_protocol_renault_v1_check_remote_controller(&instance->generic);
+
+    /* No rewind here. flipper_format writes at the CURRENT stream cursor (no seek-to-end,
+     * no insert-in-place), so rewinding to the start would make the following writes
+     * overwrite the generic block's header (Filetype/Version/Frequency/Preset and the
+     * "Protocol: " prefix). That produced a .sub with no valid header -- the file browser
+     * rejected it on reopen (lost capture), and the RX-list label came up blank. With the
+     * cursor left at END after subghz_block_generic_serialize(), these fields append and
+     * the file stays well-formed. */
+    if(!subghz_block_write_hex(flipper_format, "Key", instance->generic.data, sizeof(uint64_t))) {
+        // FURI_LOG_E(TAG, "DSKIE"); // Decoder Serialize: Key insert error
+        res = SubGhzProtocolStatusErrorParserOthers;
     }
-    hitag2_write_named_fields(flipper_format, serial, btn, cnt, instance->hop);
-    if(instance->hitag2_key_valid) {
-        flipper_format_rewind(flipper_format);
-        flipper_format_insert_or_update_hex(
-            flipper_format, HITAG2_KEY_FIELD, instance->hitag2_key, 6U);
-        hitag2_flipper_u32(flipper_format, HITAG2_EPOCH_FIELD, 0U);
+    if(!subghz_block_write_hex(
+           flipper_format, "Key_2", instance->generic.data_2, sizeof(uint64_t))) {
+        // FURI_LOG_E(TAG, "DSK2IE"); // Decoder Serialize: Key_2 insert error
+        res = SubGhzProtocolStatusErrorParserOthers;
     }
-    return SubGhzProtocolStatusOk;
+    /* Persist only the marker + the secret Seed (the 32-bit DECRYPTED Hitag2 IV a rolling-code TX
+     * re-encrypts from; conventional "Seed" key, as FAAC SLH / KeeLoq). The counter is a plaintext slice
+     * of that IV -- check_remote_controller re-derives it on load -- so it is not stored.
+     * Recovered is (status==1): only a real recovery is a property of the signal. "BF not found" (2) is
+     * a SESSION fact kept in RAM (never written), so a saved capture never claims BF-not-found forever. */
+    uint8_t recovered = (instance->generic.status == 1) ? 1 : 0;
+    if(!subghz_block_write_hex(flipper_format, "Recovered", recovered, sizeof(uint8_t))) {
+        res = SubGhzProtocolStatusErrorParserOthers;
+    }
+    if(!subghz_block_write_hex(flipper_format, "Seed", instance->generic.seed, sizeof(uint32_t))) {
+        res = SubGhzProtocolStatusErrorParserOthers;
+    }
+    // Disp: protocol name + button for receiver list
+    subghz_block_write_disp(
+        flipper_format,
+        instance->generic.protocol_name,
+        renault_v1_get_name_button(instance->generic.btn));
+
+    return res;
 }
 
 SubGhzProtocolStatus
     subghz_protocol_decoder_renault_v1_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
+    furi_assert(context);
     SubGhzProtocolDecoderRenaultV1* instance = context;
     SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
     do {
         ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic, flipper_format, renault_v1_const.min_count_bit_for_found);
+            &instance->generic,
+            flipper_format,
+            subghz_protocol_renault_v1_const.min_count_bit_for_found);
         if(ret != SubGhzProtocolStatusOk) {
+            // FURI_LOG_E(TAG, "DDBCCE"); //Decoder Deserialize: bit count check error
             break;
         }
-
-        uint8_t key2[8] = {0};
-        if(!hitag2_read_hex_be(flipper_format, "Key_2", key2, sizeof(key2))) {
+        if(!flipper_format_rewind(flipper_format)) {
+            // FURI_LOG_E(TAG, "DDRE"); //Decoder Deserialize: rewind error
             ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
-        instance->data_2 = hitag2_bytes_to_u64_be(key2, sizeof(key2));
-
-        hitag2_read_recovered_and_seed(flipper_format, &instance->recovered, &instance->seed);
-
-        renault_v1_check_remote_controller(instance);
-        instance->hitag2_key_valid = false;
-        memset(instance->hitag2_key, 0, 6U);
-        if(hitag2_read_key(flipper_format, instance->hitag2_key)) {
-            instance->hitag2_key_valid = hitag2_key_matches_hop(
-                instance->hitag2_key,
-                instance->generic.serial,
-                instance->generic.btn,
-                (uint16_t)(instance->generic.cnt & 0x3FFU),
-                instance->hop);
+        if(!subghz_block_read_hex(flipper_format, "Key", &instance->generic.data, sizeof(uint64_t))) {
+            // FURI_LOG_E(TAG, "DDKRE"); //Decoder Deserialize: Key read error
+            ret = SubGhzProtocolStatusErrorParserOthers;
+            break;
         }
-        if(!instance->hitag2_key_valid) {
-            instance->hitag2_key_valid = hitag2_find_known_key(
-                instance->generic.serial,
-                instance->generic.btn,
-                (uint16_t)(instance->generic.cnt & 0x3FFU),
-                instance->hop,
-                instance->hitag2_key);
+        if(!subghz_block_read_hex(
+               flipper_format, "Key_2", &instance->generic.data_2, sizeof(uint64_t))) {
+            // FURI_LOG_E(TAG, "DDK2RE"); //Decoder Deserialize: Key_2 read error
+            ret = SubGhzProtocolStatusErrorParserOthers;
+            break;
         }
+
+        /* Optional -- absent on a pre-recovery / live signal (default: not recovered, Recover offered).
+         * Rewind before each read so a missing key does not strand the position. The counter is not
+         * read -- check_remote_controller re-derives it from the Seed below. */
+        instance->generic.status = 0;
+        instance->generic.seed = 0;
+        if(flipper_format_rewind(flipper_format))
+            subghz_block_read_hex(
+                flipper_format, "Recovered", &instance->generic.status, sizeof(uint8_t));
+        if(flipper_format_rewind(flipper_format))
+            subghz_block_read_hex(
+                flipper_format, "Seed", &instance->generic.seed, sizeof(uint32_t));
+
+        subghz_protocol_renault_v1_check_remote_controller(&instance->generic);
         ret = SubGhzProtocolStatusOk;
     } while(false);
-
     return ret;
 }
 
-void subghz_protocol_decoder_renault_v1_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderRenaultV1* instance = context;
-
-    renault_v1_check_remote_controller(instance);
-
-    furi_string_printf(
-        output,
-        "%s\r\nK1:%016llX\r\nK2:%06llX Sn:%08lX\r\nBtn:%02X [%s] %db",
-        instance->generic.protocol_name,
-        (unsigned long long)instance->generic.data,
-        (unsigned long long)(instance->data_2 & 0xFFFFFFULL),
-        (unsigned long)instance->generic.serial,
-        instance->generic.btn,
-        hitag2_get_button_name(instance->generic.btn),
-        instance->generic.data_count_bit);
-
-    if(instance->recovered == HITAG2_RECOVERED_YES) {
-        furi_string_cat_printf(
-            output,
-            "\r\nIV:%08lX Cnt:%04lX",
-            (unsigned long)instance->seed,
-            (unsigned long)(instance->generic.cnt & 0xFFFFU));
-    } else if(instance->recovered == HITAG2_RECOVERED_BF_MISS) {
-        furi_string_cat_printf(output, "\r\nBF not found");
-    } else {
-        furi_string_cat_printf(
-            output,
-            "\r\nCnt:%03lX Hop:%08lX",
-            (unsigned long)(instance->generic.cnt & 0x3FFU),
-            (unsigned long)instance->hop);
-        if(instance->hitag2_key_valid) {
-            furi_string_cat_printf(output, "\r\nKEY:OK");
-        } else {
-            furi_string_cat_printf(output, "\r\nKEY:??");
-        }
+static const char* renault_v1_get_name_button(uint8_t btn) {
+    switch(btn) {
+    case 0x0:
+        return "Sync";
+    case 0x1:
+        return "Lock";
+    case 0x2:
+        return "Unlock";
+    case 0x4:
+        return "Trunk";
+    case 0x8:
+        return "Panic";
+    default:
+        return "??";
     }
+}
+
+void subghz_protocol_decoder_renault_v1_get_string(void* context, FuriString* output) {
+    SubGhzProtocolDecoderRenaultV1* instance = context;
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
+}
+
+
+/* Bruteforce hooks -- these live here, not in renault_v1_crypto.c, because they touch the file-local
+ * decoder struct (the cipher itself is protocol-agnostic and stays in the crypto module). They mirror
+ * the PSA bf_init/apply/needs shape so the shared bruteforce scene can drive either protocol. */
+bool subghz_protocol_renault_v1_needs_bruteforce(void* decoder_context) {
+    furi_assert(decoder_context);
+    SubGhzProtocolDecoderBase* base = decoder_context;
+    if(base->protocol != &subghz_protocol_renault_v1) return false;
+    SubGhzProtocolDecoderRenaultV1* instance = decoder_context;
+    /* Gate on a DEDICATED marker, never on a data value: the recovered counter or IV can each be a
+     * legitimate zero, so `cnt == 0` would keep re-offering the button (and hide a real recovery).
+     * generic.status is 0 until bf_apply sets it, exactly as PSA uses generic.status. */
+    return instance->generic.status == 0;
+}
+
+void subghz_protocol_renault_v1_bf_init(RenaultV1BfContext* ctx, void* decoder_context) {
+    furi_assert(ctx);
+    furi_assert(decoder_context);
+    SubGhzProtocolDecoderRenaultV1* instance = decoder_context;
+    memset(ctx, 0, sizeof(RenaultV1BfContext));
+    /* Same 11 bytes the decoder verified -- the cipher brutes this payload. */
+    renault_v1_pack_payload(instance->generic.data, instance->generic.data_2, ctx->payload);
+    ctx->total = RENAULT_V1_BF_RANGE;
+    ctx->state = RenaultV1BfStateIdle;
+}
+
+void subghz_protocol_renault_v1_bf_apply(RenaultV1BfContext* ctx, void* decoder_context) {
+    furi_assert(ctx);
+    furi_assert(decoder_context);
+    if(ctx->state != RenaultV1BfStateFound) return;
+    SubGhzProtocolDecoderRenaultV1* instance = decoder_context;
+    /* Store the recovered IV in generic.seed; button + counter are slices of it (carved by
+     * check_remote_controller), so nothing else is stored. Set generic.status to mark it recovered --
+     * the marker gates recovery, not the Seed value (see needs_bruteforce). */
+    instance->generic.seed = renault_v1_iv_to_u32(ctx->iv);
+    instance->generic.status = 1;
+}
+
+void subghz_protocol_renault_v1_bf_set_not_found(void* decoder_context) {
+    furi_assert(decoder_context);
+    SubGhzProtocolDecoderBase* base = decoder_context;
+    if(base->protocol != &subghz_protocol_renault_v1) return;
+    SubGhzProtocolDecoderRenaultV1* instance = decoder_context;
+    instance->generic.status = 2; // brute exhausted, key not found (session-only, never serialized)
 }

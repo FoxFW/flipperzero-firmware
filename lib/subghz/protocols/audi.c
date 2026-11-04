@@ -9,6 +9,9 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
 
 // ============================================================================
 // Audi (Pandora) SubGHz keyfob protocol (decoder + encoder)
@@ -130,10 +133,12 @@ struct SubGhzProtocolEncoderAudi {
 
     uint8_t raw_data[AUDI_WIRE_BYTES]; // on-wire (scrambled) 8 bytes
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderAudi);
+
 
 const SubGhzProtocolDecoder subghz_protocol_audi_decoder = {
     .alloc = subghz_protocol_decoder_audi_alloc,
-    .free = subghz_protocol_decoder_audi_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_audi_feed,
     .reset = subghz_protocol_decoder_audi_reset,
     .get_hash_data = subghz_protocol_decoder_audi_get_hash_data,
@@ -142,13 +147,7 @@ const SubGhzProtocolDecoder subghz_protocol_audi_decoder = {
     .get_string = subghz_protocol_decoder_audi_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_audi_encoder = {
-    .alloc = subghz_protocol_encoder_audi_alloc,
-    .free = subghz_protocol_encoder_audi_free,
-    .deserialize = subghz_protocol_encoder_audi_deserialize,
-    .stop = subghz_protocol_encoder_audi_stop,
-    .yield = subghz_protocol_encoder_audi_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_audi_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_audi");
 
 const SubGhzProtocol subghz_protocol_audi = {
     .name = AUDI_PROTOCOL_NAME,
@@ -157,7 +156,7 @@ const SubGhzProtocol subghz_protocol_audi = {
             SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_audi_decoder,
-    .encoder = &subghz_protocol_audi_encoder,
+    .encoder = &subghz_protocol_audi_encoder_ext.vtable,
 };
 
 // ---------------------------------------------------------------------------
@@ -176,18 +175,6 @@ static uint8_t audi_parity(uint8_t b3, uint8_t b4, uint8_t b5) {
 }
 
 // One forward scramble iteration over block[0..2] = {b3,b4,b5}.
-static void audi_scramble_iteration(uint8_t block[3]) {
-    const uint8_t p = audi_parity(block[0], block[1], block[2]);
-    uint8_t carry = p;
-    for(size_t i = 0; i < 3U; i++) {
-        const uint8_t in = block[i];
-        block[i] = (uint8_t)(((in << 1) & 0xFEU) | carry);
-        carry = (uint8_t)((in >> 7) & 1U);
-    }
-    // The final carry (bit7 of the last input, i.e. old bit7(b5)) is dropped;
-    // it is recoverable on decode via the parity relation (see below).
-}
-
 // One inverse scramble iteration. Returns true if the recovered block is
 // self-consistent (recomputed parity matches the injected seed P == o0 bit0).
 static bool audi_unscramble_iteration(uint8_t block[3]) {
@@ -226,20 +213,6 @@ static bool audi_unscramble_iteration(uint8_t block[3]) {
 }
 
 // Forward: scramble {b3,b4,b5} in place, 4 iterations, then checksum b7.
-static void audi_encrypt(uint8_t raw[AUDI_WIRE_BYTES]) {
-    uint8_t block[3] = {raw[3], raw[4], raw[5]};
-    for(uint8_t r = 0; r < AUDI_SCRAMBLE_ROUNDS; r++) {
-        audi_scramble_iteration(block);
-    }
-    raw[3] = block[0];
-    raw[4] = block[1];
-    raw[5] = block[2];
-
-    uint32_t sum = 0U;
-    for(size_t i = 0; i < 7U; i++) sum += raw[i];
-    raw[7] = (uint8_t)(sum & 0xFFU);
-}
-
 // Inverse: un-scramble {b3,b4,b5} in place, 4 iterations. Returns parity_ok.
 static bool audi_decrypt_block(uint8_t raw[AUDI_WIRE_BYTES]) {
     uint8_t block[3] = {raw[3], raw[4], raw[5]};
@@ -258,12 +231,6 @@ static bool audi_decrypt_block(uint8_t raw[AUDI_WIRE_BYTES]) {
 // rolling bytes are obtained on demand via audi_decrypt_block on a copy.
 // ---------------------------------------------------------------------------
 
-static uint8_t audi_checksum(const uint8_t raw[AUDI_WIRE_BYTES]) {
-    uint32_t sum = 0U;
-    for(size_t i = 0; i < 7U; i++) sum += raw[i];
-    return (uint8_t)(sum & 0xFFU);
-}
-
 static uint32_t audi_uid(const uint8_t raw[AUDI_WIRE_BYTES]) {
     return ((uint32_t)raw[0] << 16U) | ((uint32_t)raw[1] << 8U) | raw[2];
 }
@@ -271,19 +238,6 @@ static uint32_t audi_uid(const uint8_t raw[AUDI_WIRE_BYTES]) {
 static bool audi_frame_valid(const uint8_t raw[AUDI_WIRE_BYTES]) {
     const uint32_t uid = audi_uid(raw);
     return uid != 0U && uid != 0xFFFFFFU;
-}
-
-static const char* audi_button_name(uint8_t btn) {
-    switch(btn) {
-    case AUDI_BTN_0:
-        return "Lock";
-    case AUDI_BTN_1:
-        return "Unlock";
-    case AUDI_BTN_2:
-        return "Trunk";
-    default:
-        return "Unknown";
-    }
 }
 
 static void audi_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[AUDI_WIRE_BYTES]) {
@@ -340,6 +294,14 @@ static void audi_report(SubGhzProtocolDecoderAudi* instance) {
     if(instance->bit_count < AUDI_WIRE_BITS) return;
     if(!audi_frame_valid(instance->bytes)) return;
 
+    // Integrity gate (previously display-only): require the scramble/parity self-
+    // consistency before accepting, so a foreign 64-bit PWM frame (e.g. Fiat) cannot
+    // false-fire as Audi V1. A genuine Audi frame recovers a self-consistent block.
+    uint8_t plain[AUDI_WIRE_BYTES];
+    memcpy(plain, instance->bytes, AUDI_WIRE_BYTES);
+    const bool parity_ok = audi_decrypt_block(plain);
+    if(!parity_ok) return;
+
     if(instance->last_raw_valid &&
        memcmp(instance->last_raw_data, instance->bytes, AUDI_WIRE_BYTES) == 0) {
         return; // repeated identical frame
@@ -348,11 +310,7 @@ static void audi_report(SubGhzProtocolDecoderAudi* instance) {
     memcpy(instance->raw_data, instance->bytes, AUDI_WIRE_BYTES);
     memcpy(instance->last_raw_data, instance->bytes, AUDI_WIRE_BYTES);
     instance->last_raw_valid = true;
-
-    // Un-scramble a copy to flag parity/checksum consistency (display only).
-    uint8_t plain[AUDI_WIRE_BYTES];
-    memcpy(plain, instance->raw_data, AUDI_WIRE_BYTES);
-    instance->parity_ok = audi_decrypt_block(plain);
+    instance->parity_ok = parity_ok;
 
     audi_decode_fields(&instance->generic, instance->raw_data);
 
@@ -371,11 +329,7 @@ void* subghz_protocol_decoder_audi_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_audi_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderAudi* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_audi_reset(void* context) {
     furi_check(context);
@@ -396,8 +350,8 @@ void subghz_protocol_decoder_audi_feed(void* context, bool level, uint32_t durat
 
     switch(instance->decoder.parser_step) {
     case AudiDecoderStepReset:
-        // Header HIGH ~2500us.
-        if(level && duration >= AUDI_HEADER_MIN_US) {
+        // Header HIGH ~2500us (strict window: a ~2000us foreign high, e.g. Fiat, must NOT match).
+        if(level && DURATION_DIFF(duration, AUDI_HEADER_HIGH) < AUDI_TE_DELTA * 2U) {
             instance->decoder.parser_step = AudiDecoderStepHeaderLow;
         }
         break;
@@ -415,7 +369,7 @@ void subghz_protocol_decoder_audi_feed(void* context, bool level, uint32_t durat
     case AudiDecoderStepData:
         if(level) {
             // A new header HIGH mid-stream: try to report, then re-sync.
-            if(duration >= AUDI_HEADER_MIN_US) {
+            if(DURATION_DIFF(duration, AUDI_HEADER_HIGH) < AUDI_TE_DELTA * 2U) {
                 audi_report(instance);
                 instance->decoder.parser_step = AudiDecoderStepHeaderLow;
                 break;
@@ -537,35 +491,17 @@ SubGhzProtocolStatus
 }
 
 void subghz_protocol_decoder_audi_get_string(void* context, FuriString* output) {
-    furi_check(context);
     SubGhzProtocolDecoderAudi* instance = context;
-
-    const uint8_t cs = instance->raw_data[7];
-    const uint8_t cs_calc = audi_checksum(instance->raw_data);
-
-    furi_string_cat_printf(
-        output,
-        "%s %ubit\r\n"
-        "SN:%06lX Btn:[%s]\r\n"
-        "Cnt:%04lX CS:%02X[%s] P:%s\r\n"
-        "Data:%02X%02X%02X%02X%02X%02X%02X%02X\r\n",
-        instance->generic.protocol_name,
-        AUDI_WIRE_BITS,
-        (unsigned long)instance->generic.serial,
-        audi_button_name((uint8_t)instance->generic.btn),
-        (unsigned long)instance->generic.cnt,
-        cs,
-        (cs == cs_calc) ? "OK" : "opaque",
-        instance->parity_ok ? "OK" : "BAD",
-        instance->raw_data[0],
-        instance->raw_data[1],
-        instance->raw_data[2],
-        instance->raw_data[3],
-        instance->raw_data[4],
-        instance->raw_data[5],
-        instance->raw_data[6],
-        instance->raw_data[7]);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+
 
 // ---------------------------------------------------------------------------
 // Encoder: rebuild the exact TX wire.
@@ -580,198 +516,5 @@ void subghz_protocol_decoder_audi_get_string(void* context, FuriString* output) 
 // advance the plaintext rolling counter (b3/b4), re-scramble, re-checksum.
 // ---------------------------------------------------------------------------
 
-static size_t audi_append_data_pairs(LevelDuration* upload, size_t index, const uint8_t raw[AUDI_WIRE_BYTES]) {
-    for(uint16_t bit_index = 0U; bit_index < AUDI_WIRE_BITS; bit_index++) {
-        const bool bit = ((raw[bit_index >> 3U] >> (bit_index & 7U)) & 1U) != 0U;
-        if(bit) {
-            upload[index++] = level_duration_make(true, AUDI_TE_LONG);
-            upload[index++] = level_duration_make(false, AUDI_TE_SHORT);
-        } else {
-            upload[index++] = level_duration_make(true, AUDI_TE_SHORT);
-            upload[index++] = level_duration_make(false, AUDI_TE_LONG);
-        }
-    }
-    return index;
-}
-
-static bool audi_encoder_build_upload(SubGhzProtocolEncoderAudi* instance) {
-    furi_check(instance);
-    LevelDuration* upload = instance->encoder.upload;
-    if(!upload) return false;
-
-    size_t index = 0U;
-    for(uint8_t rep = 0U; rep < AUDI_REPEATS; rep++) {
-        // Header / sync.
-        upload[index++] = level_duration_make(true, AUDI_HEADER_HIGH);
-        upload[index++] = level_duration_make(false, AUDI_HEADER_LOW);
-        // 64 PWM data bits LSB-first.
-        index = audi_append_data_pairs(upload, index, instance->raw_data);
-        // Inter-repeat gap.
-        upload[index++] = level_duration_make(false, AUDI_GAP_US);
-    }
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0U;
-    return true;
-}
-
-void* subghz_protocol_encoder_audi_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderAudi* instance = calloc(1, sizeof(SubGhzProtocolEncoderAudi));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_audi;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = AUDI_DEFAULT_REPEAT;
-    instance->encoder.size_upload = 0U;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-    return instance;
-}
-
-void subghz_protocol_encoder_audi_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderAudi* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_audi_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderAudi* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-}
-
-LevelDuration subghz_protocol_encoder_audi_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderAudi* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        // Endless/breakless TX: while OK is held do not consume repeats.
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0U;
-    }
-
-    return ret;
-}
-
 // Rebuild the on-wire raw from a chosen button + plaintext rolling counter.
 // Keeps UID (b0..b2) and b5 plaintext as captured; only b3/b4 carry the counter.
-static void audi_reencode(SubGhzProtocolEncoderAudi* instance, uint8_t new_btn, uint16_t new_cnt) {
-    uint8_t plain[AUDI_WIRE_BYTES];
-    memcpy(plain, instance->raw_data, AUDI_WIRE_BYTES);
-    audi_decrypt_block(plain); // recover plaintext b3,b4,b5
-
-    plain[3] = (uint8_t)((new_cnt >> 8U) & 0xFFU);
-    plain[4] = (uint8_t)(new_cnt & 0xFFU);
-    plain[6] = new_btn;
-
-    audi_encrypt(plain); // re-scramble {b3,b4,b5} + checksum b7
-    memcpy(instance->raw_data, plain, AUDI_WIRE_BYTES);
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_audi_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    furi_check(flipper_format);
-    SubGhzProtocolEncoderAudi* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-
-    flipper_format_rewind(flipper_format);
-    FuriString* protocol_name = furi_string_alloc();
-    bool protocol_ok = flipper_format_read_string(flipper_format, "Protocol", protocol_name) &&
-                       furi_string_equal(protocol_name, instance->base.protocol->name);
-    furi_string_free(protocol_name);
-    if(!protocol_ok) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    uint32_t bit_count = 0U;
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_uint32(flipper_format, "Bit", &bit_count, 1) ||
-       bit_count != AUDI_WIRE_BITS) {
-        return SubGhzProtocolStatusErrorValueBitCount;
-    }
-    instance->generic.data_count_bit = (uint16_t)bit_count;
-
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_hex(
-           flipper_format, AUDI_DATA_FIELD, instance->raw_data, AUDI_WIRE_BYTES) ||
-       !audi_frame_valid(instance->raw_data)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    instance->generic.serial = audi_uid(instance->raw_data);
-    instance->generic.btn = instance->raw_data[6];
-    {
-        uint8_t plain[AUDI_WIRE_BYTES];
-        memcpy(plain, instance->raw_data, AUDI_WIRE_BYTES);
-        audi_decrypt_block(plain);
-        instance->generic.cnt = (uint16_t)(((uint16_t)plain[3] << 8U) | plain[4]);
-    }
-
-    // [PROTOPIRATE_PORT] custom_btn support. Audi has 3 buttons:
-    //   btn0=0x01 (Lock), btn1=0x02 (Unlock), btn2=0x04 (Trunk).
-    // OK replays the captured frame byte-identically. A D-pad change re-derives
-    // the whole frame (b6 + advanced rolling counter, re-scrambled + checksum),
-    // so the emitted frame round-trips through this decoder.
-    const uint8_t original_btn = instance->raw_data[6];
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(original_btn);
-    }
-    subghz_custom_btn_set_max(3);
-    const uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t new_btn = original_btn;
-    switch(custom_btn_id) {
-    case SUBGHZ_CUSTOM_BTN_UP:   new_btn = AUDI_BTN_0; break;
-    case SUBGHZ_CUSTOM_BTN_DOWN: new_btn = AUDI_BTN_1; break;
-    case SUBGHZ_CUSTOM_BTN_LEFT: new_btn = AUDI_BTN_2; break;
-    case SUBGHZ_CUSTOM_BTN_OK:
-    default:                     new_btn = original_btn; break; // exact replay
-    }
-
-    if(new_btn != original_btn) {
-        // Advance the plaintext rolling counter for a genuine (non-replay) press.
-        uint32_t new_counter = instance->generic.cnt;
-        uint32_t override_cnt = 0U;
-        if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
-            new_counter = override_cnt;
-        } else {
-            new_counter += (uint32_t)furi_hal_subghz_get_rolling_counter_mult();
-        }
-        new_counter &= 0xFFFFU;
-        audi_reencode(instance, new_btn, (uint16_t)new_counter);
-        instance->generic.serial = audi_uid(instance->raw_data);
-        instance->generic.btn = new_btn;
-        instance->generic.cnt = (uint16_t)new_counter;
-    }
-
-    audi_decode_fields(&instance->generic, instance->raw_data);
-
-    uint32_t repeat = AUDI_DEFAULT_REPEAT;
-    flipper_format_rewind(flipper_format);
-    flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
-    instance->encoder.repeat = (repeat == 0U) ? AUDI_DEFAULT_REPEAT : (size_t)repeat;
-
-    if(instance->encoder.upload == NULL) {
-        instance->encoder.upload = malloc(AUDI_UPLOAD_CAPACITY * sizeof(LevelDuration));
-        furi_check(instance->encoder.upload);
-    }
-    if(!audi_encoder_build_upload(instance)) {
-        return SubGhzProtocolStatusErrorEncoderGetUpload;
-    }
-
-    instance->encoder.is_running = true;
-    return SubGhzProtocolStatusOk;
-}

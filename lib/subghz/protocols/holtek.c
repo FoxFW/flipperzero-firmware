@@ -1,5 +1,8 @@
 #include "holtek.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -32,6 +35,9 @@ struct SubGhzProtocolEncoderHoltek {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHoltek);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderHoltek);
+
 typedef enum {
     HoltekDecoderStepReset = 0,
     HoltekDecoderStepFoundStartBit,
@@ -41,25 +47,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_holtek_decoder = {
     .alloc = subghz_protocol_decoder_holtek_alloc,
-    .free = subghz_protocol_decoder_holtek_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_holtek_feed,
-    .reset = subghz_protocol_decoder_holtek_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_holtek_get_hash_data,
-    .serialize = subghz_protocol_decoder_holtek_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_holtek_deserialize,
-    .get_string = subghz_protocol_decoder_holtek_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_holtek_encoder = {
-    .alloc = subghz_protocol_encoder_holtek_alloc,
-    .free = subghz_protocol_encoder_holtek_free,
-
-    .deserialize = subghz_protocol_encoder_holtek_deserialize,
-    .stop = subghz_protocol_encoder_holtek_stop,
-    .yield = subghz_protocol_encoder_holtek_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_holtek_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_holtek");
 
 const SubGhzProtocol subghz_protocol_holtek = {
     .name = SUBGHZ_PROTOCOL_HOLTEK_NAME,
@@ -69,134 +68,13 @@ const SubGhzProtocol subghz_protocol_holtek = {
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_holtek_decoder,
-    .encoder = &subghz_protocol_holtek_encoder,
+    .encoder = &subghz_protocol_holtek_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_holtek_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderHoltek* instance = malloc(sizeof(SubGhzProtocolEncoderHoltek));
-
-    instance->base.protocol = &subghz_protocol_holtek;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 128;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_holtek_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHoltek* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_holtek_get_upload(SubGhzProtocolEncoderHoltek* instance) {
-    furi_assert(instance);
-
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_holtek_const.te_short * 36);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_holtek_const.te_short);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_holtek_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_holtek_const.te_short);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_holtek_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_holtek_const.te_long);
-        }
-    }
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_holtek_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderHoltek* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_holtek_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_holtek_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_holtek_stop(void* context) {
-    SubGhzProtocolEncoderHoltek* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_holtek_yield(void* context) {
-    SubGhzProtocolEncoderHoltek* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_holtek_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderHoltek* instance = malloc(sizeof(SubGhzProtocolDecoderHoltek));
-    instance->base.protocol = &subghz_protocol_holtek;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_holtek_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoltek* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_holtek_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoltek* instance = context;
-    instance->decoder.parser_step = HoltekDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderHoltek), &subghz_protocol_holtek);
 }
 
 void subghz_protocol_decoder_holtek_feed(void* context, bool level, uint32_t duration) {
@@ -275,45 +153,6 @@ void subghz_protocol_decoder_holtek_feed(void* context, bool level, uint32_t dur
     }
 }
 
-static void subghz_protocol_holtek_check_remote_controller(SubGhzBlockGeneric* instance) {
-    if((instance->data & HOLTEK_HEADER_MASK) == HOLTEK_HEADER) {
-        instance->serial =
-            subghz_protocol_blocks_reverse_key((instance->data >> 16) & 0xFFFFF, 20);
-        uint16_t btn = instance->data & 0xFFFF;
-        if((btn & 0xf) != 0xA) {
-            instance->btn = 0x1 << 4 | (btn & 0xF);
-        } else if(((btn >> 4) & 0xF) != 0xA) {
-            instance->btn = 0x2 << 4 | ((btn >> 4) & 0xF);
-        } else if(((btn >> 8) & 0xF) != 0xA) {
-            instance->btn = 0x3 << 4 | ((btn >> 8) & 0xF);
-        } else if(((btn >> 12) & 0xF) != 0xA) {
-            instance->btn = 0x4 << 4 | ((btn >> 12) & 0xF);
-        } else {
-            instance->btn = 0;
-        }
-    } else {
-        instance->serial = 0;
-        instance->btn = 0;
-        instance->cnt = 0;
-    }
-}
-
-uint8_t subghz_protocol_decoder_holtek_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoltek* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_holtek_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoltek* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_holtek_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -322,30 +161,3 @@ SubGhzProtocolStatus
         &instance->generic, flipper_format, subghz_protocol_holtek_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_holtek_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderHoltek* instance = context;
-    subghz_protocol_holtek_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.btn_is_available = false;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 4;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%lX%08lX\r\n"
-        "Sn:0x%05lX Btn:%X ",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)((instance->generic.data >> 32) & 0xFFFFFFFF),
-        (uint32_t)(instance->generic.data & 0xFFFFFFFF),
-        instance->generic.serial,
-        instance->generic.btn >> 4);
-
-    if((instance->generic.btn & 0xF) == 0xE) {
-        furi_string_cat_printf(output, "ON\r\n");
-    } else if((instance->generic.btn & 0xF) == 0xB) {
-        furi_string_cat_printf(output, "OFF\r\n");
-    }
-}

@@ -36,7 +36,7 @@ Usage (called from CI after `./fbt updater_package`):
         --dist-dir dist/f7 \\
         --version 2.0.0 \\
         --changelog "What's new..." \\
-        --repo foxfw/2.0 \\
+        --repo foxfw/flipperzero-firmware \\
         --tag v2.0.0 \\
         --channel-id release \\
         --channel-title "Stable Release Channel" \\
@@ -145,7 +145,7 @@ def main():
     ap.add_argument("--dist-dir", required=True, help="e.g. dist/f7 — output of ./fbt updater_package")
     ap.add_argument("--version", required=True, help="Version string, e.g. 2.0.0 or a commit hash")
     ap.add_argument("--changelog", default="", help="Changelog text for this version")
-    ap.add_argument("--repo", required=True, help="owner/repo the release assets live in, e.g. foxfw/2.0")
+    ap.add_argument("--repo", required=True, help="owner/repo the release assets live in, e.g. foxfw/flipperzero-firmware")
     ap.add_argument("--tag", required=True, help="Git tag the release assets were uploaded under")
     ap.add_argument("--channel-id", default="release")
     ap.add_argument("--channel-title", default="Stable Release Channel")

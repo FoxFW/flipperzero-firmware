@@ -90,7 +90,7 @@ extern const UpdaterBoard k_updater_boards[UPDATER_BOARD_COUNT];
 #define UPDATER_BAUD      115200U
 #define UPDATER_FAST_BAUD 921600U
 
-#define FOXFW_REPO   "FoxFW/2.0"
+#define FOXFW_REPO   "FoxFW/flipperzero-firmware"
 #define ESP32FW_REPO "FoxFW/Fox_ESP32_FW"
 
 #define FOXFW_TAR_ASSET_NAME "flipper-z-f7-update-local.tar"

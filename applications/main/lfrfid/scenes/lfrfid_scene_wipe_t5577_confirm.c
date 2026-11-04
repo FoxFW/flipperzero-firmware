@@ -10,11 +10,11 @@ void lfrfid_scene_wipe_t5577_confirm_on_enter(void* context) {
     widget_add_string_multiline_element(
         widget,
         64,
-        19,
+        16,
         AlignCenter,
         AlignTop,
         FontSecondary,
-        "Erases all data. Tag won't\nread until re-written.\nHold still while running");
+        "Erases all data.\nHold Flipper still\nwhile writing.");
 
     view_dispatcher_switch_to_view(app->view_dispatcher, LfRfidViewWidget);
 }

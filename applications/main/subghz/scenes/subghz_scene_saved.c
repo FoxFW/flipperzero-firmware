@@ -1,5 +1,4 @@
 #include "../subghz_i.h"
-#include "../helpers/subghz_garage_protocol_names.h"
 #include <flipper_format/flipper_format.h>
 #include <storage/storage.h>
 #include <stdio.h>
@@ -17,36 +16,10 @@ void subghz_scene_saved_on_enter(void* context) {
     bool picked = dialog_file_browser_show(
         subghz->dialogs, subghz->file_path, subghz->file_path, &browser_options);
 
-    bool handed_off_to_garage = false;
     bool loaded = false;
 
     if(picked) {
-        FuriString* protocol = furi_string_alloc();
-        Storage* storage = furi_record_open(RECORD_STORAGE);
-        FlipperFormat* ff = flipper_format_file_alloc(storage);
-        if(flipper_format_file_open_existing(ff, furi_string_get_cstr(subghz->file_path))) {
-            flipper_format_rewind(ff);
-            flipper_format_read_string(ff, "Protocol", protocol);
-        }
-        flipper_format_free(ff);
-        furi_record_close(RECORD_STORAGE);
-
-        if(subghz_garage_protocol_name_is_garage(furi_string_get_cstr(protocol))) {
-            char args[300];
-            snprintf(
-                args, sizeof(args), "savedmenu:%s", furi_string_get_cstr(subghz->file_path));
-            subghz_launch_garage_via_probe(subghz, args, false);
-            handed_off_to_garage = true;
-        }
-        furi_string_free(protocol);
-
-        if(!handed_off_to_garage) {
-            loaded = subghz_key_load(subghz, furi_string_get_cstr(subghz->file_path), true);
-        }
-    }
-
-    if(handed_off_to_garage) {
-        return;
+        loaded = subghz_key_load(subghz, furi_string_get_cstr(subghz->file_path), true);
     }
 
     if(loaded) {

@@ -25,7 +25,10 @@ static void decode_raw_failed_cleanup_and_return(SubGhz* subghz) {
     subghz_file_encoder_worker_free(subghz->decode_raw_file_worker_encoder);
 
     subghz->state_notifications = SubGhzNotificationStateIDLE;
-    subghz_rx_key_state_set(subghz, SubGhzRxKeyStateIDLE);
+    /* Keep the RAW file marked as loaded (NOT IDLE): leaving it IDLE makes a later
+     * return to Read RAW fall into the default branch and auto-arm the receiver /
+     * start the capture countdown. RAWLoad re-shows the loaded file without RX. */
+    subghz_rx_key_state_set(subghz, SubGhzRxKeyStateRAWLoad);
 
     scene_manager_set_scene_state(
         subghz->scene_manager, SubGhzSceneReadRAW, SubGhzCustomEventManagerNoSet);
@@ -77,8 +80,8 @@ void subghz_scene_decode_raw_failed_on_enter(void* context) {
             widget, 64, 8, AlignCenter, AlignTop, FontPrimary, "Decode Failed");
 
         widget_add_string_multiline_element(
-            widget, 64, 18, AlignCenter, AlignTop, FontSecondary,
-            "Raw sub failed to decode\nwith the available\nprotocols.");
+            widget, 64, 20, AlignCenter, AlignTop, FontSecondary,
+            "Raw sub failed to decode\nwith available protocols.");
         widget_add_button_element(
             widget, GuiButtonTypeLeft, "Cancel", decode_raw_failed_widget_cb, subghz);
         widget_add_button_element(

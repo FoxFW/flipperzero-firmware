@@ -248,7 +248,6 @@ static void protopirate_sub_decode_receiver_callback(
     SubGhzProtocolDecoderBase* decoder_base,
     void* context) {
     UNUSED(receiver);
-    furi_check(context);
     ProtoPirateApp* app = context;
     SubDecodeContext* ctx = g_decode_ctx;
 
@@ -263,6 +262,7 @@ static void protopirate_sub_decode_receiver_callback(
            ctx->history, decoder_base, app->txrx->preset, virtual_tick)) {
         ctx->signal_count++;
         FURI_LOG_I(TAG, "Added signal %u to history", ctx->signal_count);
+        notification_message(app->notifications, &sequence_semi_success);
 
         view_dispatcher_send_custom_event(
             app->view_dispatcher, ProtoPirateCustomEventSubDecodeUpdate);
@@ -388,8 +388,7 @@ static void
 
     widget_add_string_element(app->widget, 64, 0, AlignCenter, AlignTop, FontPrimary, title);
     widget_add_icon_element(app->widget, 2, 16, &I_fox_32x32);
-    widget_add_string_multiline_element(
-        app->widget, 50, 15, AlignLeft, AlignTop, FontSecondary, body);
+    widget_add_text_scroll_element(app->widget, 50, 15, 78, 32, body);
     widget_add_button_element(
         app->widget, GuiButtonTypeCenter, "OK", protopirate_scene_sub_decode_widget_callback, app);
 }
@@ -680,6 +679,7 @@ bool plugin_scene_sub_decode_on_event(ProtoPirateApp* app, SceneManagerEvent eve
                     strlen(app->save_filename),
                     false); // don't clear default text
 
+                app->dialog_showing = true;
                 view_dispatcher_switch_to_view(app->view_dispatcher, ProtoPirateViewTextInput);
                 free(file_name_str);
             } else {
@@ -711,6 +711,8 @@ bool plugin_scene_sub_decode_on_event(ProtoPirateApp* app, SceneManagerEvent eve
                 }
                 furi_string_free(save_path);
             }
+
+            app->dialog_showing = false;
 
             // Return to the receiver info widget
             view_dispatcher_switch_to_view(app->view_dispatcher, ProtoPirateViewWidget);
@@ -1276,7 +1278,7 @@ bool plugin_scene_sub_decode_on_event(ProtoPirateApp* app, SceneManagerEvent eve
                 protopirate_history_get_text_item_detail(
                     ctx->history, ctx->selected_history_index, text, app->txrx->environment);
                 widget_add_text_scroll_element(
-                    app->widget, 0, 0, 128, 50, furi_string_get_cstr(text));
+                    app->widget, 0, 0, 128, 47, furi_string_get_cstr(text));
 
                 // Add save button
                 widget_add_button_element(
@@ -1368,6 +1370,11 @@ bool plugin_scene_sub_decode_on_event(ProtoPirateApp* app, SceneManagerEvent eve
         }
 
     } else if(event.type == SceneManagerEventTypeBack) {
+        if(app->dialog_showing) {
+            app->dialog_showing = false;
+            view_dispatcher_switch_to_view(app->view_dispatcher, ProtoPirateViewWidget);
+            return false;
+        }
         app->txrx->idx_menu_chosen = ctx->selected_history_index;
         if(protopirate_scene_sub_decode_cancel_active_decode(app, ctx)) {
             consumed = true;

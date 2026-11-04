@@ -1,5 +1,8 @@
 #include "intertechno_v3.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -35,6 +38,9 @@ struct SubGhzProtocolEncoderIntertechno_V3 {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderIntertechno_V3);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderIntertechno_V3);
+
 typedef enum {
     IntertechnoV3DecoderStepReset = 0,
     IntertechnoV3DecoderStepStartSync,
@@ -47,25 +53,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_intertechno_v3_decoder = {
     .alloc = subghz_protocol_decoder_intertechno_v3_alloc,
-    .free = subghz_protocol_decoder_intertechno_v3_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_intertechno_v3_feed,
-    .reset = subghz_protocol_decoder_intertechno_v3_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_intertechno_v3_get_hash_data,
-    .serialize = subghz_protocol_decoder_intertechno_v3_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_intertechno_v3_deserialize,
-    .get_string = subghz_protocol_decoder_intertechno_v3_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_intertechno_v3_encoder = {
-    .alloc = subghz_protocol_encoder_intertechno_v3_alloc,
-    .free = subghz_protocol_encoder_intertechno_v3_free,
-
-    .deserialize = subghz_protocol_encoder_intertechno_v3_deserialize,
-    .stop = subghz_protocol_encoder_intertechno_v3_stop,
-    .yield = subghz_protocol_encoder_intertechno_v3_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_intertechno_v3_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_intertechno_v3");
 
 const SubGhzProtocol subghz_protocol_intertechno_v3 = {
     .name = SUBGHZ_PROTOCOL_INTERTECHNO_V3_NAME,
@@ -75,158 +74,13 @@ const SubGhzProtocol subghz_protocol_intertechno_v3 = {
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_intertechno_v3_decoder,
-    .encoder = &subghz_protocol_intertechno_v3_encoder,
+    .encoder = &subghz_protocol_intertechno_v3_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_intertechno_v3_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderIntertechno_V3* instance =
-        malloc(sizeof(SubGhzProtocolEncoderIntertechno_V3));
-
-    instance->base.protocol = &subghz_protocol_intertechno_v3;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 256;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_intertechno_v3_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderIntertechno_V3* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_intertechno_v3_get_upload(
-    SubGhzProtocolEncoderIntertechno_V3* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short * 38);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short * 10);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if((instance->generic.data_count_bit == INTERTECHNO_V3_DIMMING_COUNT_BIT) && (i == 9)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] = level_duration_make(
-                false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] = level_duration_make(
-                false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-        } else if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_intertechno_v3_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] = level_duration_make(
-                false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] = level_duration_make(
-                false, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_intertechno_v3_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_intertechno_v3_const.te_long);
-        }
-    }
-    instance->encoder.size_upload = index;
-    return true;
-}
-
-SubGhzProtocolStatus subghz_protocol_encoder_intertechno_v3_deserialize(
-    void* context,
-    FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderIntertechno_V3* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-        if((instance->generic.data_count_bit !=
-            subghz_protocol_intertechno_v3_const.min_count_bit_for_found) &&
-           (instance->generic.data_count_bit != INTERTECHNO_V3_DIMMING_COUNT_BIT)) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
-            ret = SubGhzProtocolStatusErrorValueBitCount;
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_intertechno_v3_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_intertechno_v3_stop(void* context) {
-    SubGhzProtocolEncoderIntertechno_V3* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_intertechno_v3_yield(void* context) {
-    SubGhzProtocolEncoderIntertechno_V3* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_intertechno_v3_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderIntertechno_V3* instance =
-        malloc(sizeof(SubGhzProtocolDecoderIntertechno_V3));
-    instance->base.protocol = &subghz_protocol_intertechno_v3;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_intertechno_v3_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderIntertechno_V3* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_intertechno_v3_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderIntertechno_V3* instance = context;
-    instance->decoder.parser_step = IntertechnoV3DecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderIntertechno_V3), &subghz_protocol_intertechno_v3);
 }
 
 void subghz_protocol_decoder_intertechno_v3_feed(void* context, bool level, uint32_t duration) {
@@ -341,47 +195,6 @@ void subghz_protocol_decoder_intertechno_v3_feed(void* context, bool level, uint
     }
 }
 
-static void subghz_protocol_intertechno_v3_check_remote_controller(SubGhzBlockGeneric* instance) {
-
-    if(instance->data_count_bit == subghz_protocol_intertechno_v3_const.min_count_bit_for_found) {
-        instance->serial = (instance->data >> 6) & 0x3FFFFFF;
-        if((instance->data >> 5) & 0x1) {
-            instance->cnt = 1 << 5;
-        } else {
-            instance->cnt = (~instance->data & 0xF);
-        }
-        instance->btn = (instance->data >> 4) & 0x1;
-    } else if(instance->data_count_bit == INTERTECHNO_V3_DIMMING_COUNT_BIT) {
-        instance->serial = (instance->data >> 10) & 0x3FFFFFF;
-        if((instance->data >> 9) & 0x1) {
-            instance->cnt = 1 << 5;
-        } else {
-            instance->cnt = (~(instance->data >> 4) & 0xF);
-        }
-        instance->btn = (instance->data) & 0xF;
-    } else {
-        instance->serial = 0;
-        instance->cnt = 0;
-        instance->btn = 0;
-    }
-}
-
-uint8_t subghz_protocol_decoder_intertechno_v3_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderIntertechno_V3* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_intertechno_v3_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderIntertechno_V3* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus subghz_protocol_decoder_intertechno_v3_deserialize(
     void* context,
     FlipperFormat* flipper_format) {
@@ -404,47 +217,3 @@ SubGhzProtocolStatus subghz_protocol_decoder_intertechno_v3_deserialize(
     return ret;
 }
 
-void subghz_protocol_decoder_intertechno_v3_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderIntertechno_V3* instance = context;
-
-    subghz_protocol_intertechno_v3_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-
-    furi_string_cat_printf(
-        output,
-        "%.11s %db\r\n"
-        "Key:0x%08llX\r\n"
-        "Sn:%07lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->generic.data,
-        instance->generic.serial);
-
-    if(instance->generic.data_count_bit ==
-       subghz_protocol_intertechno_v3_const.min_count_bit_for_found) {
-        if(instance->generic.cnt >> 5) {
-            furi_string_cat_printf(
-                output, "Ch: All Btn:%s\r\n", (instance->generic.btn ? "On" : "Off"));
-            subghz_block_generic_global.btn_is_available = false;
-            subghz_block_generic_global.btn_length_bit = 1;
-        } else {
-            furi_string_cat_printf(
-                output,
-                "Ch:" CH_PATTERN " Btn:%s\r\n",
-                CNT_TO_CH(instance->generic.cnt),
-                (instance->generic.btn ? "On" : "Off"));
-            subghz_block_generic_global.btn_is_available = false;
-            subghz_block_generic_global.btn_length_bit = 1;
-        }
-    } else if(instance->generic.data_count_bit == INTERTECHNO_V3_DIMMING_COUNT_BIT) {
-        furi_string_cat_printf(
-            output,
-            "Ch:" CH_PATTERN " Dimm:%d%%\r\n",
-            CNT_TO_CH(instance->generic.cnt),
-            (int)(6.67f * (float)instance->generic.btn));
-        subghz_block_generic_global.btn_is_available = false;
-        subghz_block_generic_global.btn_length_bit = 4;
-    }
-}

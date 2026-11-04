@@ -5,7 +5,6 @@
 #include <stdbool.h>
 #include <storage/storage.h>
 #include <lib/subghz/types.h>
-#include "helpers/subghz_garage_protocol_names.h"
 
 #define SUBGHZ_LAST_SETTING_FREQUENCY_ANALYZER_TRIGGER        (-93.0f)
 
@@ -16,6 +15,8 @@
 
 #define SUBGHZ_LAST_SETTING_DEFAULT_VISUALIZER_MODE          0u
 #define SUBGHZ_LAST_SETTING_DEFAULT_RAW_ZOOM_LEVEL           0u
+#define SUBGHZ_LAST_SETTING_DEFAULT_DUAL_INT_PRESET          1u
+#define SUBGHZ_LAST_SETTING_DEFAULT_DUAL_EXT_PRESET          3u
 
 typedef struct {
     uint32_t frequency;
@@ -28,9 +29,10 @@ typedef struct {
     uint32_t filter;
     float rssi;
 
-    bool rssi_force_applied;
+    uint32_t predefined_index;
     bool delete_old_signals;
     bool auto_save;
+    bool capture_unknown_raw; /* Unknown RAW +21 protocol capture on Read screen */
     float hopping_threshold;
     bool enable_preset_hopping;
     float preset_hopping_threshold;
@@ -46,9 +48,12 @@ typedef struct {
     bool    bypass_region_lock;
     char    file_prefix[12];
 
-    uint32_t protocol_group;
-    uint8_t  protocol_groups_enabled[SUBGHZ_GARAGE_PROTOCOL_GROUP_COUNT];
     int32_t  frequency_offset;
+
+    uint32_t dual_int_frequency;
+    uint32_t dual_int_preset_index;
+    uint32_t dual_ext_frequency;
+    uint32_t dual_ext_preset_index;
 } SubGhzLastSettings;
 
 void subghz_last_settings_set_protocol_filter(SubGhzLastSettings* s,

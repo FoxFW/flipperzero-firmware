@@ -51,7 +51,7 @@ void picopass_scene_emulate_update_ui(void* context) {
     Widget* widget = picopass->widget;
     widget_reset(widget);
     widget_add_icon_element(widget, 0, 3, &I_RFIDDolphinSend_97x61);
-    widget_add_string_element(widget, 92, 25, AlignCenter, AlignTop, FontPrimary, "Emulating");
+    widget_add_string_element(widget, 92, 16, AlignCenter, AlignTop, FontPrimary, "Emulating");
 
     // Reload credential data
     picopass_device_parse_credential(dev_data->card_data, pacs);
@@ -81,11 +81,11 @@ void picopass_scene_emulate_update_ui(void* context) {
         if(current_component == FacilityCode) {
             furi_string_printf(desc, "*FC:%lu", card.FacilityCode);
             widget_add_string_element(
-                widget, 92, 35, AlignCenter, AlignTop, FontSecondary, furi_string_get_cstr(desc));
+                widget, 92, 28, AlignCenter, AlignTop, FontSecondary, furi_string_get_cstr(desc));
         } else {
             furi_string_printf(desc, "FC:%lu", card.FacilityCode);
             widget_add_string_element(
-                widget, 92, 35, AlignCenter, AlignTop, FontSecondary, furi_string_get_cstr(desc));
+                widget, 92, 28, AlignCenter, AlignTop, FontSecondary, furi_string_get_cstr(desc));
         }
 
         if(current_component == CardNumber) {
@@ -95,7 +95,7 @@ void picopass_scene_emulate_update_ui(void* context) {
         }
 
         widget_add_string_element(
-            widget, 92, 50, AlignCenter, AlignBottom, FontSecondary, furi_string_get_cstr(desc));
+            widget, 92, 45, AlignCenter, AlignBottom, FontSecondary, furi_string_get_cstr(desc));
         furi_string_free(desc);
 
         widget_add_button_element(

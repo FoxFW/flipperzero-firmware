@@ -87,9 +87,9 @@ ProtoPirateApp* protopirate_app_alloc() {
     app->file_path = malloc(strlen(PROTOPIRATE_APP_FOLDER) + 1);
     snprintf(app->file_path, strlen(PROTOPIRATE_APP_FOLDER) + 1, PROTOPIRATE_APP_FOLDER);
 
-    // Load saved settings
+    // Load saved settings (settings code lives in the Config plugin FAL in 4.1+)
     ProtoPirateSettings settings;
-    protopirate_settings_load(&settings);
+    protopirate_settings_load_from_plugin(&settings);
 
     // Apply auto-save setting
     app->auto_save = settings.auto_save;
@@ -304,7 +304,7 @@ void protopirate_app_free(ProtoPirateApp* app) {
         settings.hopper_state,
         settings.emulate_feature_enabled);
 
-    protopirate_settings_save(&settings);
+    protopirate_settings_save_from_plugin(&settings);
 
     FURI_LOG_D(TAG, "Calling radio_deinit");
     protopirate_radio_deinit(app);

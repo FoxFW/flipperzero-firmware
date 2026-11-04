@@ -231,11 +231,21 @@ void subghz_cli_command_tx(PipeSide* pipe, FuriString* args, void* context) {
     Stream* stream = flipper_format_get_raw_stream(flipper_format);
     stream_clean(stream);
     stream_write_cstring(stream, furi_string_get_cstr(flipper_format_string));
+    furi_string_free(flipper_format_string); // copied into the stream; was previously leaked
 
     SubGhzEnvironment* environment = subghz_environment_alloc();
     subghz_environment_set_protocol_registry(environment, (void*)&subghz_protocol_registry);
 
     SubGhzTransmitter* transmitter = subghz_transmitter_alloc_init(environment, "Princeton");
+    if(!transmitter) {
+        // Encoder lives on SD (FoxFW2.0 v2.1 split): no card / missing enc_princeton.fal.
+        printf("Princeton encoder unavailable (SD card or enc_princeton.fal missing)\r\n");
+        flipper_format_free(flipper_format);
+        subghz_environment_free(environment);
+        subghz_devices_deinit();
+        subghz_cli_radio_device_power_off();
+        return;
+    }
     subghz_transmitter_deserialize(transmitter, flipper_format);
 
     subghz_devices_begin(device);
@@ -836,6 +846,7 @@ static void subghz_cli_command_print_usage(void) {
     }
 }
 
+#ifdef FURI_DEBUG
 static void subghz_cli_command_encrypt_keeloq(PipeSide* pipe, FuriString* args) {
     UNUSED(pipe);
     uint8_t iv[16];
@@ -911,6 +922,7 @@ static void subghz_cli_command_encrypt_raw(PipeSide* pipe, FuriString* args) {
     furi_string_free(destination);
     furi_string_free(source);
 }
+#endif
 
 static void subghz_cli_command_chat(PipeSide* pipe, FuriString* args) {
     uint32_t frequency = 433920000;
@@ -1144,27 +1156,27 @@ static void execute(PipeSide* pipe, FuriString* args, void* context) {
             break;
         }
 
-        if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug)) {
-            if(furi_string_cmp_str(cmd, "encrypt_keeloq") == 0) {
-                subghz_cli_command_encrypt_keeloq(pipe, args);
-                break;
-            }
-
-            if(furi_string_cmp_str(cmd, "encrypt_raw") == 0) {
-                subghz_cli_command_encrypt_raw(pipe, args);
-                break;
-            }
-
-            if(furi_string_cmp_str(cmd, "tx_carrier") == 0) {
-                subghz_cli_command_tx_carrier(pipe, args, context);
-                break;
-            }
-
-            if(furi_string_cmp_str(cmd, "rx_carrier") == 0) {
-                subghz_cli_command_rx_carrier(pipe, args, context);
-                break;
-            }
+#ifdef FURI_DEBUG
+        if(furi_string_cmp_str(cmd, "encrypt_keeloq") == 0) {
+            subghz_cli_command_encrypt_keeloq(pipe, args);
+            break;
         }
+
+        if(furi_string_cmp_str(cmd, "encrypt_raw") == 0) {
+            subghz_cli_command_encrypt_raw(pipe, args);
+            break;
+        }
+
+        if(furi_string_cmp_str(cmd, "tx_carrier") == 0) {
+            subghz_cli_command_tx_carrier(pipe, args, context);
+            break;
+        }
+
+        if(furi_string_cmp_str(cmd, "rx_carrier") == 0) {
+            subghz_cli_command_rx_carrier(pipe, args, context);
+            break;
+        }
+#endif
 
         subghz_cli_command_print_usage();
     } while(false);

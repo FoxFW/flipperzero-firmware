@@ -345,6 +345,12 @@ static CliVcp* cli_vcp_alloc(void) {
         "CliExtPreload", 2048, cli_vcp_ext_cmds_preload_thread, cli_vcp);
     furi_thread_start(cli_vcp->ext_cmds_preload_thread);
 
+    /* FoxFW: hold the first USB enumeration until desktop boot settles, so
+     * qFlipper's RPC lands high/transient instead of stranding the low heap.
+     * Armed only here (cli_vcp_srv suspends in non-normal boot modes);
+     * released by desktop before view_dispatcher_run, with an 8 s safety
+     * timeout in furi_hal_usb so USB can never be left dead. */
+    furi_hal_usb_boot_gate_arm();
     cli_vcp->previous_interface = furi_hal_usb_get_config();
     furi_hal_usb_set_config(&usb_cdc_single, NULL);
     furi_hal_cdc_set_callbacks(VCP_IF_NUM, &cdc_callbacks, cli_vcp);

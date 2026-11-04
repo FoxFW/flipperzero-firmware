@@ -87,6 +87,14 @@ void furi_hal_usb_set_state_callback(FuriHalUsbStateCallback cb, void* ctx);
  */
 void furi_hal_usb_reinit(void);
 
+/** FoxFW: arm the first-boot USB gate (normal boot only; called by the VCP
+ * service before its first enumeration). */
+void furi_hal_usb_boot_gate_arm(void);
+
+/** FoxFW: release the first-boot USB gate (called by desktop once its
+ * permanent allocations are placed; also fired by an 8 s safety timeout). */
+void furi_hal_usb_boot_gate_release(void);
+
 #ifdef __cplusplus
 }
 #endif

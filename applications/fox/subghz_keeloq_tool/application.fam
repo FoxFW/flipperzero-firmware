@@ -1,0 +1,17 @@
+App(
+    appid="subghz_keeloq_tool",
+    name="KeeLoq Tool",
+    apptype=FlipperAppType.EXTERNAL,
+    icon="I_fox_generic_14x14",
+    entry_point="subghz_keeloq_tool_app",
+    requires=[
+        "gui",
+        "bt",
+    ],
+    stack_size=8 * 1024,
+    order=33,
+    fap_category="Sub-GHz",
+    fap_icon="icon.png",
+    fap_description="KeeLoq key recovery, 2-capture bruteforce and keystore management",
+    fap_version=(1, 0),
+)

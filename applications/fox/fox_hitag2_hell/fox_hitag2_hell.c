@@ -8,6 +8,7 @@
 #include <dialogs/dialogs.h>
 #include <flipper_format/flipper_format.h>
 #include <toolbox/path.h>
+#include <loader/loader.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -34,6 +35,9 @@ typedef struct {
     FuriString* file_path;
 
     bool started;
+    volatile bool pending_start;
+    bool choice_mode;
+    uint8_t choice_sel;
     bool done;
     bool success;
     uint8_t level;
@@ -261,7 +265,7 @@ static int32_t hitag2_hell_thread(void* context) {
         snprintf(
             app->message,
             sizeof(app->message),
-            "Tried %lu keys.\n%u capture%s used.\nTry adding more captures\nor a dict on SD.",
+            "Tried %lu keys.\n%u capture%s used.\nAdd fobs or SD dict.",
             (unsigned long)subghz_hitag2_bf_get_total_keys_tested(app->bf),
             app->captures,
             app->captures == 1 ? "" : "s");
@@ -308,9 +312,47 @@ static void hitag2_hell_draw_callback(Canvas* canvas, void* context) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str_aligned(canvas, 64, 4, AlignCenter, AlignTop, "Hitag2 Hell");
         canvas_set_font(canvas, FontSecondary);
-        elements_multiline_text_aligned(
-            canvas, 64, 20, AlignCenter, AlignTop, app->message);
-        elements_button_center(canvas, "Ok");
+        if(app->choice_mode) {
+            elements_multiline_text_aligned(
+                canvas, 64, 14, AlignCenter, AlignTop, app->message);
+
+            /* Two Fox-style buttons side by side with a small gap: Add Signal (left, default),
+             * Dict Only (right). Left/Right selects; the selected one is drawn filled. */
+            const uint8_t bw = 56;
+            const uint8_t bh = 13;
+            const uint8_t gap = 6;
+            const uint8_t by = 49;
+            const uint8_t lx = (uint8_t)(64 - gap / 2 - bw);
+            const uint8_t rx = (uint8_t)(64 + gap / 2);
+
+            if(app->choice_sel == 0) {
+                canvas_draw_rbox(canvas, lx, by, bw, bh, 3);
+                canvas_set_color(canvas, ColorWhite);
+                canvas_draw_str_aligned(
+                    canvas, lx + bw / 2, by + bh / 2, AlignCenter, AlignCenter, "Add Signal");
+                canvas_set_color(canvas, ColorBlack);
+            } else {
+                canvas_draw_rframe(canvas, lx, by, bw, bh, 3);
+                canvas_draw_str_aligned(
+                    canvas, lx + bw / 2, by + bh / 2, AlignCenter, AlignCenter, "Add Signal");
+            }
+
+            if(app->choice_sel == 1) {
+                canvas_draw_rbox(canvas, rx, by, bw, bh, 3);
+                canvas_set_color(canvas, ColorWhite);
+                canvas_draw_str_aligned(
+                    canvas, rx + bw / 2, by + bh / 2, AlignCenter, AlignCenter, "Dict Only");
+                canvas_set_color(canvas, ColorBlack);
+            } else {
+                canvas_draw_rframe(canvas, rx, by, bw, bh, 3);
+                canvas_draw_str_aligned(
+                    canvas, rx + bw / 2, by + bh / 2, AlignCenter, AlignCenter, "Dict Only");
+            }
+        } else {
+            elements_multiline_text_aligned(
+                canvas, 64, 20, AlignCenter, AlignTop, app->message);
+            elements_button_center(canvas, "Ok");
+        }
     } else if(!app->done) {
         canvas_set_font(canvas, FontPrimary);
         char title[40];
@@ -456,7 +498,9 @@ static void hitag2_hell_app_free(Hitag2HellApp* app) {
 int32_t fox_hitag2_hell_app(void* p) {
     Hitag2HellApp* app = hitag2_hell_app_alloc();
 
-    if(p && ((const char*)p)[0]) {
+    bool launched_with_file = (p && ((const char*)p)[0]);
+
+    if(launched_with_file) {
         furi_string_set_str(app->file_path, (const char*)p);
     }
 
@@ -485,15 +529,31 @@ int32_t fox_hitag2_hell_app(void* p) {
     } else {
         Storage* storage = furi_record_open(RECORD_STORAGE);
         FlipperFormat* fff = flipper_format_file_alloc(storage);
+        bool is_raw_capture = false;
         if(flipper_format_file_open_existing(fff, furi_string_get_cstr(app->file_path))) {
             have_capture =
                 hitag2_hell_extract_capture(fff, &uid, &control, &button, &hop);
+            if(!have_capture) {
+                FuriString* proto = furi_string_alloc();
+                flipper_format_rewind(fff);
+                if(flipper_format_read_string(fff, "Protocol", proto)) {
+                    is_raw_capture = furi_string_equal_str(proto, "RAW");
+                }
+                furi_string_free(proto);
+            }
         }
         flipper_format_free(fff);
         furi_record_close(RECORD_STORAGE);
 
         if(!have_capture) {
-            strlcpy(app->message, "Not a Fiat V1 signal.", sizeof(app->message));
+            if(is_raw_capture) {
+                strlcpy(
+                    app->message,
+                    "RAW capture. Decode &\nsave as Fiat V1 first,\nthen run Hitag2Hell.",
+                    sizeof(app->message));
+            } else {
+                strlcpy(app->message, "Not a Fiat V1 signal.", sizeof(app->message));
+            }
         }
     }
 
@@ -503,15 +563,37 @@ int32_t fox_hitag2_hell_app(void* p) {
         hitag2_hell_scan_directory_for_captures(
             app->bf, furi_string_get_cstr(app->file_path), uid);
 
+        bool full_recovery = subghz_hitag2_bf_get_capture_count(app->bf) >= 2;
+        if(full_recovery) {
+            subghz_hitag2_bf_set_levels(app->bf, 0xFFU);
+        } else {
+            subghz_hitag2_bf_set_levels(
+                app->bf,
+                (uint8_t)(
+                    (1U << SubGhzHitag2BfLevelKnown) |
+                    (1U << SubGhzHitag2BfLevelFlashDict) |
+                    (1U << SubGhzHitag2BfLevelSDDict)));
+        }
+
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        app->started = true;
         app->captures = subghz_hitag2_bf_get_capture_count(app->bf);
+        app->pending_start = true;
+        if(full_recovery) {
+            snprintf(
+                app->message,
+                sizeof(app->message),
+                "%u captures found.\nL1-L4 quick. L5 brute\nis VERY slow on-device\n(ESP32 needed). OK/Back",
+                app->captures);
+        } else {
+            app->pending_start = false;
+            app->choice_mode = true;
+            app->choice_sel = 0;
+            strlcpy(
+                app->message,
+                "1 capture found.\nAdd another fob for\nfull crack, or dict only.",
+                sizeof(app->message));
+        }
         furi_mutex_release(app->mutex);
-
-        app->start_tick = furi_get_tick();
-
-        app->thread = furi_thread_alloc_ex("Hitag2Hell", 6144, hitag2_hell_thread, app);
-        furi_thread_start(app->thread);
     }
 
     view_port_update(app->view_port);
@@ -522,12 +604,104 @@ int32_t fox_hitag2_hell_app(void* p) {
     while(!app->exit_requested) {
         if(furi_message_queue_get(app->input_queue, &event, HITAG2_HELL_REDRAW_MS) ==
            FuriStatusOk) {
-            if(event.type == InputTypeShort &&
-               (event.key == InputKeyBack || event.key == InputKeyOk)) {
-                if(app->thread && !thread_joined) {
+            if(app->choice_mode && event.type == InputTypeShort) {
+                if(event.key == InputKeyLeft) {
+                    app->choice_sel = 0;
+                    view_port_update(app->view_port);
+                } else if(event.key == InputKeyRight) {
+                    app->choice_sel = 1;
+                    view_port_update(app->view_port);
+                } else if(event.key == InputKeyUp || event.key == InputKeyDown) {
+                    app->choice_sel = (app->choice_sel == 0) ? 1 : 0;
+                    view_port_update(app->view_port);
+                } else if(event.key == InputKeyBack) {
+                    app->exit_requested = true;
+                } else if(event.key == InputKeyOk) {
+                    if(app->choice_sel == 1) {
+                        app->choice_mode = false;
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        app->started = true;
+                        furi_mutex_release(app->mutex);
+                        app->start_tick = furi_get_tick();
+                        app->thread = furi_thread_alloc_ex(
+                            "Hitag2Hell", 6144, hitag2_hell_thread, app);
+                        furi_thread_start(app->thread);
+                        view_port_update(app->view_port);
+                    } else {
+                        DialogsApp* dialogs = furi_record_open(RECORD_DIALOGS);
+                        FuriString* picked = furi_string_alloc_set(HITAG2_HELL_SUBGHZ_DIR);
+                        DialogsFileBrowserOptions bopt;
+                        dialog_file_browser_set_basic_options(&bopt, ".sub", NULL);
+                        bopt.base_path = HITAG2_HELL_SUBGHZ_DIR;
+                        bool picked_ok =
+                            dialog_file_browser_show(dialogs, picked, picked, &bopt);
+                        furi_record_close(RECORD_DIALOGS);
+
+                        bool added = false;
+                        if(picked_ok) {
+                            Storage* st = furi_record_open(RECORD_STORAGE);
+                            FlipperFormat* af = flipper_format_file_alloc(st);
+                            if(flipper_format_file_open_existing(
+                                   af, furi_string_get_cstr(picked))) {
+                                uint32_t a_uid = 0;
+                                uint16_t a_ctrl = 0;
+                                uint8_t a_btn = 0;
+                                uint32_t a_hop = 0;
+                                if(hitag2_hell_extract_capture(
+                                       af, &a_uid, &a_ctrl, &a_btn, &a_hop)) {
+                                    added = subghz_hitag2_bf_add_capture(
+                                        app->bf, a_uid, a_ctrl, a_btn, a_hop);
+                                }
+                            }
+                            flipper_format_free(af);
+                            furi_record_close(RECORD_STORAGE);
+                        }
+                        furi_string_free(picked);
+
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        app->captures = subghz_hitag2_bf_get_capture_count(app->bf);
+                        if(app->captures >= 2) {
+                            subghz_hitag2_bf_set_levels(app->bf, 0xFFU);
+                            app->choice_mode = false;
+                            app->pending_start = true;
+                            snprintf(
+                                app->message,
+                                sizeof(app->message),
+                                "%u captures ready.\nL5 brute VERY slow on\ndevice (ESP32 needed).\nOK start / Back no.",
+                                app->captures);
+                        } else {
+                            strlcpy(
+                                app->message,
+                                added ? "Added (same UID).\nNeed 2+ total." :
+                                        "Not added: different\nfob or no capture.",
+                                sizeof(app->message));
+                        }
+                        furi_mutex_release(app->mutex);
+                        view_port_update(app->view_port);
+                    }
+                }
+            } else if(
+                event.type == InputTypeShort &&
+                (event.key == InputKeyBack || event.key == InputKeyOk)) {
+                if(app->pending_start) {
+                    if(event.key == InputKeyOk) {
+                        app->pending_start = false;
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        app->started = true;
+                        furi_mutex_release(app->mutex);
+                        app->start_tick = furi_get_tick();
+                        app->thread = furi_thread_alloc_ex(
+                            "Hitag2Hell", 6144, hitag2_hell_thread, app);
+                        furi_thread_start(app->thread);
+                        view_port_update(app->view_port);
+                    } else {
+                        app->exit_requested = true;
+                    }
+                } else if(app->thread && !thread_joined) {
                     if(!cancel_requested) {
                         cancel_requested = true;
                         app->user_cancel = true;
+                        if(app->bf) subghz_hitag2_bf_request_cancel(app->bf);
                         view_port_update(app->view_port);
                     }
 
@@ -558,6 +732,33 @@ int32_t fox_hitag2_hell_app(void* p) {
         app->thread = NULL;
     }
 
+    bool return_to_subghz = launched_with_file && furi_string_size(app->file_path) > 0;
+    FuriString* return_path = furi_string_alloc();
+    if(return_to_subghz) {
+        furi_string_set(return_path, app->file_path);
+    }
+
     hitag2_hell_app_free(app);
+
+    if(return_to_subghz) {
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        File* f = storage_file_alloc(storage);
+        if(storage_file_open(
+               f, "/ext/subghz/.focus_file", FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+            const char* km_prefix = "keymethod:";
+            storage_file_write(f, km_prefix, strlen(km_prefix));
+            storage_file_write(
+                f, furi_string_get_cstr(return_path), furi_string_size(return_path));
+        }
+        storage_file_close(f);
+        storage_file_free(f);
+        furi_record_close(RECORD_STORAGE);
+
+        Loader* loader = furi_record_open(RECORD_LOADER);
+        loader_enqueue_launch(loader, "subghz", NULL, LoaderDeferredLaunchFlagNone);
+        furi_record_close(RECORD_LOADER);
+    }
+    furi_string_free(return_path);
+
     return 0;
 }

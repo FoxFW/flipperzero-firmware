@@ -45,7 +45,7 @@ static const char letters_row_2[] = "zxcvbnm ./";
 
 static const char symbols_row_0[] = "1234567890";
 static const char symbols_row_1[] = ":/.-_=@#&";
-static const char symbols_row_2[] = "!?%+*,;";
+static const char symbols_row_2[] = "!?%+*,;()";
 
 #define ROW_COUNT 3
 static const uint8_t ROW_TOP[ROW_COUNT] = {20, 34, 48};
@@ -53,8 +53,8 @@ static const uint8_t ROW_BOX_H[ROW_COUNT] = {13, 13, 14};
 
 static const uint8_t LETTERS_ROW_COLS[ROW_COUNT] = {10, 10, 10};
 static const uint8_t LETTERS_ROW_START_X[ROW_COUNT] = {1, 1, 1};
-static const uint8_t SYMBOLS_ROW_COLS[ROW_COUNT] = {10, 9, 7};
-static const uint8_t SYMBOLS_ROW_START_X[ROW_COUNT] = {1, 6, 16};
+static const uint8_t SYMBOLS_ROW_COLS[ROW_COUNT] = {10, 9, 9};
+static const uint8_t SYMBOLS_ROW_START_X[ROW_COUNT] = {1, 6, 6};
 #define GRID_BOX_W 9
 
 static uint8_t get_row_cols(TextInputLayer layer, uint8_t row) {
@@ -616,7 +616,12 @@ void text_input_set_result_callback(
             model->callback_context = callback_context;
             model->text_buffer = text_buffer;
             model->text_buffer_size = text_buffer_size;
-            model->clear_default_text = clear_default_text;
+            // Fox: never pre-select/highlight the default text. The cursor starts at the end (set below)
+            // with the OK button focused (see enter_callback), so you can type to append, Backspace to
+            // delete from the end, or just press OK to keep the name as-is. (Ignoring the caller's flag
+            // also removes the "first Backspace only de-selects" quirk the companion had to work around.)
+            (void)clear_default_text;
+            model->clear_default_text = false;
             model->layer = TextInputLayerLetters;
             model->in_text = false;
 

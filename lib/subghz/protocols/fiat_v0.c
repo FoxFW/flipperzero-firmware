@@ -1,4 +1,7 @@
 #include "fiat_v0.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/const.h>
 #include <lib/subghz/blocks/decoder.h>
 #include <lib/subghz/blocks/encoder.h>
@@ -74,30 +77,26 @@ struct SubGhzProtocolEncoderFiatV0 {
     uint32_t fix;
     uint8_t endbyte;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFiatV0);
 
-static void subghz_protocol_decoder_fiat_v0_free(void* context) {
-    furi_assert(context);
-    free(context);
-}
+
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderFiatV0);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderFiatV0);
+
+
 
 const SubGhzProtocolDecoder subghz_protocol_fiat_v0_decoder = {
     .alloc = subghz_protocol_decoder_fiat_v0_alloc,
-    .free = subghz_protocol_decoder_fiat_v0_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_fiat_v0_feed,
     .reset = subghz_protocol_decoder_fiat_v0_reset,
-    .get_hash_data = subghz_protocol_decoder_fiat_v0_get_hash_data,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
     .serialize = subghz_protocol_decoder_fiat_v0_serialize,
     .deserialize = subghz_protocol_decoder_fiat_v0_deserialize,
-    .get_string = subghz_protocol_decoder_fiat_v0_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_fiat_v0_encoder = {
-    .alloc = subghz_protocol_encoder_fiat_v0_alloc,
-    .free = subghz_protocol_encoder_fiat_v0_free,
-    .deserialize = subghz_protocol_encoder_fiat_v0_deserialize,
-    .stop = subghz_protocol_encoder_fiat_v0_stop,
-    .yield = subghz_protocol_encoder_fiat_v0_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_fiat_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_fiat_v0");
 
 const SubGhzProtocol fiat_protocol_v0 = {
     .name = FIAT_PROTOCOL_V0_NAME,
@@ -106,197 +105,8 @@ const SubGhzProtocol fiat_protocol_v0 = {
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_fiat_v0_decoder,
-    .encoder = &subghz_protocol_fiat_v0_encoder,
+    .encoder = &subghz_protocol_fiat_v0_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_fiat_v0_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFiatV0* instance = calloc(1, sizeof(SubGhzProtocolEncoderFiatV0));
-    furi_check(instance);
-
-    instance->base.protocol = &fiat_protocol_v0;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 10;
-    instance->encoder.size_upload = 0;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-
-    return instance;
-}
-
-void subghz_protocol_encoder_fiat_v0_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatV0* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static void subghz_protocol_encoder_fiat_v0_get_upload(SubGhzProtocolEncoderFiatV0* instance) {
-    furi_check(instance);
-    LevelDuration* up = instance->encoder.upload;
-    if(up == NULL) return;
-
-    size_t index = 0;
-    uint32_t te_short = subghz_protocol_fiat_v0_const.te_short;
-    uint32_t te_long = subghz_protocol_fiat_v0_const.te_long;
-
-    uint64_t data = ((uint64_t)instance->hop << 32) | instance->fix;
-    uint8_t endbyte_to_send = instance->endbyte >> 1;
-
-    for(uint8_t burst = 0; burst < FIAT_V0_TOTAL_BURSTS; burst++) {
-        if(burst > 0) {
-            up[index++] = level_duration_make(false, FIAT_V0_INTER_BURST_GAP);
-        }
-
-        for(int i = 0; i < FIAT_V0_PREAMBLE_PAIRS; i++) {
-            up[index++] = level_duration_make(true, te_short);
-            up[index++] = level_duration_make(false, te_short);
-        }
-        if(index > 0) up[index - 1] = level_duration_make(false, FIAT_V0_GAP_US);
-
-        bool first_bit = (data >> 63) & 1;
-        if(first_bit) {
-            up[index++] = level_duration_make(true, te_long);
-        } else {
-            up[index++] = level_duration_make(true, te_short);
-            up[index++] = level_duration_make(false, te_long);
-        }
-        bool prev_bit = first_bit;
-
-        for(int bit = 62; bit >= 0; bit--) {
-            bool curr_bit = (data >> bit) & 1;
-            if(!prev_bit && !curr_bit) {
-                up[index++] = level_duration_make(true, te_short);
-                up[index++] = level_duration_make(false, te_short);
-            } else if(!prev_bit && curr_bit) {
-                up[index++] = level_duration_make(true, te_long);
-            } else if(prev_bit && !curr_bit) {
-                up[index++] = level_duration_make(false, te_long);
-            } else {
-                up[index++] = level_duration_make(false, te_short);
-                up[index++] = level_duration_make(true, te_short);
-            }
-            prev_bit = curr_bit;
-        }
-
-        for(int bit = 5; bit >= 0; bit--) {
-            bool curr_bit = (endbyte_to_send >> bit) & 1;
-            if(!prev_bit && !curr_bit) {
-                up[index++] = level_duration_make(true, te_short);
-                up[index++] = level_duration_make(false, te_short);
-            } else if(!prev_bit && curr_bit) {
-                up[index++] = level_duration_make(true, te_long);
-            } else if(prev_bit && !curr_bit) {
-                up[index++] = level_duration_make(false, te_long);
-            } else {
-                up[index++] = level_duration_make(false, te_short);
-                up[index++] = level_duration_make(true, te_short);
-            }
-            prev_bit = curr_bit;
-        }
-
-        if(prev_bit) {
-            up[index++] = level_duration_make(false, te_short);
-        }
-        up[index++] = level_duration_make(false, te_short * 8);
-    }
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_fiat_v0_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderFiatV0* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-
-    do {
-        flipper_format_rewind(flipper_format);
-        uint32_t temp_data = 0;
-        if(!flipper_format_read_uint32(flipper_format, "Bit", &temp_data, 1)) {
-            break;
-        }
-        if(temp_data != 64 && temp_data != 71) {
-            break;
-        }
-        instance->generic.data_count_bit = temp_data;
-
-        flipper_format_rewind(flipper_format);
-        uint8_t key_bytes[8];
-        if(!flipper_format_read_hex(flipper_format, "Key", key_bytes, 8)) {
-            break;
-        }
-        uint64_t key = 0;
-        for(int i = 0; i < 8; i++) {
-            key = (key << 8) | key_bytes[i];
-        }
-        instance->generic.data = key;
-        instance->hop = (uint32_t)(key >> 32);
-        instance->fix = (uint32_t)(key & 0xFFFFFFFFU);
-
-        uint32_t eb_read = 0;
-        flipper_format_rewind(flipper_format);
-        bool have_endbyte = flipper_format_read_uint32(flipper_format, "EndByte", &eb_read, 1);
-
-        flipper_format_rewind(flipper_format);
-        uint32_t btn_u32 = 0;
-        flipper_format_read_uint32(flipper_format, "Btn", &btn_u32, 1);
-
-        if(have_endbyte) {
-            instance->endbyte = (uint8_t)(eb_read & 0x7FU);
-        } else {
-            instance->endbyte = (uint8_t)(btn_u32 & 0x7FU);
-        }
-
-        instance->generic.btn = instance->endbyte;
-        instance->generic.cnt = instance->hop;
-        instance->generic.serial = instance->fix;
-
-        flipper_format_rewind(flipper_format);
-        uint32_t repeat = 10;
-        flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
-        instance->encoder.repeat = repeat;
-
-        instance->encoder.upload = malloc(FIAT_V0_UPLOAD_CAPACITY * sizeof(LevelDuration));
-        subghz_protocol_encoder_fiat_v0_get_upload(instance);
-        instance->encoder.is_running = true;
-
-        return SubGhzProtocolStatusOk;
-    } while(false);
-
-    return SubGhzProtocolStatusError;
-}
-
-void subghz_protocol_encoder_fiat_v0_stop(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatV0* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-}
-
-LevelDuration subghz_protocol_encoder_fiat_v0_yield(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderFiatV0* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_fiat_v0_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -489,12 +299,7 @@ void subghz_protocol_decoder_fiat_v0_feed(void* context, bool level, uint32_t du
     }
 }
 
-uint8_t subghz_protocol_decoder_fiat_v0_get_hash_data(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderFiatV0* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
+
 
 SubGhzProtocolStatus subghz_protocol_decoder_fiat_v0_serialize(
     void* context,
@@ -564,22 +369,3 @@ SubGhzProtocolStatus
     return status;
 }
 
-void subghz_protocol_decoder_fiat_v0_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderFiatV0* instance = context;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%08lX%08lX\r\n"
-        "Hop:%08lX\r\n"
-        "Sn:%08lX\r\n"
-        "EndByte:%02X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->hop,
-        instance->fix,
-        instance->hop,
-        instance->fix,
-        instance->endbyte & 0x3F);
-}

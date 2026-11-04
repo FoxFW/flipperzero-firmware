@@ -1,0 +1,16 @@
+App(
+    appid="fox_freqmod_helper",
+    name="Fox FreqMod Helper",
+    apptype=FlipperAppType.EXTERNAL,
+    icon="I_fox_generic_14x14",
+    targets=["f7"],
+    entry_point="fox_freqmod_helper_app",
+    requires=["gui", "storage"],
+    stack_size=4 * 1024,
+    order=55,
+    fap_icon="icon.png",
+    fap_version="1.0",
+    fap_category="Fox",
+    fap_description="Look up a car key fob frequency/modulation by make/model, then jump straight into SubGHz Automotive Read with it set.",
+    resources="resources",
+)

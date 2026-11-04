@@ -1,0 +1,3 @@
+FoxFW one-shot marker: forces the Sub-GHz RSSI threshold to its default (-65 dBm) once
+after each install, then deletes itself on first boot. Re-deployed by every install, so a
+reinstall always resets RSSI (handy if a user is stuck at -90). Safe to delete manually.

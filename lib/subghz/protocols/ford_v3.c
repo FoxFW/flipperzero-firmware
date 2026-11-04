@@ -6,6 +6,9 @@
 #include "../blocks/math.h"
 #include <string.h>
 #include <stdlib.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include <lib/subghz/blocks/bitbuf.h>
 
 #define FORD_V3_TE_SHORT       240U
 #define FORD_V3_TE_LONG        480U
@@ -55,7 +58,7 @@ typedef struct SubGhzProtocolDecoderFordV3 {
     uint8_t manchester_bit_count;
     uint16_t preamble_count;
 
-    uint8_t cells[FORD_V3_CELL_CAP];
+    uint8_t cells[SUBGHZ_BITBUF_BYTES(FORD_V3_CELL_CAP)];
     uint16_t cell_count;
 
     uint8_t raw_bytes[FORD_V3_DATA_BYTES];
@@ -68,44 +71,6 @@ typedef struct SubGhzProtocolDecoderFordV3 {
     uint16_t counter;
 } SubGhzProtocolDecoderFordV3;
 
-static void ford_v3_reset_manchester(SubGhzProtocolDecoderFordV3* instance);
-static void ford_v3_reset_cells(SubGhzProtocolDecoderFordV3* instance);
-static void ford_v3_add_manchester_bit(SubGhzProtocolDecoderFordV3* instance, bool bit);
-static bool ford_v3_cell_frame_valid(const uint8_t* raw);
-static uint8_t ford_v3_variant_from_saved_or_raw(const uint8_t* raw, uint32_t saved_variant);
-static void ford_v3_parse_fields(SubGhzProtocolDecoderFordV3* instance);
-static bool ford_v3_commit_frame(
-    SubGhzProtocolDecoderFordV3* instance,
-    const uint8_t* raw,
-    uint8_t variant);
-static void ford_v3_manchester_emit_if_ready(SubGhzProtocolDecoderFordV3* instance);
-static void ford_v3_cell_process(SubGhzProtocolDecoderFordV3* instance);
-static void ford_v3_cell_feed(SubGhzProtocolDecoderFordV3* instance, bool level, uint32_t duration);
-static void
-    ford_v3_manchester_feed(SubGhzProtocolDecoderFordV3* instance, bool level, uint32_t duration);
-static const char* ford_v3_button_name(uint8_t btn, uint8_t variant);
-
-static const char* ford_v3_button_name(uint8_t btn, uint8_t variant) {
-    if(variant == FORD_V3_VARIANT_US) {
-        switch(btn) {
-        case FORD_V3_BTN_LOCK:
-            return "Lock";
-        case FORD_V3_BTN_UNLOCK:
-            return "Unlock";
-        default:
-            return "?";
-        }
-    }
-
-    switch(btn) {
-    case FORD_V3_BTN_LOCK:
-        return "Lock";
-    case FORD_V3_BTN_UNLOCK:
-        return "Unlock";
-    default:
-        return "?";
-    }
-}
 
 static bool ford_v3_cell_frame_valid(const uint8_t* raw) {
     if(raw[0] != 0xFFU) {
@@ -224,8 +189,8 @@ static bool ford_v3_cell_decode(const uint8_t* cells, uint16_t cell_count, uint8
         int bit_count = 0;
         bool ok = true;
         for(int i = phase; (i + 1) < (int)cell_count && bit_count < (int)FORD_V3_DATA_BITS; i += 2) {
-            const uint8_t first = cells[i];
-            const uint8_t second = cells[i + 1];
+            const uint8_t first = subghz_bitbuf_get(cells, i);
+            const uint8_t second = subghz_bitbuf_get(cells, i + 1);
             if(first == second) {
                 ok = false;
                 break;
@@ -266,12 +231,12 @@ static void ford_v3_cell_process(SubGhzProtocolDecoderFordV3* instance) {
 static void ford_v3_cell_feed(SubGhzProtocolDecoderFordV3* instance, bool level, uint32_t duration) {
     if(DURATION_DIFF(duration, subghz_protocol_ford_v3_cell_const.te_short) < subghz_protocol_ford_v3_cell_const.te_delta) {
         if(instance->cell_count < FORD_V3_CELL_CAP) {
-            instance->cells[instance->cell_count++] = level ? 1U : 0U;
+            subghz_bitbuf_set(instance->cells, instance->cell_count++, level ? 1U : 0U);
         }
     } else if(DURATION_DIFF(duration, subghz_protocol_ford_v3_cell_const.te_long) < subghz_protocol_ford_v3_cell_const.te_delta) {
         if(instance->cell_count + 2U <= FORD_V3_CELL_CAP) {
-            instance->cells[instance->cell_count++] = level ? 1U : 0U;
-            instance->cells[instance->cell_count++] = level ? 1U : 0U;
+            subghz_bitbuf_set(instance->cells, instance->cell_count++, level ? 1U : 0U);
+            subghz_bitbuf_set(instance->cells, instance->cell_count++, level ? 1U : 0U);
         }
     } else {
         ford_v3_cell_process(instance);
@@ -364,10 +329,7 @@ void* subghz_protocol_decoder_ford_v3_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_ford_v3_free(void* context) {
-    furi_check(context);
-    free(context);
-}
+
 
 void subghz_protocol_decoder_ford_v3_reset(void* context) {
     furi_check(context);
@@ -474,76 +436,6 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_ford_v3_get_string(void* context, FuriString* output) {
-    furi_check(context);
-
-    SubGhzProtocolDecoderFordV3* instance = context;
-    const uint8_t* k = instance->raw_bytes;
-
-    if(instance->variant == FORD_V3_VARIANT_US) {
-        furi_string_cat_printf(
-            output,
-            "%s US %dbit\r\n"
-            "Key:%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\r\n"
-            "Sn:%08lX Btn:%02X %s\r\n"
-            "Cnt:%04X Hop:%02X%02X%02X%02X\r\n",
-            instance->generic.protocol_name,
-            (int)instance->generic.data_count_bit,
-            k[0],
-            k[1],
-            k[2],
-            k[3],
-            k[4],
-            k[5],
-            k[6],
-            k[7],
-            k[8],
-            k[9],
-            k[10],
-            k[11],
-            k[12],
-            (unsigned long)instance->generic.serial,
-            instance->generic.btn,
-            ford_v3_button_name(instance->generic.btn, FORD_V3_VARIANT_US),
-            (unsigned)instance->counter,
-            k[9],
-            k[10],
-            k[11],
-            k[12]);
-        return;
-    }
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\r\n"
-        "Sn:%08lX Btn:%02X %s\r\n"
-        "Cnt:%04X Hop:%02X%02X%02X%02X\r\n",
-        instance->generic.protocol_name,
-        (int)instance->generic.data_count_bit,
-        k[0],
-        k[1],
-        k[2],
-        k[3],
-        k[4],
-        k[5],
-        k[6],
-        k[7],
-        k[8],
-        k[9],
-        k[10],
-        k[11],
-        k[12],
-        (unsigned long)instance->generic.serial,
-        instance->generic.btn,
-        ford_v3_button_name(instance->generic.btn, FORD_V3_VARIANT_EU),
-        (unsigned)instance->counter,
-        k[9],
-        k[10],
-        k[11],
-        k[12]);
-}
-
 #define FORD_V3_ENC_TE_SHORT           240U
 #define FORD_V3_ENC_PREAMBLE_PAIRS     40U
 #define FORD_V3_ENC_BURST_COUNT        6U
@@ -558,170 +450,21 @@ typedef struct SubGhzProtocolEncoderFordV3 {
     SubGhzBlockGeneric generic;
 
     uint8_t raw_bytes[FORD_V3_DATA_BYTES];
-} SubGhzProtocolEncoderFordV3;
-
-static inline void ford_v3_encoder_add_level(
-    SubGhzProtocolEncoderFordV3* instance,
-    bool level,
-    uint32_t duration) {
-    size_t idx = instance->encoder.size_upload;
-    if(idx > 0 &&
-       level_duration_get_level(instance->encoder.upload[idx - 1]) == level) {
-        uint32_t prev = level_duration_get_duration(instance->encoder.upload[idx - 1]);
-        instance->encoder.upload[idx - 1] = level_duration_make(level, prev + duration);
-    } else {
-        furi_check(idx < FORD_V3_ENC_ALLOC_ELEMS);
-        instance->encoder.upload[idx] = level_duration_make(level, duration);
-        instance->encoder.size_upload++;
-    }
-}
-
-static inline void ford_v3_encoder_emit_manchester_bit(
-    SubGhzProtocolEncoderFordV3* instance,
-    bool bit) {
-    if(bit) {
-        ford_v3_encoder_add_level(instance, true, FORD_V3_ENC_TE_SHORT);
-        ford_v3_encoder_add_level(instance, false, FORD_V3_ENC_TE_SHORT);
-    } else {
-        ford_v3_encoder_add_level(instance, false, FORD_V3_ENC_TE_SHORT);
-        ford_v3_encoder_add_level(instance, true, FORD_V3_ENC_TE_SHORT);
-    }
-}
-
-static void ford_v3_encoder_emit_burst(SubGhzProtocolEncoderFordV3* instance) {
-    for(uint8_t i = 0; i < FORD_V3_ENC_PREAMBLE_PAIRS; i++) {
-        ford_v3_encoder_add_level(instance, false, FORD_V3_ENC_TE_SHORT);
-        ford_v3_encoder_add_level(instance, true, FORD_V3_ENC_TE_SHORT);
-    }
-
-    ford_v3_encoder_add_level(instance, false, FORD_V3_ENC_SYNC_LO_US);
-    ford_v3_encoder_add_level(instance, true, FORD_V3_ENC_TE_SHORT);
-
-    for(uint16_t bit_pos = 1U; bit_pos < FORD_V3_DATA_BITS; bit_pos++) {
-        const uint8_t byte_idx = (uint8_t)(bit_pos / 8U);
-        const uint8_t bit_idx = (uint8_t)(7U - (bit_pos % 8U));
-        ford_v3_encoder_emit_manchester_bit(
-            instance, ((instance->raw_bytes[byte_idx] >> bit_idx) & 1U) != 0U);
-    }
-}
-
-static void ford_v3_encoder_build_upload(SubGhzProtocolEncoderFordV3* instance) {
-    instance->encoder.size_upload = 0;
-    instance->encoder.front = 0;
-
-    for(uint8_t burst = 0; burst < FORD_V3_ENC_BURST_COUNT; burst++) {
-        ford_v3_encoder_emit_burst(instance);
-        if(burst + 1U < FORD_V3_ENC_BURST_COUNT) {
-            ford_v3_encoder_add_level(instance, true, FORD_V3_ENC_INTER_BURST_GAP_US);
-        }
-    }
-}
-
-void* subghz_protocol_encoder_ford_v3_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderFordV3* instance = calloc(1, sizeof(SubGhzProtocolEncoderFordV3));
-    furi_check(instance);
-
-    instance->base.protocol = &ford_protocol_v3;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = FORD_V3_ENCODER_DEFAULT_REPEAT;
-    instance->encoder.upload = calloc(FORD_V3_ENC_ALLOC_ELEMS, sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-
-    return instance;
-}
-
-void subghz_protocol_encoder_ford_v3_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV3* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-SubGhzProtocolStatus subghz_protocol_encoder_ford_v3_deserialize(
-    void* context,
-    FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV3* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-    instance->encoder.repeat = FORD_V3_ENCODER_DEFAULT_REPEAT;
-
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        SubGhzProtocolStatus g = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic, flipper_format, FORD_V3_DATA_BITS);
-        if(g != SubGhzProtocolStatusOk) {
-            ret = g;
-            break;
-        }
-
-        flipper_format_rewind(flipper_format);
-        uint8_t raw_tmp[FORD_V3_DATA_BYTES] = {0};
-        if(!flipper_format_read_hex(flipper_format, "Raw", raw_tmp, sizeof(raw_tmp))) {
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        memcpy(instance->raw_bytes, raw_tmp, sizeof(raw_tmp));
-
-        flipper_format_rewind(flipper_format);
-        uint32_t repeat = FORD_V3_ENCODER_DEFAULT_REPEAT;
-        if(flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1)) {
-            instance->encoder.repeat = repeat;
-        }
-
-        ford_v3_encoder_build_upload(instance);
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_ford_v3_stop(void* context) {
-    furi_check(context);
-    ((SubGhzProtocolEncoderFordV3*)context)->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_ford_v3_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderFordV3* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0U) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        instance->encoder.front = 0U;
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-    }
-
-    return ret;
-}
+} 
+SubGhzProtocolEncoderFordV3;
 
 const SubGhzProtocolDecoder subghz_protocol_ford_v3_decoder = {
     .alloc = subghz_protocol_decoder_ford_v3_alloc,
-    .free = subghz_protocol_decoder_ford_v3_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_ford_v3_feed,
     .reset = subghz_protocol_decoder_ford_v3_reset,
     .get_hash_data = subghz_protocol_decoder_ford_v3_get_hash_data,
     .serialize = subghz_protocol_decoder_ford_v3_serialize,
     .deserialize = subghz_protocol_decoder_ford_v3_deserialize,
-    .get_string = subghz_protocol_decoder_ford_v3_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_ford_v3_encoder = {
-    .alloc = subghz_protocol_encoder_ford_v3_alloc,
-    .free = subghz_protocol_encoder_ford_v3_free,
-    .deserialize = subghz_protocol_encoder_ford_v3_deserialize,
-    .stop = subghz_protocol_encoder_ford_v3_stop,
-    .yield = subghz_protocol_encoder_ford_v3_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_ford_v3_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_ford_v3");
 
 const SubGhzProtocol ford_protocol_v3 = {
     .name = FORD_PROTOCOL_V3_NAME,
@@ -730,5 +473,9 @@ const SubGhzProtocol ford_protocol_v3 = {
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_ford_v3_decoder,
-    .encoder = &subghz_protocol_ford_v3_encoder,
+    .encoder = &subghz_protocol_ford_v3_encoder_ext.vtable,
 };
+
+/* Layout asserts placed at EOF: these structs typedef the bare name
+ * later in this file, so the assert must follow all type definitions. */
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFordV3);

@@ -23,8 +23,26 @@ static uint16_t s_active_stream_count = 0;
 static bool s_placeholder_ready = false;
 static uint8_t s_placeholder_buf[PLACEHOLDER_BUFFER_SIZE];
 
+/* First line of the "Operation in Progress!" placeholder frame shown to a
+ * connected PC (qFlipper) while an app soft-locks the CLI/USB. Defaults to
+ * "Sub-GHz" (the Sub-GHz garage app, the original caller). Other apps that
+ * suppress the stream set this to name themselves, then clear it back to NULL
+ * on unlock. Changing the label invalidates the cached frame so it is rebuilt
+ * with the new text on the next request. */
+#define PLACEHOLDER_DEFAULT_FIRST_LINE "Sub-GHz"
+static const char* s_placeholder_first_line = PLACEHOLDER_DEFAULT_FIRST_LINE;
+
 void rpc_gui_screen_stream_set_suppressed(bool suppressed) {
     s_suppressed = suppressed;
+}
+
+void rpc_gui_screen_stream_set_placeholder_label(const char* label) {
+    const char* new_label =
+        (label != NULL && label[0] != '\0') ? label : PLACEHOLDER_DEFAULT_FIRST_LINE;
+    if(new_label != s_placeholder_first_line) {
+        s_placeholder_first_line = new_label;
+        s_placeholder_ready = false; /* force rebuild with the new first line */
+    }
 }
 
 bool rpc_gui_screen_stream_is_suppressed(void) {
@@ -79,7 +97,7 @@ static bool build_placeholder_frame(void) {
     u8g2_SetFontMode(&u8g2, 1);
     u8g2_SetFont(&u8g2, u8g2_font_helvB08_tr);
 
-    const char* lines[] = {"Sub-GHz", "Operation", "in", "Progress!"};
+    const char* lines[] = {s_placeholder_first_line, "Operation", "in", "Progress!"};
     const size_t line_count = COUNT_OF(lines);
     int32_t text_area_center_x = (40 + PLACEHOLDER_BUFFER_WIDTH) / 2;
     int32_t line_gap = 16;

@@ -8,6 +8,13 @@ typedef struct SubGhzViewReceiver SubGhzViewReceiver;
 
 typedef void (*SubGhzViewReceiverCallback)(SubGhzCustomEvent event, void* context);
 
+typedef void (*SubGhzViewReceiverItemCallback)(
+    void* context,
+    uint16_t idx,
+    FuriString* name,
+    FuriString* time,
+    uint8_t* type);
+
 void subghz_view_receiver_set_mode(
     SubGhzViewReceiver* subghz_receiver,
     SubGhzViewReceiverMode mode);
@@ -15,6 +22,19 @@ void subghz_view_receiver_set_mode(
 void subghz_receiver_rssi(SubGhzViewReceiver* instance, float rssi);
 
 void subghz_view_receiver_set_lock(SubGhzViewReceiver* subghz_receiver, bool keyboard);
+
+void subghz_view_receiver_set_wave_line(SubGhzViewReceiver* subghz_receiver, bool line);
+
+void subghz_receiver_rssi_ext(SubGhzViewReceiver* instance, float rssi);
+
+void subghz_view_receiver_set_dual(SubGhzViewReceiver* subghz_receiver, bool dual);
+
+void subghz_view_receiver_set_dual_dashboard(SubGhzViewReceiver* subghz_receiver, bool dashboard);
+
+void subghz_view_receiver_set_dual_info(
+    SubGhzViewReceiver* subghz_receiver,
+    const char* int_str,
+    const char* ext_str);
 
 void subghz_view_receiver_set_callback(
     SubGhzViewReceiver* subghz_receiver,
@@ -43,17 +63,20 @@ void subghz_view_receiver_add_data_progress(
     SubGhzViewReceiver* subghz_receiver,
     const char* progress_str);
 
-void subghz_view_receiver_add_item_to_menu(
+void subghz_view_receiver_set_item_callback(
     SubGhzViewReceiver* subghz_receiver,
-    const char* name,
-    const char* time,
-    uint8_t type);
+    SubGhzViewReceiverItemCallback callback,
+    void* context);
+
+void subghz_view_receiver_add_item_to_menu(SubGhzViewReceiver* subghz_receiver);
 
 uint16_t subghz_view_receiver_get_idx_menu(SubGhzViewReceiver* subghz_receiver);
 
 void subghz_view_receiver_set_idx_menu(SubGhzViewReceiver* subghz_receiver, uint16_t idx);
 
 void subghz_view_receiver_delete_item(SubGhzViewReceiver* subghz_receiver, uint16_t idx);
+
+void subghz_view_receiver_flash_item(SubGhzViewReceiver* subghz_receiver, uint16_t idx);
 
 void subghz_view_receiver_enable_draw_callback(SubGhzViewReceiver* subghz_receiver);
 

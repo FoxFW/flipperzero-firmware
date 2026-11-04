@@ -142,10 +142,29 @@ bool subghz_scene_save_name_on_event(void* context, SceneManagerEvent event) {
                             SubGhzSceneSetType,
                             SubGhzCustomEventManagerNoSet);
                     } else {
-                        subghz_save_protocol_to_file(
-                            subghz,
-                            subghz_history_get_raw_data(subghz->history, subghz->idx_menu_chosen),
-                            furi_string_get_cstr(subghz->file_path));
+                        const char* hist_proto = subghz_history_get_protocol_name(
+                            subghz->history, subghz->idx_menu_chosen);
+                        if(strcmp(hist_proto, "RAW") != 0 ||
+                           !subghz_history_copy_item_to_file(
+                               subghz->history,
+                               subghz->idx_menu_chosen,
+                               furi_string_get_cstr(subghz->file_path))) {
+                            subghz_save_protocol_to_file(
+                                subghz,
+                                subghz_history_get_raw_data(
+                                    subghz->history, subghz->idx_menu_chosen),
+                                furi_string_get_cstr(subghz->file_path));
+                        }
+                        if(scene_manager_has_previous_scene(
+                               subghz->scene_manager, SubGhzSceneDecodeRAW) &&
+                           strcmp(hist_proto, "RAW") != 0 &&
+                           !furi_string_empty(subghz->decode_raw_source)) {
+                            subghz_loading_cover_show(subghz, "SAVING");
+                            subghz_save_append_raw_from_file(
+                                furi_string_get_cstr(subghz->file_path),
+                                furi_string_get_cstr(subghz->decode_raw_source));
+                            subghz_loading_cover_hide(subghz);
+                        }
                     }
                 }
 

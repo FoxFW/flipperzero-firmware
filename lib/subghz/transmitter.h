@@ -17,6 +17,8 @@ void subghz_transmitter_free(SubGhzTransmitter* instance);
 
 SubGhzProtocolEncoderBase* subghz_transmitter_get_protocol_instance(SubGhzTransmitter* instance);
 
+uint8_t subghz_transmitter_get_raw_progress(SubGhzTransmitter* instance);
+
 bool subghz_transmitter_stop(SubGhzTransmitter* instance);
 
 SubGhzProtocolStatus

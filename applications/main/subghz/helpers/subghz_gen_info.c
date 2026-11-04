@@ -368,6 +368,26 @@ void subghz_scene_set_type_fill_generation_infos(GenInfo* infos_dest, SetType ty
             .keeloq.cnt = 0x03,
             .keeloq.manuf = "Aprimatic"};
         break;
+    case SetTypeErreka433:
+        gen_info = (GenInfo){
+            .type = GenKeeloq,
+            .mod = "AM650",
+            .freq = 433920000,
+            .keeloq.serial = (key & 0x0000FFFF),
+            .keeloq.btn = 0x02,
+            .keeloq.cnt = 0x03,
+            .keeloq.manuf = "Erreka"};
+        break;
+    case SetTypeErreka868:
+        gen_info = (GenInfo){
+            .type = GenKeeloq,
+            .mod = "AM650",
+            .freq = 868350000,
+            .keeloq.serial = (key & 0x0000FFFF),
+            .keeloq.btn = 0x02,
+            .keeloq.cnt = 0x03,
+            .keeloq.manuf = "Erreka"};
+        break;
     case SetTypeGibidi433:
         gen_info = (GenInfo){
             .type = GenKeeloq,

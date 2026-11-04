@@ -103,6 +103,11 @@ void subghz_hitag2_bf_set_levels(SubGhzHitag2Bf* instance, uint8_t levels_mask) 
     instance->levels_mask = levels_mask;
 }
 
+void subghz_hitag2_bf_request_cancel(SubGhzHitag2Bf* instance) {
+    furi_check(instance);
+    instance->cancel = true;
+}
+
 bool subghz_hitag2_bf_get_result(
     const SubGhzHitag2Bf* instance,
     uint8_t key_out[6],
@@ -337,6 +342,18 @@ static bool subghz_hitag2_bf_run_l4(
     uint8_t key[6];
     uint32_t tried = 0;
 
+    if(progress_cb) {
+        if(!progress_cb(
+               SubGhzHitag2BfLevelHeuristic,
+               "Heuristic",
+               0,
+               instance->keys_tested_total,
+               context)) {
+            instance->cancel = true;
+            return false;
+        }
+    }
+
     static const uint8_t tails[][2] = {
         {0x00, 0x00}, {0xFF, 0xFF}, {0x00, 0xFF}, {0xFF, 0x00},
         {0xAA, 0x55}, {0x55, 0xAA}, {0x12, 0x34}, {0xAB, 0xCD},
@@ -485,6 +502,7 @@ static bool subghz_hitag2_bf_try_hell_on_capture(
         cfg.progress_ctx = &bridge;
         cfg.timeout_ms = 0;
         cfg.now_ms_cb = furi_get_tick;
+        cfg.cancel = &instance->cancel;
         cfg.l0_start = chunk_start;
         cfg.l0_end = chunk_start + SUBGHZ_HITAG2_BF_L5_CHUNK_SIZE;
         if(cfg.l0_end > SUBGHZ_HITAG2_BF_L5_TOTAL_SLOTS) {
@@ -533,6 +551,17 @@ static bool subghz_hitag2_bf_run_l5(
     void* context) {
 
     if(instance->capture_count == 0) return false;
+    if(progress_cb) {
+        if(!progress_cb(
+               SubGhzHitag2BfLevelHitag2Hell,
+               "Hitag2Hell",
+               0,
+               instance->keys_tested_total,
+               context)) {
+            instance->cancel = true;
+            return false;
+        }
+    }
     return subghz_hitag2_bf_try_hell_on_capture(
         instance, &instance->captures[0], progress_cb, context);
 }

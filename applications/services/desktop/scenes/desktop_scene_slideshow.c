@@ -1,8 +1,5 @@
 #include <storage/storage.h>
 #include <gui/gui.h>
-#include <furi_hal_power.h>
-#include <flipper_format/flipper_format.h>
-#include <namechanger/namechanger.h>
 
 #include "../desktop_i.h"
 #include "../views/desktop_view_slideshow.h"
@@ -53,39 +50,4 @@ void desktop_scene_slideshow_on_exit(void* context) {
     Desktop* desktop = context;
     gui_set_hide_status_bar(desktop->gui, false);
     storage_common_remove(desktop->storage, SLIDESHOW_FS_PATH);
-
-    const char* name_pending = "/ext/apps_data/fox_setup/name.pending";
-    bool needs_reboot = storage_file_exists(desktop->storage, name_pending);
-
-    if(needs_reboot) {
-        File* nf = storage_file_alloc(desktop->storage);
-        if(storage_file_open(nf, name_pending, FSAM_READ, FSOM_OPEN_EXISTING)) {
-            char name[FURI_HAL_VERSION_ARRAY_NAME_LENGTH] = {0};
-            storage_file_read(nf, name, sizeof(name) - 1);
-            storage_file_close(nf);
-            storage_common_remove(desktop->storage, name_pending);
-            if(name[0] != '\0') {
-                if(strcmp(name, "") == 0) {
-                    storage_simply_remove(desktop->storage, NAMECHANGER_PATH);
-                } else {
-
-                    char nc_dir[64];
-                    strlcpy(nc_dir, NAMECHANGER_PATH, sizeof(nc_dir));
-                    char* sl = strrchr(nc_dir, '/');
-                    if(sl) { *sl = '\0'; storage_simply_mkdir(desktop->storage, nc_dir); }
-                    FlipperFormat* ff = flipper_format_file_alloc(desktop->storage);
-                    if(flipper_format_file_open_always(ff, NAMECHANGER_PATH)) {
-                        flipper_format_write_header_cstr(
-                            ff, NAMECHANGER_HEADER, NAMECHANGER_VERSION);
-                        flipper_format_write_string_cstr(ff, "Name", name);
-                        flipper_format_file_close(ff);
-                    }
-                    flipper_format_free(ff);
-                }
-            }
-        }
-
-        storage_file_free(nf);
-        furi_hal_power_reset();
-    }
 }

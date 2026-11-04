@@ -8,6 +8,8 @@
 #include "../blocks/custom_btn_i.h"
 #include <furi.h>
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
 
 #define GM_TE_SHORT       300U
 #define GM_TE_LONG        500U
@@ -56,25 +58,21 @@ struct SubGhzProtocolEncoderGM {
 
     uint8_t raw_data[GM_WIRE_BYTES];
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderGM);
+
 
 const SubGhzProtocolDecoder subghz_protocol_gm_decoder = {
     .alloc = subghz_protocol_decoder_gm_alloc,
-    .free = subghz_protocol_decoder_gm_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_gm_feed,
     .reset = subghz_protocol_decoder_gm_reset,
     .get_hash_data = subghz_protocol_decoder_gm_get_hash_data,
     .serialize = subghz_protocol_decoder_gm_serialize,
     .deserialize = subghz_protocol_decoder_gm_deserialize,
-    .get_string = subghz_protocol_decoder_gm_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_gm_encoder = {
-    .alloc = subghz_protocol_encoder_gm_alloc,
-    .free = subghz_protocol_encoder_gm_free,
-    .deserialize = subghz_protocol_encoder_gm_deserialize,
-    .stop = subghz_protocol_encoder_gm_stop,
-    .yield = subghz_protocol_encoder_gm_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_gm_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_gm");
 
 const SubGhzProtocol subghz_protocol_gm = {
     .name = GM_PROTOCOL_NAME,
@@ -83,7 +81,7 @@ const SubGhzProtocol subghz_protocol_gm = {
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_gm_decoder,
-    .encoder = &subghz_protocol_gm_encoder,
+    .encoder = &subghz_protocol_gm_encoder_ext.vtable,
 };
 
 static uint32_t gm_add_nibbles(const uint8_t* b, size_t n) {
@@ -226,11 +224,7 @@ void* subghz_protocol_decoder_gm_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_gm_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderGM* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_gm_reset(void* context) {
     furi_check(context);
@@ -312,184 +306,3 @@ SubGhzProtocolStatus
     return SubGhzProtocolStatusOk;
 }
 
-static const char* gm_button_name(uint8_t button) {
-    switch(button) {
-    case 0x1U: return "Unlock";
-    case 0x2U: return "Lock";
-    case 0x3U: return "Trunk";
-    case 0x4U: return "Panic";
-    default:   return "?";
-    }
-}
-
-void subghz_protocol_decoder_gm_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderGM* instance = context;
-
-    const uint8_t full_ck = instance->raw_data[13];
-    const bool full_ck_ok = ((gm_add_bytes(&instance->raw_data[1], 13U) & 0xFFU) == 0U);
-
-    furi_string_cat_printf(
-        output,
-        "%s %ubit\r\n"
-        "SN:%08lX Btn:%X[%s]\r\n"
-        "Seq:%06lX CS:%02X[%s]\r\n"
-        "Data:%02X%02X%02X%02X%02X%02X%02X\r\n"
-        "     %02X%02X%02X%02X%02X%02X%02X\r\n",
-        instance->generic.protocol_name,
-        GM_WIRE_BITS,
-        (unsigned long)instance->generic.serial,
-        (unsigned)gm_button(instance->raw_data),
-        gm_button_name(gm_button(instance->raw_data)),
-        (unsigned long)gm_sequence(instance->raw_data),
-        full_ck,
-        full_ck_ok ? "OK" : "ERR",
-        instance->raw_data[0],
-        instance->raw_data[1],
-        instance->raw_data[2],
-        instance->raw_data[3],
-        instance->raw_data[4],
-        instance->raw_data[5],
-        instance->raw_data[6],
-        instance->raw_data[7],
-        instance->raw_data[8],
-        instance->raw_data[9],
-        instance->raw_data[10],
-        instance->raw_data[11],
-        instance->raw_data[12],
-        instance->raw_data[13]);
-}
-
-static bool gm_encoder_build_upload(SubGhzProtocolEncoderGM* instance) {
-    furi_check(instance);
-    LevelDuration* upload = instance->encoder.upload;
-    if(!upload) return false;
-
-    size_t index = 0U;
-
-    for(uint8_t bit_index = 0U; bit_index < GM_WIRE_BITS; bit_index++) {
-        const bool bit =
-            ((instance->raw_data[bit_index >> 3U] >> (7U - (bit_index & 7U))) & 1U) != 0U;
-
-        upload[index++] = level_duration_make(true, GM_TE_SHORT);
-
-        upload[index++] = level_duration_make(false, bit ? GM_TE_LONG : GM_TE_SHORT);
-    }
-
-    upload[index++] = level_duration_make(false, GM_RESET_US);
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0U;
-    return true;
-}
-
-void* subghz_protocol_encoder_gm_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderGM* instance = calloc(1, sizeof(SubGhzProtocolEncoderGM));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_gm;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = GM_DEFAULT_REPEAT;
-    instance->encoder.size_upload = 0U;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-    return instance;
-}
-
-void subghz_protocol_encoder_gm_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderGM* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_gm_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderGM* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-}
-
-LevelDuration subghz_protocol_encoder_gm_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderGM* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0U;
-    }
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_gm_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    furi_check(flipper_format);
-    SubGhzProtocolEncoderGM* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-
-    flipper_format_rewind(flipper_format);
-    FuriString* protocol_name = furi_string_alloc();
-    bool protocol_ok = flipper_format_read_string(flipper_format, "Protocol", protocol_name) &&
-                       furi_string_equal(protocol_name, instance->base.protocol->name);
-    furi_string_free(protocol_name);
-    if(!protocol_ok) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    uint32_t bit_count = 0U;
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_uint32(flipper_format, "Bit", &bit_count, 1) ||
-       bit_count != GM_WIRE_BITS) {
-        return SubGhzProtocolStatusErrorValueBitCount;
-    }
-    instance->generic.data_count_bit = (uint16_t)bit_count;
-
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_hex(
-           flipper_format, GM_DATA_FIELD, instance->raw_data, GM_WIRE_BYTES) ||
-       !gm_frame_valid(instance->raw_data)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    instance->generic.serial = gm_id(instance->raw_data);
-    instance->generic.btn = gm_button(instance->raw_data);
-    instance->generic.cnt = (uint16_t)(gm_sequence(instance->raw_data) & 0xFFFFU);
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(instance->raw_data[2] & 0x07U);
-    }
-    subghz_custom_btn_set_max(0);
-
-    instance->generic.data =
-        ((uint64_t)instance->generic.serial << 16U) | instance->generic.cnt;
-    instance->generic.data_count_bit = GM_WIRE_BITS;
-
-    uint32_t repeat = GM_DEFAULT_REPEAT;
-    flipper_format_rewind(flipper_format);
-    flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
-    instance->encoder.repeat = (repeat == 0U) ? GM_DEFAULT_REPEAT : (size_t)repeat;
-
-    if(instance->encoder.upload == NULL) {
-        instance->encoder.upload = malloc(GM_UPLOAD_CAPACITY * sizeof(LevelDuration));
-        furi_check(instance->encoder.upload);
-    }
-    if(!gm_encoder_build_upload(instance)) {
-        return SubGhzProtocolStatusErrorEncoderGetUpload;
-    }
-
-    instance->encoder.is_running = true;
-    return SubGhzProtocolStatusOk;
-}

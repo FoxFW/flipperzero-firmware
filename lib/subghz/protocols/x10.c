@@ -1,5 +1,7 @@
 #include "x10.h"
 
+#include "common.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -27,6 +29,9 @@ struct SubGhzProtocolEncoderX10 {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderX10);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderX10);
+
 typedef enum {
     X10DecoderStepReset = 0,
     X10DecoderStepFoundPreambula,
@@ -36,13 +41,13 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_x10_decoder = {
     .alloc = subghz_protocol_decoder_x10_alloc,
-    .free = subghz_protocol_decoder_x10_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_x10_feed,
     .reset = subghz_protocol_decoder_x10_reset,
-    .get_hash_data = subghz_protocol_decoder_x10_get_hash_data,
-    .serialize = subghz_protocol_decoder_x10_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_x10_deserialize,
-    .get_string = subghz_protocol_decoder_x10_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
 const SubGhzProtocolEncoder subghz_protocol_x10_encoder = {
@@ -64,16 +69,8 @@ const SubGhzProtocol subghz_protocol_x10 = {
 
 void* subghz_protocol_decoder_x10_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderX10* instance = malloc(sizeof(SubGhzProtocolDecoderX10));
-    instance->base.protocol = &subghz_protocol_x10;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_x10_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderX10* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderX10), &subghz_protocol_x10);
 }
 
 void subghz_protocol_decoder_x10_reset(void* context) {
@@ -169,27 +166,6 @@ void subghz_protocol_decoder_x10_feed(void* context, bool level, uint32_t durati
     }
 }
 
-static void subghz_protocol_x10_check_remote_controller(SubGhzBlockGeneric* instance) {
-    instance->serial = (instance->data & 0xF0000000) >> (24+4);
-    instance->btn = (((instance->data & 0x07000000) >> 24) | ((instance->data & 0xF800) >> 8));
-}
-
-uint8_t subghz_protocol_decoder_x10_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderX10* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_x10_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderX10* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_x10_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -210,42 +186,3 @@ SubGhzProtocolStatus
 }
 
 const char* CHANNEL_LETTERS = "MNOPCDABEFGHKLIJ";
-void subghz_protocol_decoder_x10_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderX10* instance = context;
-    subghz_protocol_x10_check_remote_controller(&instance->generic);
-
-    char code_channel = CHANNEL_LETTERS[(instance->generic.serial & 0x0F)];
-
-    uint32_t code_button = 1 + (
-        ((instance->generic.btn&0x10) >> 4) |
-        ((instance->generic.btn&0x8) >> 2) |
-        ((instance->generic.btn&0x40)>>4) |
-        ((instance->generic.btn&4)<<1));
-
-    char* code_action = (instance->generic.btn & 0x20) == 0x20 ? "Off" : "On";
-    if (instance->generic.btn == 0x98) {
-        code_button = 0;
-        code_action = "Dim";
-    } else if (instance->generic.btn == 0x88) {
-        code_button = 0;
-        code_action = "Bright";
-    }
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Channel:%c \r\n"
-        "Button:%ld %s\r\n\r\n"
-        "Key:%lX%08lX\r\n"
-        "Sn:%07lX Btn:%X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        code_channel,
-        code_button,
-        code_action,
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)instance->generic.data,
-        instance->generic.serial,
-        instance->generic.btn);
-}

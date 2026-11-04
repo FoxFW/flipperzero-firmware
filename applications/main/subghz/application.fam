@@ -5,6 +5,7 @@ App(
     targets=["f7"],
     cdefines=["APP_SUBGHZ"],
     entry_point="subghz_app",
+    sources=["*.c*", "!protocols_ext", "!config_ext"],
     requires=[
         "gui",
         "cli",
@@ -31,10 +32,2456 @@ App(
     sources=["subghz_cli.c", "helpers/subghz_chat.c"],
 )
 
+# === FoxFW2.0 2026-10-31: config-externalization — scene config screens as
+# on-demand .fal plugins (config_ext/). Resident loader: helpers/subghz_config_scene_loader.c. ===
+App(
+    appid="subghz_config_dual",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_dual_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_dual.c"],
+)
+
+App(
+    appid="subghz_config_modulation",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_modulation_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_modulation.c"],
+)
+
+App(
+    appid="subghz_config_radio",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_radio_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_radio.c"],
+)
+
+App(
+    appid="subghz_config_receiver",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_receiver_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_receiver.c"],
+)
+
 App(
     appid="subghz_load_dangerous_settings",
     apptype=FlipperAppType.STARTUP,
     entry_point="subghz_dangerous_freq",
     requires=["storage", "subghz"],
     order=650,
+)
+
+# === FoxFW2.0 v2.1 2026-10-22: no Level-2 groups. Every protocol is registered live
+# (lib/subghz/protocols/protocol_items.c); only its detector is internal. Each one's
+# get_string is decode_<p>.fal and its encoder enc_<p>.fal (App blocks below), loaded
+# on demand from /ext/apps_data/subghz/plugins/. The old subghz_ext_auto_g1..g3 groups
+# and the deep-scan scene were removed.
+
+App(
+    appid="decode_princeton",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_princeton_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_princeton.c"],
+)
+
+App(
+    appid="decode_g1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_g1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_g1.c"],
+)
+
+
+# === FoxFW2.0 2026-10-21: per-protocol SD decode plugins (full split) ===
+App(
+    appid="decode_tesla_charge",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_tesla_charge_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_tesla_charge.c"],
+)
+
+App(
+    appid="decode_psa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_psa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_psa.c"],
+)
+
+App(
+    appid="decode_audi_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_audi_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_audi_v1.c"],
+)
+
+App(
+    appid="decode_audi_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_audi_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_audi_v2.c"],
+)
+
+App(
+    appid="decode_audiovox",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_audiovox_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_audiovox.c"],
+)
+
+App(
+    appid="decode_bmw_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bmw_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bmw_v2.c"],
+)
+
+App(
+    appid="decode_bmw_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bmw_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bmw_v3.c"],
+)
+
+App(
+    appid="decode_chevrolet_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_chevrolet_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_chevrolet_v0.c"],
+)
+
+App(
+    appid="decode_chrysler",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_chrysler_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_chrysler.c"],
+)
+
+App(
+    appid="decode_compustar",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_compustar_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_compustar.c"],
+)
+
+App(
+    appid="decode_ducato_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ducato_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ducato_v0.c"],
+)
+
+App(
+    appid="decode_fiat_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_v0.c"],
+)
+
+App(
+    appid="decode_fiat_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_v1.c"],
+)
+
+App(
+    appid="decode_fiat_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_v2.c"],
+)
+
+App(
+    appid="decode_ford_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ford_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ford_v0.c"],
+)
+
+App(
+    appid="decode_ford_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ford_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ford_v2.c"],
+)
+
+App(
+    appid="decode_ford_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ford_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ford_v3.c"],
+)
+
+App(
+    appid="decode_gm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_gm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_gm.c"],
+)
+
+App(
+    appid="decode_gm_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_gm_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_gm_rke.c"],
+)
+
+App(
+    appid="decode_hitag2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hitag2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hitag2.c"],
+)
+
+App(
+    appid="decode_honda_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v4.c"],
+)
+
+App(
+    appid="decode_honda_v7",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v7_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v7.c"],
+)
+
+App(
+    appid="decode_honda_v8",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v8_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v8.c"],
+)
+
+App(
+    appid="decode_honda_v9",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v9_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v9.c"],
+)
+
+App(
+    appid="decode_hyundai_kia_rio",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hyundai_kia_rio_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hyundai_kia_rio.c"],
+)
+
+App(
+    appid="decode_jeep_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_jeep_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_jeep_v0.c"],
+)
+
+App(
+    appid="decode_kia_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v0.c"],
+)
+
+App(
+    appid="decode_kia_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v1.c"],
+)
+
+App(
+    appid="decode_kia_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v2.c"],
+)
+
+App(
+    appid="decode_kia_v3_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v3_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v3_v4.c"],
+)
+
+App(
+    appid="decode_kia_v5",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v5_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v5.c"],
+)
+
+App(
+    appid="decode_kia_v6",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v6_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v6.c"],
+)
+
+App(
+    appid="decode_kia_v7",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kia_v7_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kia_v7.c"],
+)
+
+App(
+    appid="decode_ldv_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ldv_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ldv_v0.c"],
+)
+
+App(
+    appid="decode_lexus_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_lexus_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_lexus_v0.c"],
+)
+
+App(
+    appid="decode_mazda_siemens",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mazda_siemens_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mazda_siemens.c"],
+)
+
+App(
+    appid="decode_mazda_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mazda_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mazda_v0.c"],
+)
+
+App(
+    appid="decode_mazda_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mazda_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mazda_v1.c"],
+)
+
+App(
+    appid="decode_mazda_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mazda_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mazda_v2.c"],
+)
+
+App(
+    appid="decode_mitsubishi_v0a",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mitsubishi_v0a_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mitsubishi_v0a.c"],
+)
+
+App(
+    appid="decode_mitsubishi_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mitsubishi_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mitsubishi_v1.c"],
+)
+
+App(
+    appid="decode_renault_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_renault_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_renault_v0.c"],
+)
+
+App(
+    appid="decode_renault_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_renault_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_renault_v2.c"],
+)
+
+App(
+    appid="decode_renault_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_renault_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_renault_v3.c"],
+)
+
+App(
+    appid="decode_renault_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_renault_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_renault_v4.c"],
+)
+
+App(
+    appid="decode_santa_fe",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_santa_fe_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_santa_fe.c"],
+)
+
+App(
+    appid="decode_scher_khan",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_scher_khan_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_scher_khan.c"],
+)
+
+App(
+    appid="decode_sheriff_cfm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_sheriff_cfm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_sheriff_cfm.c"],
+)
+
+App(
+    appid="decode_siemens_vdo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_siemens_vdo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_siemens_vdo.c"],
+)
+
+App(
+    appid="decode_subaru",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_subaru_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_subaru.c"],
+)
+
+App(
+    appid="decode_suzuki",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_suzuki_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_suzuki.c"],
+)
+
+App(
+    appid="decode_allstar_firefly",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_allstar_firefly_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_allstar_firefly.c"],
+)
+
+App(
+    appid="decode_ansonic",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ansonic_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ansonic.c"],
+)
+
+App(
+    appid="decode_bett",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bett_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bett.c"],
+)
+
+App(
+    appid="decode_came",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_came_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_came.c"],
+)
+
+App(
+    appid="decode_chamberlain_code",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_chamberlain_code_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_chamberlain_code.c"],
+)
+
+App(
+    appid="decode_clemsa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_clemsa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_clemsa.c"],
+)
+
+App(
+    appid="decode_doitrand",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_doitrand_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_doitrand.c"],
+)
+
+App(
+    appid="decode_elplast",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_elplast_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_elplast.c"],
+)
+
+App(
+    appid="decode_feron",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_feron_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_feron.c"],
+)
+
+App(
+    appid="decode_gangqi",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_gangqi_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_gangqi.c"],
+)
+
+App(
+    appid="decode_gate_tx",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_gate_tx_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_gate_tx.c"],
+)
+
+App(
+    appid="decode_hollarm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hollarm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hollarm.c"],
+)
+
+App(
+    appid="decode_holtek_ht12x",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_holtek_ht12x_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_holtek_ht12x.c"],
+)
+
+App(
+    appid="decode_honeywell",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honeywell_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honeywell.c"],
+)
+
+App(
+    appid="decode_intertechno_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_intertechno_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_intertechno_v3.c"],
+)
+
+App(
+    appid="decode_legrand",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_legrand_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_legrand.c"],
+)
+
+App(
+    appid="decode_linear",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_linear_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_linear.c"],
+)
+
+App(
+    appid="decode_linear_delta3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_linear_delta3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_linear_delta3.c"],
+)
+
+App(
+    appid="decode_magellan",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_magellan_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_magellan.c"],
+)
+
+App(
+    appid="decode_marantec24",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_marantec24_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_marantec24.c"],
+)
+
+App(
+    appid="decode_mastercode",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mastercode_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mastercode.c"],
+)
+
+App(
+    appid="decode_megacode",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_megacode_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_megacode.c"],
+)
+
+App(
+    appid="decode_nice_flo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nice_flo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nice_flo.c"],
+)
+
+App(
+    appid="decode_smc5326",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_smc5326_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_smc5326.c"],
+)
+
+App(
+    appid="decode_x10",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_x10_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_x10.c"],
+)
+
+App(
+    appid="decode_keeloq",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_keeloq_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_keeloq.c"],
+)
+
+App(
+    appid="decode_star_line",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_star_line_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_star_line.c"],
+)
+
+App(
+    appid="decode_vag",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_vag_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_vag.c"],
+)
+
+App(
+    appid="decode_vag_polo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_vag_polo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_vag_polo.c"],
+)
+
+
+App(
+    appid="decode_astrostart",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_astrostart_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_astrostart.c"],
+)
+
+App(
+    appid="decode_audi_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_audi_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_audi_v3.c"],
+)
+
+App(
+    appid="decode_continental_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_continental_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_continental_rke.c"],
+)
+
+App(
+    appid="decode_honda_v5",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v5_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v5.c"],
+)
+
+App(
+    appid="decode_honda_v6",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v6_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v6.c"],
+)
+
+App(
+    appid="decode_honda_v10",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v10_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v10.c"],
+)
+
+App(
+    appid="decode_peugot_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_peugot_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_peugot_v0.c"],
+)
+
+App(
+    appid="decode_toyota_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_toyota_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_toyota_v0.c"],
+)
+
+
+App(
+    appid="decode_fiat_spa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_spa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_spa.c"],
+)
+
+App(
+    appid="decode_honda_static",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_static_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_static.c"],
+)
+
+App(
+    appid="decode_honda_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v1.c"],
+)
+
+App(
+    appid="decode_honda_v2_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honda_v2_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honda_v2_v3.c"],
+)
+
+App(
+    appid="decode_toyota",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_toyota_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_toyota.c"],
+)
+
+App(
+    appid="decode_porsche_cayenne",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_porsche_cayenne_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_porsche_cayenne.c"],
+)
+
+App(
+    appid="decode_fiat_v2_v3_v5",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_v2_v3_v5_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_v2_v3_v5.c"],
+)
+
+
+App(
+    appid="decode_ford_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ford_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ford_v1.c"],
+)
+
+App(
+    appid="decode_renault_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_renault_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_renault_v1.c"],
+)
+
+# === FoxFW2.0 v2.1 2026-10-21: encoder (TX) plugins. Loaded by libsubghz's transmitter
+# === when a protocol's encoder is an SD placeholder (lib/subghz/encode_plugin.h).
+
+App(
+    appid="enc_allstar_firefly",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_allstar_firefly_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_allstar_firefly.c"],
+)
+
+App(
+    appid="enc_ansonic",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ansonic_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ansonic.c"],
+)
+
+App(
+    appid="enc_astrostart",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_astrostart_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_astrostart.c"],
+)
+
+App(
+    appid="enc_audi_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_audi_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_audi_v1.c"],
+)
+
+App(
+    appid="enc_audiovox",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_audiovox_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_audiovox.c"],
+)
+
+App(
+    appid="enc_bett",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_bett_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_bett.c"],
+)
+
+App(
+    appid="enc_came",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_came_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_came.c"],
+)
+
+App(
+    appid="enc_chamberlain_code",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_chamberlain_code_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_chamberlain_code.c"],
+)
+
+App(
+    appid="enc_chrysler",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_chrysler_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_chrysler.c"],
+)
+
+App(
+    appid="enc_clemsa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_clemsa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_clemsa.c"],
+)
+
+App(
+    appid="enc_compustar",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_compustar_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_compustar.c"],
+)
+
+App(
+    appid="enc_continental_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_continental_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_continental_rke.c"],
+)
+
+App(
+    appid="enc_doitrand",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_doitrand_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_doitrand.c"],
+)
+
+App(
+    appid="enc_elplast",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_elplast_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_elplast.c"],
+)
+
+App(
+    appid="enc_feron",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_feron_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_feron.c"],
+)
+
+App(
+    appid="enc_fiat_spa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_spa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_spa.c"],
+)
+
+App(
+    appid="enc_fiat_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_v0.c"],
+)
+
+App(
+    appid="enc_fiat_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_v1.c"],
+)
+
+App(
+    appid="enc_fiat_v2_v3_v5",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_v2_v3_v5_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_v2_v3_v5.c"],
+)
+
+App(
+    appid="enc_ford_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ford_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ford_v0.c"],
+)
+
+App(
+    appid="enc_ford_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ford_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ford_v1.c"],
+)
+
+App(
+    appid="enc_ford_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ford_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ford_v2.c"],
+)
+
+App(
+    appid="enc_ford_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ford_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ford_v3.c"],
+)
+
+App(
+    appid="enc_gangqi",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_gangqi_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_gangqi.c"],
+)
+
+App(
+    appid="enc_gate_tx",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_gate_tx_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_gate_tx.c"],
+)
+
+App(
+    appid="enc_gm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_gm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_gm.c"],
+)
+
+App(
+    appid="enc_gm_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_gm_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_gm_rke.c"],
+)
+
+App(
+    appid="enc_hollarm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_hollarm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_hollarm.c"],
+)
+
+App(
+    appid="enc_holtek_ht12x",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_holtek_ht12x_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_holtek_ht12x.c"],
+)
+
+App(
+    appid="enc_honda_static",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honda_static_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honda_static.c"],
+)
+
+App(
+    appid="enc_honda_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honda_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honda_v1.c"],
+)
+
+App(
+    appid="enc_honda_v2_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honda_v2_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honda_v2_v3.c"],
+)
+
+App(
+    appid="enc_honeywell",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honeywell_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honeywell.c"],
+)
+
+App(
+    appid="enc_intertechno_v3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_intertechno_v3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_intertechno_v3.c"],
+)
+
+App(
+    appid="enc_kia_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v0.c"],
+)
+
+App(
+    appid="enc_kia_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v1.c"],
+)
+
+App(
+    appid="enc_kia_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v2.c"],
+)
+
+App(
+    appid="enc_kia_v5",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v5_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v5.c"],
+)
+
+App(
+    appid="enc_kia_v6",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v6_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v6.c"],
+)
+
+App(
+    appid="enc_kia_v7",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v7_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v7.c"],
+)
+
+App(
+    appid="enc_legrand",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_legrand_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_legrand.c"],
+)
+
+App(
+    appid="enc_linear",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_linear_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_linear.c"],
+)
+
+App(
+    appid="enc_linear_delta3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_linear_delta3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_linear_delta3.c"],
+)
+
+App(
+    appid="enc_magellan",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_magellan_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_magellan.c"],
+)
+
+App(
+    appid="enc_marantec24",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_marantec24_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_marantec24.c"],
+)
+
+App(
+    appid="enc_mastercode",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mastercode_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mastercode.c"],
+)
+
+App(
+    appid="enc_mazda_siemens",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mazda_siemens_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mazda_siemens.c"],
+)
+
+App(
+    appid="enc_mazda_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mazda_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mazda_v0.c"],
+)
+
+App(
+    appid="enc_megacode",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_megacode_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_megacode.c"],
+)
+
+App(
+    appid="enc_mitsubishi_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mitsubishi_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mitsubishi_v0.c"],
+)
+
+App(
+    appid="enc_mitsubishi_v0a",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mitsubishi_v0a_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mitsubishi_v0a.c"],
+)
+
+App(
+    appid="enc_nice_flo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nice_flo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nice_flo.c"],
+)
+
+App(
+    appid="enc_opel_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_opel_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_opel_v0.c"],
+)
+
+App(
+    appid="enc_peugot_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_peugot_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_peugot_v0.c"],
+)
+
+App(
+    appid="enc_princeton",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_princeton_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_princeton.c"],
+)
+
+App(
+    appid="enc_psa",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_psa_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_psa.c"],
+)
+
+App(
+    appid="enc_renault_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_renault_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_renault_v0.c"],
+)
+
+App(
+    appid="enc_smc5326",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_smc5326_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_smc5326.c"],
+)
+
+App(
+    appid="enc_subaru",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_subaru_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_subaru.c"],
+)
+
+App(
+    appid="enc_suzuki",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_suzuki_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_suzuki.c"],
+)
+
+App(
+    appid="enc_tesla_charge",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_tesla_charge_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_tesla_charge.c"],
+)
+
+App(
+    appid="enc_toyota",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_toyota_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_toyota.c"],
+)
+
+App(
+    appid="enc_toyota_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_toyota_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_toyota_v0.c"],
+)
+
+App(
+    appid="enc_keeloq",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_keeloq_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_keeloq.c"],
+)
+
+App(
+    appid="enc_kia_v3_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kia_v3_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kia_v3_v4.c"],
+)
+
+App(
+    appid="enc_sheriff_cfm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_sheriff_cfm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_sheriff_cfm.c"],
+)
+
+App(
+    appid="enc_star_line",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_star_line_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_star_line.c"],
+)
+
+App(
+    appid="enc_vag",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_vag_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_vag.c"],
+)
+
+App(
+    appid="enc_renault_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_renault_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_renault_v1.c"],
+)
+
+App(
+    appid="enc_fiat_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_v2.c"],
+)
+
+App(
+    appid="enc_scher_khan",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_scher_khan_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_scher_khan.c"],
+)
+
+App(
+    appid="enc_porsche_cayenne",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_porsche_cayenne_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_porsche_cayenne.c"],
+)
+
+App(
+    appid="enc_hyundai_kia_rio",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_hyundai_kia_rio_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_hyundai_kia_rio.c"],
+)
+
+App(
+    appid="enc_porsche_touareg",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_porsche_touareg_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_porsche_touareg.c"],
+)
+
+App(
+    appid="enc_santa_fe",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_santa_fe_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_santa_fe.c"],
+)
+
+App(
+    appid="decode_alps_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_alps_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_alps_rke.c"],
+)
+
+App(
+    appid="decode_alutech_at_4n",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_alutech_at_4n_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_alutech_at_4n.c"],
+)
+
+App(
+    appid="decode_audi",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_audi_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_audi.c"],
+)
+
+App(
+    appid="decode_beninca_arc",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_beninca_arc_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_beninca_arc.c"],
+)
+
+App(
+    appid="decode_bmw_cas3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bmw_cas3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bmw_cas3.c"],
+)
+
+App(
+    appid="decode_bmw_cas4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bmw_cas4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bmw_cas4.c"],
+)
+
+App(
+    appid="decode_came_atomo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_came_atomo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_came_atomo.c"],
+)
+
+App(
+    appid="decode_came_twee",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_came_twee_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_came_twee.c"],
+)
+
+App(
+    appid="decode_code_alarm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_code_alarm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_code_alarm.c"],
+)
+
+App(
+    appid="decode_dickert_mahs",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_dickert_mahs_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_dickert_mahs.c"],
+)
+
+App(
+    appid="decode_ditec_gol4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ditec_gol4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ditec_gol4.c"],
+)
+
+App(
+    appid="decode_dooya",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_dooya_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_dooya.c"],
+)
+
+App(
+    appid="decode_faac_slh",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_faac_slh_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_faac_slh.c"],
+)
+
+App(
+    appid="decode_fiat_marelli",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_fiat_marelli_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_fiat_marelli.c"],
+)
+
+App(
+    appid="decode_hay21",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hay21_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hay21.c"],
+)
+
+App(
+    appid="decode_holtek",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_holtek_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_holtek.c"],
+)
+
+App(
+    appid="decode_honeywell_wdb",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_honeywell_wdb_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_honeywell_wdb.c"],
+)
+
+App(
+    appid="decode_hormann",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hormann_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hormann.c"],
+)
+
+App(
+    appid="decode_hundai",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hundai_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hundai.c"],
+)
+
+App(
+    appid="decode_ido",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_ido_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_ido.c"],
+)
+
+App(
+    appid="decode_jarolift",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_jarolift_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_jarolift.c"],
+)
+
+App(
+    appid="decode_keyfinder",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_keyfinder_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_keyfinder.c"],
+)
+
+App(
+    appid="decode_kinggates_stylo_4k",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_kinggates_stylo_4k_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_kinggates_stylo_4k.c"],
+)
+
+App(
+    appid="decode_land_rover_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_land_rover_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_land_rover_v0.c"],
+)
+
+App(
+    appid="decode_marantec",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_marantec_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_marantec.c"],
+)
+
+App(
+    appid="decode_mazda_infinity",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mazda_infinity_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mazda_infinity.c"],
+)
+
+App(
+    appid="decode_mercedes",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mercedes_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mercedes.c"],
+)
+
+App(
+    appid="decode_mic6sc2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_mic6sc2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_mic6sc2.c"],
+)
+
+App(
+    appid="decode_nero_radio",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nero_radio_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nero_radio.c"],
+)
+
+App(
+    appid="decode_nero_sketch",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nero_sketch_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nero_sketch.c"],
+)
+
+App(
+    appid="decode_nice_flor_s",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nice_flor_s_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nice_flor_s.c"],
+)
+
+App(
+    appid="decode_nidec_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nidec_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nidec_rke.c"],
+)
+
+App(
+    appid="decode_nord_ice",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_nord_ice_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_nord_ice.c"],
+)
+
+App(
+    appid="decode_phoenix_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_phoenix_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_phoenix_v2.c"],
+)
+
+App(
+    appid="decode_power_smart",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_power_smart_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_power_smart.c"],
+)
+
+App(
+    appid="decode_psa2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_psa2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_psa2.c"],
+)
+
+App(
+    appid="decode_revers_rb2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_revers_rb2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_revers_rb2.c"],
+)
+
+App(
+    appid="decode_roger",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_roger_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_roger.c"],
+)
+
+App(
+    appid="decode_secplus_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_secplus_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_secplus_v1.c"],
+)
+
+App(
+    appid="decode_secplus_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_secplus_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_secplus_v2.c"],
+)
+
+App(
+    appid="decode_somfy_keytis",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_somfy_keytis_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_somfy_keytis.c"],
+)
+
+App(
+    appid="decode_somfy_telis",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_somfy_telis_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_somfy_telis.c"],
+)
+
+App(
+    appid="decode_telcoma_edge",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_telcoma_edge_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_telcoma_edge.c"],
+)
+
+App(
+    appid="decode_treadmill37",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_treadmill37_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_treadmill37.c"],
+)
+
+App(
+    appid="enc_alps_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_alps_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_alps_rke.c"],
+)
+
+App(
+    appid="enc_alutech_at_4n",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_alutech_at_4n_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_alutech_at_4n.c"],
+)
+
+App(
+    appid="enc_audi",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_audi_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_audi.c"],
+)
+
+App(
+    appid="enc_beninca_arc",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_beninca_arc_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_beninca_arc.c"],
+)
+
+App(
+    appid="enc_bmw_cas3",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_bmw_cas3_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_bmw_cas3.c"],
+)
+
+App(
+    appid="enc_bmw_cas4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_bmw_cas4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_bmw_cas4.c"],
+)
+
+App(
+    appid="enc_came_atomo",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_came_atomo_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_came_atomo.c"],
+)
+
+App(
+    appid="enc_came_twee",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_came_twee_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_came_twee.c"],
+)
+
+App(
+    appid="enc_dickert_mahs",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_dickert_mahs_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_dickert_mahs.c"],
+)
+
+App(
+    appid="enc_ditec_gol4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_ditec_gol4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_ditec_gol4.c"],
+)
+
+App(
+    appid="enc_dooya",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_dooya_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_dooya.c"],
+)
+
+App(
+    appid="enc_faac_slh",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_faac_slh_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_faac_slh.c"],
+)
+
+App(
+    appid="enc_fiat_marelli",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_fiat_marelli_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_fiat_marelli.c"],
+)
+
+App(
+    appid="enc_hay21",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_hay21_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_hay21.c"],
+)
+
+App(
+    appid="enc_holtek",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_holtek_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_holtek.c"],
+)
+
+App(
+    appid="enc_honeywell_wdb",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honeywell_wdb_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honeywell_wdb.c"],
+)
+
+App(
+    appid="enc_hormann",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_hormann_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_hormann.c"],
+)
+
+App(
+    appid="enc_hundai",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_hundai_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_hundai.c"],
+)
+
+App(
+    appid="enc_jarolift",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_jarolift_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_jarolift.c"],
+)
+
+App(
+    appid="enc_keyfinder",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_keyfinder_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_keyfinder.c"],
+)
+
+App(
+    appid="enc_kinggates_stylo_4k",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_kinggates_stylo_4k_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_kinggates_stylo_4k.c"],
+)
+
+App(
+    appid="enc_land_rover_v0",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_land_rover_v0_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_land_rover_v0.c"],
+)
+
+App(
+    appid="enc_marantec",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_marantec_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_marantec.c"],
+)
+
+App(
+    appid="enc_mazda_infinity",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mazda_infinity_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mazda_infinity.c"],
+)
+
+App(
+    appid="enc_mercedes",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mercedes_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mercedes.c"],
+)
+
+App(
+    appid="enc_nero_radio",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nero_radio_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nero_radio.c"],
+)
+
+App(
+    appid="enc_nero_sketch",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nero_sketch_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nero_sketch.c"],
+)
+
+App(
+    appid="enc_nice_flor_s",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nice_flor_s_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nice_flor_s.c"],
+)
+
+App(
+    appid="enc_nidec_rke",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nidec_rke_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nidec_rke.c"],
+)
+
+App(
+    appid="enc_nord_ice",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_nord_ice_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_nord_ice.c"],
+)
+
+App(
+    appid="enc_phoenix_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_phoenix_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_phoenix_v2.c"],
+)
+
+App(
+    appid="enc_power_smart",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_power_smart_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_power_smart.c"],
+)
+
+App(
+    appid="enc_psa2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_psa2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_psa2.c"],
+)
+
+App(
+    appid="enc_revers_rb2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_revers_rb2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_revers_rb2.c"],
+)
+
+App(
+    appid="enc_roger",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_roger_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_roger.c"],
+)
+
+App(
+    appid="enc_secplus_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_secplus_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_secplus_v1.c"],
+)
+
+App(
+    appid="enc_secplus_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_secplus_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_secplus_v2.c"],
+)
+
+App(
+    appid="enc_somfy_keytis",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_somfy_keytis_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_somfy_keytis.c"],
+)
+
+App(
+    appid="enc_somfy_telis",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_somfy_telis_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_somfy_telis.c"],
+)
+
+App(
+    appid="enc_telcoma_edge",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_telcoma_edge_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_telcoma_edge.c"],
+)
+
+App(
+    appid="enc_treadmill37",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_treadmill37_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_treadmill37.c"],
+)
+
+App(
+    appid="decode_urmet",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_urmet_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_urmet.c"],
+)
+
+App(
+    appid="decode_keyfinder2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_keyfinder2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_keyfinder2.c"],
+)
+
+App(
+    appid="decode_doorbell32",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_doorbell32_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_doorbell32.c"],
+)
+
+App(
+    appid="decode_opel_v1",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_opel_v1_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_opel_v1.c"],
+)
+
+App(
+    appid="enc_urmet",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_urmet_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_urmet.c"],
+)
+
+App(
+    appid="enc_keyfinder2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_keyfinder2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_keyfinder2.c"],
+)
+
+App(
+    appid="enc_doorbell32",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_doorbell32_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_doorbell32.c"],
 )

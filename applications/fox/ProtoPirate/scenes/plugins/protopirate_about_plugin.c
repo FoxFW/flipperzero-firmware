@@ -170,10 +170,8 @@ static void about_draw_callback(Canvas* canvas, void* context) {
 }
 
 static bool about_input_callback(InputEvent* event, void* context) {
-    furi_check(context);
 #ifdef ENABLE_EMULATE_FEATURE
     ProtoPirateApp* app = context;
-
     if(event->type != InputTypePress) {
         return false;
     }
@@ -199,6 +197,7 @@ static bool about_input_callback(InputEvent* event, void* context) {
     return true;
 #else
     UNUSED(event);
+    UNUSED(context);
     return false;
 #endif
 }
@@ -269,10 +268,10 @@ bool plugin_protopirate_scene_about_on_event(ProtoPirateApp* app, SceneManagerEv
             app->emulate_feature_enabled = !app->emulate_feature_enabled;
 
             ProtoPirateSettings settings;
-            g_about_scene_host_api->settings_load(&settings);
+            g_about_scene_host_api->settings_load_from_plugin(&settings);
 
             settings.emulate_feature_enabled = app->emulate_feature_enabled;
-            g_about_scene_host_api->settings_save(&settings);
+            g_about_scene_host_api->settings_save_from_plugin(&settings);
 
             notification_message(
                 app->notifications,

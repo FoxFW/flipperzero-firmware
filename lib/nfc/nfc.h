@@ -19,6 +19,7 @@ typedef enum {
 
     NfcEventTypeListenerActivated,
     NfcEventTypePollerReady,
+    NfcEventTypeListenerTick,
 } NfcEventType;
 
 typedef struct {
@@ -51,6 +52,7 @@ typedef enum {
     NfcTechIso14443b,
     NfcTechIso15693,
     NfcTechFelica,
+    NfcTechTexkom,
 
     NfcTechNum,
 } NfcTech;
@@ -133,6 +135,9 @@ NfcError nfc_iso15693_listener_tx_sof(Nfc* instance);
 void nfc_felica_listener_timer_anticol_start(Nfc* instance, uint8_t target_time_slot);
 
 void nfc_felica_listener_timer_anticol_stop(Nfc* instance);
+
+/* Texkom: capture one impulse train in poller mode (RX-only; tag repeats its frame). */
+NfcError nfc_texkom_poller_rx(Nfc* instance, BitBuffer* rx_buffer);
 
 #ifdef __cplusplus
 }

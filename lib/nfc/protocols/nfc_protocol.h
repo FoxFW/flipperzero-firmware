@@ -22,6 +22,7 @@ typedef enum {
     NfcProtocolNtag4xx,
     NfcProtocolType4Tag,
     NfcProtocolEmv,
+    NfcProtocolTexkom,
 
     NfcProtocolNum,
 

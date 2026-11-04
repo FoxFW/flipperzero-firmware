@@ -13,7 +13,7 @@
 
 #include "loader.h"
 #include "loader_menu.h"
-#include "loader_main_menu_pins.h"
+#include "loader_main_menu_layout.h"
 #include "../desktop/desktop_settings.h"
 
 #define TAG "LoaderMenu"
@@ -93,16 +93,31 @@ typedef struct {
     ViewDispatcher* view_dispatcher;
     Menu* primary_menu;
     Submenu* settings_menu;
-    MainMenuPins pins;
 
-    char pin_labels[MAIN_MENU_PINS_MAX][MAIN_MENU_PINS_PATH_LEN];
+    /* The whole apps-menu layout, SD-backed, kept for the menu's lifetime so
+     * every identifier/label pointer handed to the menu stays valid. This is the
+     * only resident copy; change detection uses a cheap fingerprint of the file
+     * rather than a second ~8 KB layout buffer (keeps the largest contiguous
+     * free heap block as big as possible). */
+    MainMenuLayout layout;
+
+    /* Fingerprint of the layout file as last loaded, for allocation-free change
+     * detection on the refresh hot path. */
+    uint32_t layout_fp_hash;
+    uint32_t layout_fp_len;
+    bool layout_fp_absent;
+
+    /* Positions of the Fox Settings / Settings items in the built menu, so a
+     * settings sub-app return can restore the cursor. */
+    size_t fox_menu_index;
+    size_t settings_menu_index;
 
     LoaderMenu* loader_menu;
     Loader* loader;
     FuriPubSubSubscription* loader_sub;
 } LoaderMenuApp;
 
-#define LoaderMenuCustomEventRefreshPins 0
+#define LoaderMenuCustomEventRefreshLayout 0
 
 static bool loader_menu_start(LoaderMenu* menu, const char* name) {
     Loader* loader = furi_record_open(RECORD_LOADER);
@@ -114,59 +129,14 @@ static bool loader_menu_start(LoaderMenu* menu, const char* name) {
     return status == LoaderStatusOk;
 }
 
-static void loader_menu_apps_callback(void* context, uint32_t index) {
+/* Unified launcher for every app entry in the layout. The menu item carries
+ * the entry's identifier pointer (an internal/external app name, or a .fap
+ * path) as its index; the loader resolves a name or a path the same way. The
+ * identifier lives in app->layout for the menu's whole lifetime. */
+static void loader_menu_launch_callback(void* context, uint32_t index) {
     LoaderMenu* menu = context;
-    const char* name = FLIPPER_APPS[index].name;
-    loader_menu_start(menu, name);
-}
-
-static void loader_menu_external_apps_callback(void* context, uint32_t index) {
-    LoaderMenu* menu = context;
-    const char* path = FLIPPER_EXTERNAL_APPS[index].name;
-    loader_menu_start(menu, path);
-}
-
-static void loader_menu_pinned_callback(void* context, uint32_t index) {
-    LoaderMenu* menu = context;
-    const char* path = (const char*)index;
-    loader_menu_start(menu, path);
-}
-
-static void loader_menu_pin_label_from_filename(const char* path, char* out, size_t out_size) {
-    const char* slash = strrchr(path, '/');
-    const char* base = slash ? slash + 1 : path;
-    strlcpy(out, base, out_size);
-    size_t len = strlen(out);
-    if(len > 4 && strcmp(out + len - 4, ".fap") == 0) {
-        out[len - 4] = '\0';
-    }
-}
-
-static void loader_menu_pin_label(
-    Storage* storage,
-    const char* path,
-    const char* custom_name,
-    char* out,
-    size_t out_size) {
-    if(custom_name && custom_name[0] != '\0') {
-        strlcpy(out, custom_name, out_size);
-        return;
-    }
-
-    FuriString* path_str = furi_string_alloc_set_str(path);
-    FuriString* name_str = furi_string_alloc();
-    uint8_t icon_buf[FAP_MANIFEST_MAX_ICON_SIZE];
-    uint8_t* icon_ptr = icon_buf;
-
-    bool loaded = flipper_application_load_name_and_icon(path_str, storage, &icon_ptr, name_str);
-    if(loaded && !furi_string_empty(name_str)) {
-        strlcpy(out, furi_string_get_cstr(name_str), out_size);
-    } else {
-        loader_menu_pin_label_from_filename(path, out, out_size);
-    }
-
-    furi_string_free(path_str);
-    furi_string_free(name_str);
+    const char* name_or_path = (const char*)index;
+    loader_menu_start(menu, name_or_path);
 }
 
 static void loader_menu_applications_callback(void* context, uint32_t index) {
@@ -214,65 +184,170 @@ static uint32_t loader_menu_exit(void* context) {
     return VIEW_NONE;
 }
 
+/* Cosmetic icon for a layout entry; launching never depends on it. */
+static const Icon* loader_menu_layout_entry_icon(const MainMenuLayoutEntry* e) {
+    switch(e->kind) {
+    case MainMenuEntryKindApplications:
+        return &A_Plugins_14;
+    case MainMenuEntryKindFoxSettings:
+    case MainMenuEntryKindSettings:
+        return &A_Settings_14;
+    case MainMenuEntryKindInternal:
+        for(size_t i = 0; i < FLIPPER_APPS_COUNT; i++) {
+            if(strcmp(FLIPPER_APPS[i].name, e->identifier) == 0) return FLIPPER_APPS[i].icon;
+        }
+        return &A_Plugins_14;
+    case MainMenuEntryKindExternal:
+        for(size_t i = 0; i < FLIPPER_EXTERNAL_APPS_COUNT; i++) {
+            if(strcmp(FLIPPER_EXTERNAL_APPS[i].name, e->identifier) == 0)
+                return FLIPPER_EXTERNAL_APPS[i].icon;
+        }
+        return &A_Star_14;
+    case MainMenuEntryKindUser:
+    default:
+        return &A_Star_14;
+    }
+}
+
+/* Internal/external entries whose app no longer exists in this build (e.g.
+ * removed by a firmware update) are dropped so no dead item is shown. User
+ * paths and specials are always kept. */
+static bool loader_menu_layout_entry_known(const MainMenuLayoutEntry* e) {
+    if(e->kind == MainMenuEntryKindInternal) {
+        for(size_t i = 0; i < FLIPPER_APPS_COUNT; i++) {
+            if(strcmp(FLIPPER_APPS[i].name, e->identifier) == 0) return true;
+        }
+        return false;
+    }
+    if(e->kind == MainMenuEntryKindExternal) {
+        for(size_t i = 0; i < FLIPPER_EXTERNAL_APPS_COUNT; i++) {
+            if(strcmp(FLIPPER_EXTERNAL_APPS[i].name, e->identifier) == 0) return true;
+        }
+        return false;
+    }
+    return true;
+}
+
+static void loader_menu_add_layout_entry(
+    LoaderMenuApp* app,
+    LoaderMenu* menu,
+    MainMenuLayoutEntry* e,
+    size_t* position) {
+    /* label points into app->layout (persistent for the menu's lifetime), or to
+     * a static literal fallback (also persistent) if the stored label is empty. */
+    const char* label = e->label;
+    if(label[0] == '\0') {
+        switch(e->kind) {
+        case MainMenuEntryKindApplications:
+            label = MAIN_MENU_APPLICATIONS_NAME;
+            break;
+        case MainMenuEntryKindFoxSettings:
+            label = "Fox Settings";
+            break;
+        case MainMenuEntryKindSettings:
+            label = "Settings";
+            break;
+        default:
+            label = e->identifier;
+            break;
+        }
+    }
+    const Icon* icon = loader_menu_layout_entry_icon(e);
+
+    switch(e->kind) {
+    case MainMenuEntryKindApplications:
+        menu_add_item(
+            app->primary_menu, label, icon, 0, loader_menu_applications_callback, (void*)menu);
+        break;
+    case MainMenuEntryKindFoxSettings:
+        app->fox_menu_index = *position;
+        menu_add_item(
+            app->primary_menu, label, icon, 0, loader_menu_fox_settings_callback, (void*)menu);
+        break;
+    case MainMenuEntryKindSettings:
+        app->settings_menu_index = *position;
+        menu_add_item(
+            app->primary_menu, label, icon, 0, loader_menu_switch_to_settings, app);
+        break;
+    case MainMenuEntryKindInternal:
+    case MainMenuEntryKindExternal:
+    case MainMenuEntryKindUser:
+    default:
+        menu_add_item(
+            app->primary_menu,
+            label,
+            icon,
+            (uint32_t)e->identifier,
+            loader_menu_launch_callback,
+            (void*)menu);
+        break;
+    }
+
+    (*position)++;
+}
+
 static void loader_menu_build_menu(LoaderMenuApp* app, LoaderMenu* menu) {
-    size_t i = 0;
+    size_t position = 0;
+    app->fox_menu_index = 0;
+    app->settings_menu_index = 0;
 
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    for(size_t p = 0; p < app->pins.count; p++) {
-        loader_menu_pin_label(
-            storage,
-            app->pins.paths[p],
-            app->pins.names[p],
-            app->pin_labels[p],
-            sizeof(app->pin_labels[p]));
-        menu_add_item(
-            app->primary_menu,
-            app->pin_labels[p],
-            &A_Star_14,
-            (uint32_t)app->pins.paths[p],
-            loader_menu_pinned_callback,
-            (void*)menu);
-    }
-    furi_record_close(RECORD_STORAGE);
+    bool has_apps = false;
+    bool has_subghz = false;
+    bool has_settings = false;
 
-    menu_add_item(
-        app->primary_menu,
-        LOADER_APPLICATIONS_NAME,
-        &A_Plugins_14,
-        i++,
-        loader_menu_applications_callback,
-        (void*)menu);
+    for(uint8_t k = 0; k < app->layout.count; k++) {
+        MainMenuLayoutEntry* e = &app->layout.entries[k];
+        bool protect = main_menu_layout_entry_is_protected(e);
+        if(!e->enabled && !protect) continue;
+        if(!loader_menu_layout_entry_known(e)) continue;
 
-    for(i = 0; i < FLIPPER_APPS_COUNT; i++) {
-        menu_add_item(
-            app->primary_menu,
-            FLIPPER_APPS[i].name,
-            FLIPPER_APPS[i].icon,
-            i,
-            loader_menu_apps_callback,
-            (void*)menu);
+        if(e->kind == MainMenuEntryKindApplications) has_apps = true;
+        if(e->kind == MainMenuEntryKindInternal &&
+           strcmp(e->identifier, MAIN_MENU_SUBGHZ_NAME) == 0)
+            has_subghz = true;
+        if(e->kind == MainMenuEntryKindSettings) has_settings = true;
+
+        loader_menu_add_layout_entry(app, menu, e, &position);
     }
 
-    for(i = 0; i < FLIPPER_EXTERNAL_APPS_COUNT; i++) {
+    /* Belt-and-suspenders: "Apps", "Sub-GHz" and "Settings" are the only path to
+     * those apps and MUST always be present, even if the layout file omitted
+     * them. (A line that merely disabled them was force-enabled at parse time, so
+     * this only handles a fully missing line.) String literals are static
+     * storage, so the labels they hand the menu stay valid. */
+    if(!has_apps) {
         menu_add_item(
             app->primary_menu,
-            FLIPPER_EXTERNAL_APPS[i].name,
-            FLIPPER_EXTERNAL_APPS[i].icon,
-            i,
-            loader_menu_external_apps_callback,
+            MAIN_MENU_APPLICATIONS_NAME,
+            &A_Plugins_14,
+            0,
+            loader_menu_applications_callback,
             (void*)menu);
+        position++;
     }
-
-    menu_add_item(
-        app->primary_menu,
-        "Fox Settings",
-        &A_Settings_14,
-        i++,
-        loader_menu_fox_settings_callback,
-        (void*)menu);
-
-    menu_add_item(
-        app->primary_menu, "Settings", &A_Settings_14, i++, loader_menu_switch_to_settings, app);
+    if(!has_subghz) {
+        const Icon* subghz_icon = &A_Plugins_14;
+        for(size_t i = 0; i < FLIPPER_APPS_COUNT; i++) {
+            if(strcmp(FLIPPER_APPS[i].name, MAIN_MENU_SUBGHZ_NAME) == 0) {
+                subghz_icon = FLIPPER_APPS[i].icon;
+                break;
+            }
+        }
+        menu_add_item(
+            app->primary_menu,
+            MAIN_MENU_SUBGHZ_NAME,
+            subghz_icon,
+            (uint32_t)MAIN_MENU_SUBGHZ_NAME,
+            loader_menu_launch_callback,
+            (void*)menu);
+        position++;
+    }
+    if(!has_settings) {
+        app->settings_menu_index = position;
+        menu_add_item(
+            app->primary_menu, "Settings", &A_Settings_14, 0, loader_menu_switch_to_settings, app);
+        position++;
+    }
 }
 
 static void loader_menu_build_submenu(LoaderMenuApp* app, LoaderMenu* loader_menu) {
@@ -294,33 +369,65 @@ static void loader_menu_build_submenu(LoaderMenuApp* app, LoaderMenu* loader_men
     }
 }
 
-static bool loader_menu_pins_equal(const MainMenuPins* a, const MainMenuPins* b) {
-    if(a->count != b->count) return false;
-    for(uint8_t i = 0; i < a->count; i++) {
-        if(strcmp(a->paths[i], b->paths[i]) != 0) return false;
-        if(strcmp(a->names[i], b->names[i]) != 0) return false;
+/* Record the fingerprint of the layout file as it currently sits on disk, so a
+ * later refresh can detect a change without parsing or holding a second copy. */
+static void loader_menu_store_fingerprint(LoaderMenuApp* app) {
+    uint32_t h = 0;
+    uint32_t l = 0;
+    MainMenuLayoutFpStatus fp = main_menu_layout_fingerprint(&h, &l);
+    if(fp == MainMenuLayoutFpOk) {
+        app->layout_fp_absent = false;
+        app->layout_fp_hash = h;
+        app->layout_fp_len = l;
+    } else if(fp == MainMenuLayoutFpAbsent) {
+        app->layout_fp_absent = true;
+        app->layout_fp_hash = 0;
+        app->layout_fp_len = 0;
+    } else {
+        /* transient read error: force a recheck on the next refresh */
+        app->layout_fp_absent = false;
+        app->layout_fp_hash = 0;
+        app->layout_fp_len = 0;
     }
-    return true;
 }
 
-static void loader_menu_refresh_pins_if_changed(LoaderMenuApp* app) {
-    MainMenuPins* new_pins = malloc(sizeof(MainMenuPins));
-    if(new_pins) {
-        main_menu_pins_load(new_pins);
+/* Picks up a layout edit saved by the Fox Settings "Main Menu Apps" page on the
+ * next menu show, the same way pins used to refresh. The menu is built once at
+ * boot and kept, so on a change we menu_reset + rebuild in place rather than
+ * reallocating the menu. Change detection streams a cheap fingerprint of the
+ * file (no parse, no allocation); the full layout is only re-read when the
+ * fingerprint actually differs. */
+static void loader_menu_refresh_layout_if_changed(LoaderMenuApp* app) {
+    uint32_t hash = 0;
+    uint32_t len = 0;
+    MainMenuLayoutFpStatus fp = main_menu_layout_fingerprint(&hash, &len);
 
-        if(!loader_menu_pins_equal(&app->pins, new_pins)) {
-            app->pins = *new_pins;
-            menu_reset(app->primary_menu);
-            loader_menu_build_menu(app, app->loader_menu);
-        }
-        free(new_pins);
+    bool changed;
+    if(fp == MainMenuLayoutFpError) {
+        /* Transient read error: keep the current menu and the stored fingerprint
+         * so the next refresh retries. */
+        return;
+    } else if(fp == MainMenuLayoutFpAbsent) {
+        changed = !app->layout_fp_absent;
+    } else {
+        changed = app->layout_fp_absent || hash != app->layout_fp_hash ||
+                  len != app->layout_fp_len;
     }
+    if(!changed) return;
+
+    /* On a transient read failure the load returns false and leaves the file
+     * intact; keep the current menu rather than collapsing it. */
+    if(!main_menu_layout_load(&app->layout)) return;
+
+    loader_menu_store_fingerprint(app);
+    menu_reset(app->primary_menu);
+    loader_menu_build_menu(app, app->loader_menu);
 }
 
 static bool loader_menu_custom_event_callback(void* context, uint32_t event) {
     LoaderMenuApp* app = context;
-    if(event == LoaderMenuCustomEventRefreshPins) {
-        loader_menu_refresh_pins_if_changed(app);
+    if(event == LoaderMenuCustomEventRefreshLayout) {
+        loader_menu_refresh_layout_if_changed(app);
     }
     return true;
 }
@@ -329,7 +436,7 @@ static void loader_menu_loader_pubsub_callback(const void* message, void* contex
     LoaderMenuApp* app = context;
     const LoaderEvent* event = message;
     if(event->type == LoaderEventTypeApplicationStopped) {
-        view_dispatcher_send_custom_event(app->view_dispatcher, LoaderMenuCustomEventRefreshPins);
+        view_dispatcher_send_custom_event(app->view_dispatcher, LoaderMenuCustomEventRefreshLayout);
     }
 }
 
@@ -340,7 +447,13 @@ static LoaderMenuApp* loader_menu_app_alloc(LoaderMenu* loader_menu) {
     app->primary_menu = menu_alloc();
     app->settings_menu = submenu_alloc();
     app->loader_menu = loader_menu;
-    main_menu_pins_load(&app->pins);
+    app->fox_menu_index = 0;
+    app->settings_menu_index = 0;
+    app->layout_fp_hash = 0;
+    app->layout_fp_len = 0;
+    app->layout_fp_absent = false;
+    main_menu_layout_load(&app->layout);
+    loader_menu_store_fingerprint(app);
 
     app->loader = furi_record_open(RECORD_LOADER);
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
@@ -407,16 +520,14 @@ static int32_t loader_menu_thread(void* p) {
         }
 
 
-        loader_menu_refresh_pins_if_changed(app);
+        loader_menu_refresh_layout_if_changed(app);
         const char* settings_item = loader_menu->settings_item;
         loader_menu->settings_item = NULL;
-        const uint32_t fox_settings_position =
-            app->pins.count + FLIPPER_APPS_COUNT + FLIPPER_EXTERNAL_APPS_COUNT + 1;
         if(settings_item == &loader_menu_fox_settings_marker) {
-            menu_set_selected_item(app->primary_menu, fox_settings_position);
+            menu_set_selected_item(app->primary_menu, app->fox_menu_index);
             view_dispatcher_switch_to_view(app->view_dispatcher, LoaderMenuViewPrimary);
         } else if(settings_item) {
-            menu_set_selected_item(app->primary_menu, fox_settings_position + 1);
+            menu_set_selected_item(app->primary_menu, app->settings_menu_index);
             submenu_set_selected_item(app->settings_menu, (uint32_t)settings_item);
             view_dispatcher_switch_to_view(app->view_dispatcher, LoaderMenuViewSettings);
         } else {

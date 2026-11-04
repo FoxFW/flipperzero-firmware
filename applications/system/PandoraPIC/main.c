@@ -38,6 +38,27 @@
 
 #include <furi.h>
 #include <furi_hal.h>
+/* --- Debug logging compiled out (unused; set to 1 to re-enable) --- */
+#define PANDORA_DEBUG_LOG 0
+#if !PANDORA_DEBUG_LOG
+#undef FURI_LOG_E
+#undef FURI_LOG_W
+#undef FURI_LOG_I
+#undef FURI_LOG_D
+#undef FURI_LOG_T
+/* Strip the log statements but still reference their args in a dead if(0)
+ * branch: avoids -Werror=unused-* on log-only locals, keeps format strings
+ * type-checked, and the branch is optimized away (no code, no overhead). */
+static inline void pandora_log_sink(const char* tag, const char* fmt, ...) {
+    (void)tag;
+    (void)fmt;
+}
+#define FURI_LOG_E(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_W(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_I(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_D(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_T(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#endif
 #include <furi_hal_subghz.h>
 #include <gui/gui.h>
 #include <gui/view_dispatcher.h>
@@ -66,10 +87,44 @@
 
 #define PROG_MAX 0x1B000u /* covers up to 0x1A17B (mariofull) with margin */
 
+/* Flash demand-paging: page the code image from SD instead of keeping it all in
+ * RAM. A 24KB page cache (24 x 1KB) replaces the ~96-107KB full prog buffer. */
+#define PIC_PAGE  1024u
+#define PIC_PAGES 24u
+#define PIC_FLASH_TEMP_PATH "/ext/pandora_pic_flash.tmp" /* .hex -> flat temp */
+
 #define ALLOC_MARGIN 1024u
 #define FRAME_US 30000 /* ~33 Hz UI refresh; the keyfob is not a game */
+/* Blank-screen watchdog: if the emulated OLED shows no real content within
+ * STATUS_GRACE_MS of launch, show an explanatory status screen instead of a
+ * bare black screen (a locked/blank keyfob should never look like a crash). */
+#define STATUS_GRACE_MS 3000u
+#define STATUS_CONTENT_BYTES 6 /* >= this many lit framebuffer bytes = real content */
 
 #define PIN_DEFAULT 2552
+
+/* --- Pandora keyfob periodic timer tick (drives the OLED refresh) ---------
+ * The DXL-5000 firmware refreshes the OLED and runs its scheduler from a
+ * periodic timer interrupt. That interrupt is dispatched through the firmware's
+ * own software flags in bank-E GPR (not INTCON/PIE): an enable mask at
+ * TICK_ENABLE_REG and a pending mask at TICK_PENDING_REG, with the ISR at the
+ * high vector 0x0008. On real hardware TMR0 overflow raises the pending bit;
+ * the firmware only arms TMR0 from inside its first tick, which can never
+ * arrive on its own (it waits for the tick before arming the timebase). So the
+ * frontend starts TMR0, enables the tick source, and bridges each TMR0 overflow
+ * to the pending flag via pic_irq_hook() (installed as the core's on_irq); the
+ * core then vectors to 0x0008 whenever GIE is set, exactly like the chip.
+ * Both bundled profiles (mario2, mariofull) use the same flags, bit and vector.
+ * Full reverse-engineering notes in the app's CLAUDE comments file. */
+#define TICK_ISR_VECTOR  0x000008u
+#define TICK_ENABLE_REG  0xEC6u /* bank-E GPR: firmware interrupt-enable mask  */
+#define TICK_PENDING_REG 0xECEu /* bank-E GPR: firmware interrupt-pending mask */
+#define TICK_BIT         0x02u  /* source bit 1 = the display/scheduler tick   */
+#define SFR_INTCON       0xFF2u
+#define SFR_T0CON        0xFD5u
+#define SFR_TMR0H        0xFD7u
+#define SFR_TMR0L        0xFD6u
+#define INTCON_TMR0IF    0x04u
 
 /* On the Flipper malloc() does NOT return NULL: it crashes the firmware with
  * OOM. Every allocation that depends on the .hex size goes through here. */
@@ -108,6 +163,19 @@ typedef struct {
     /* --- OOK RF bit-bang: output pin (LAT) and input pin (PORT) --- */
     uint16_t ook_tx_lat; /* absolute LAT SFR of the OOK TX pin */
     uint8_t ook_tx_bit; /* bit of the OOK TX pin */
+
+    /* --- #14: SSD1306 command/data (D/C) classification ---
+     * dc_mode 0: read the firmware's D/C flags (dc_flag_a/dc_flag_b) at the
+     *            SW-SPI serializer (legacy; correct where those flags mirror D/C).
+     * dc_mode 1: classify by the serializer's grandparent caller: the display
+     *            driver sends command/arg bytes from its command-list/addressing
+     *            code and pixel bytes from its framebuffer-blit code, which live
+     *            in well-separated program regions. COMMAND iff that caller
+     *            address < dc_caller_below, else DATA. Used where the firmware
+     *            drives D/C as a per-batch GPIO not observable as a byte-time
+     *            flag (see claude/ findings for the mario2 analysis). */
+    uint8_t dc_mode;
+    uint32_t dc_caller_below;
 } PicProfile;
 
 /* mariofull: send 0x174C, byte 0x4FE, flags 0x1F6|0x1F7; boot run-to main loop
@@ -137,6 +205,8 @@ static const PicProfile PROFILE_FULL = {
     .pin_unlock_hi = 0x1D8u,
     .ook_tx_lat = 0xF8Bu, /* LATB */
     .ook_tx_bit = 0u, /* LATB.0 */
+    .dc_mode = 1u, /* caller-based D/C (verified: 0x1F6/0x1F7 are not the D/C line) */
+    .dc_caller_below = 0x4000u, /* cmd code < 0x4000; font/bitmap blit >= 0x4600 */
 };
 static const PicProfile PROFILE_MARIO2 = {
     .name = "mario2",
@@ -161,6 +231,8 @@ static const PicProfile PROFILE_MARIO2 = {
     .pin_unlock_hi = 0,
     .ook_tx_lat = 0xF8Bu, /* LATB */
     .ook_tx_bit = 1u, /* LATB.1 */
+    .dc_mode = 1u, /* caller-based D/C (its 0x1F7/0x1F8 are not the D/C line) */
+    .dc_caller_below = 0x4000u, /* cmd code < 0x4000; font/bitmap blit >= 0x4600 */
 };
 
 /* ------------------------------------------------------------ app state */
@@ -213,11 +285,21 @@ typedef struct {
 typedef struct {
     /* core */
     Pic18Cpu* cpu;
-    uint8_t* prog; /* program buffer (safe_malloc) */
+    /* demand-paged program memory (see PIC_PAGE/PIC_PAGES): the code image is
+     * read from SD on page faults instead of a full in-RAM buffer. */
+    File* flash_file;       /* backing store: the .bin, or the .hex->flat temp */
+    uint32_t flash_bk_size; /* valid code bytes in the backing store           */
+    bool flash_temp;        /* backing is PIC_FLASH_TEMP_PATH (remove on exit)  */
+    uint8_t* page_cache;    /* PIC_PAGES * PIC_PAGE                             */
+    uint32_t page_tag[PIC_PAGES];
+    uint32_t cur_page;      /* fast-path: last page served                     */
+    const uint8_t* cur_ptr;
+    uint32_t pg_hits, pg_misses;
     const PicProfile* prof;
 
     /* reconstructed SSD1306 GDDRAM */
-    uint8_t gddram[GDDRAM_SIZE];
+    uint8_t gddram[GDDRAM_SIZE];      /* VISIBLE buffer (render reads this) */
+    uint8_t gddram_work[GDDRAM_SIZE]; /* WORK buffer (built during a flush) */
     uint16_t gd_page;
     uint16_t gd_col;
     int gd_cmd_arg_left; /* multi-byte commands: how many args remain */
@@ -255,7 +337,8 @@ typedef struct {
     uint32_t rx_level_until; /* tick until which to hold rx_cur_level */
     uint32_t rx_events; /* counter of injected RX edges */
 
-    volatile bool exit_requested;
+    volatile bool exit_requested; /* long-hold Back: exit the whole app */
+    volatile bool back_to_menu; /* short Back / overlay Back: return to start menu */
     volatile bool menu_requested; /* in-emulator help overlay */
     bool menu_active;
 
@@ -263,7 +346,18 @@ typedef struct {
 
     /* PIN chosen in the menu (numeric; 2552 by default). */
     int32_t pin_value;
+    bool pin_auto; /* pin_value was auto-detected (txt/literals), not typed */
     bool pin_entered; /* the PIN was already injected after boot */
+    uint8_t pin_verdict; /* 0 n/a, 1 accept, 2 reject, 3 no-verdict (mariofull) */
+    bool content_seen; /* the emulated OLED has shown real content at least once */
+    bool status_active; /* status screen is up -> framebuffer blit is skipped */
+    uint32_t launch_tick; /* tick at emulator launch, for the blank watchdog */
+
+    /* --- display tuning (calibrate the OLED reconstruction on real hardware;
+     * open the in-emulator overlay with Up+Down, then Up/Down/Right cycle) --- */
+    uint8_t disp_dc;       /* 0 = caller-address D/C, 1 = firmware RAM D/C flag */
+    uint8_t disp_colreset; /* 1 = reset column to 0 on a page cmd, 0 = keep it */
+    uint8_t disp_rot;      /* 0 none, 1 H-flip, 2 V-flip, 3 180 */
 
     /* --- phase 1 menu (view_dispatcher) --- */
     ViewDispatcher* view_dispatcher;
@@ -271,6 +365,7 @@ typedef struct {
     NumberInput* number_input;
     Widget* about; /* About screen (scrollable help text) */
     uint8_t menu_current_view; /* current phase-1 view (PandoraView; for Back routing) */
+    Storage* storage; /* for reading <stem>_PIN.txt on selection */
     FuriString* fw_path; /* chosen firmware path */
     char fw_name[32]; /* short name for the label */
 } AppState;
@@ -282,6 +377,22 @@ static volatile uint32_t s_fb_cb_inflight = 0;
 
 /* Decodes a byte sent to the SSD1306 according to the DC level.
  * DC=0 => command (addressing/config), DC=1 => pixel data. */
+/* Atomic frame commit (double buffering, like the ARM OLED fix): copy the WORK
+ * buffer to the VISIBLE buffer so render_gddram never sees a half-drawn frame.
+ * The SSD1306 firmware re-inits every frame starting with D5 (clock-divide), so
+ * that is the frame boundary - commit the previous frame there, then clear the
+ * work buffer for the fresh one. Skips an all-blank work buffer. */
+static void gddram_commit(AppState* app) {
+    bool any = false;
+    for(int i = 0; i < GDDRAM_SIZE; i++) {
+        if(app->gddram_work[i]) { any = true; break; }
+    }
+    if(any) memcpy(app->gddram, app->gddram_work, GDDRAM_SIZE);
+    /* Do NOT clear the work buffer: the SSD1306 re-init does not clear the
+     * controller GDDRAM, so the image accumulates across frames (partial updates
+     * overwrite only the cells they touch, exactly like real hardware). */
+}
+
 static void gddram_feed(AppState* app, uint8_t b, bool is_cmd) {
     if(is_cmd) {
         if(app->gd_cmd_arg_left > 0) {
@@ -289,8 +400,15 @@ static void gddram_feed(AppState* app, uint8_t b, bool is_cmd) {
             app->gd_cmd_arg_left--;
             return;
         }
+        if(b == 0xD5) {
+            /* start of a new frame's re-init: commit the frame just finished */
+            gddram_commit(app);
+            app->gd_cmd_arg_left = 1; /* D5 takes 1 arg (clock divide) */
+            return;
+        }
         if(b >= 0xB0 && b <= 0xB7) {
             app->gd_page = b - 0xB0;
+            if(app->disp_colreset) app->gd_col = 0; /* page-addressed: col->0 */
         } else if(b <= 0x0F) {
             app->gd_col = (app->gd_col & 0xF0) | b;
         } else if(b >= 0x10 && b <= 0x1F) {
@@ -304,15 +422,15 @@ static void gddram_feed(AppState* app, uint8_t b, bool is_cmd) {
             app->gd_cmd_arg_left = 2; /* page start, page end */
             app->gd_page = 0;
         } else if(
-            b == 0x81 || b == 0xA8 || b == 0xD3 || b == 0xDA || b == 0xD5 || b == 0xD9 ||
+            b == 0x81 || b == 0xA8 || b == 0xD3 || b == 0xDA || b == 0xD9 ||
             b == 0xDB || b == 0x8D || b == 0xAD) {
             app->gd_cmd_arg_left = 1; /* 1-argument commands */
         }
         /* 1-byte commands (0x40,0xA1,0xC8,0xA4,0xA6,0xAF,0xAE...) do not move pointers */
     } else {
-        /* data: 8 vertical pixels of (page,col), bit0 at top */
+        /* data: 8 vertical pixels of (page,col), bit0 at top -> WORK buffer */
         if(app->gd_page < GDDRAM_PAGES && app->gd_col < GDDRAM_COLS) {
-            app->gddram[app->gd_page * GDDRAM_COLS + app->gd_col] = b;
+            app->gddram_work[app->gd_page * GDDRAM_COLS + app->gd_col] = b;
         }
         app->gd_col++;
         if(app->gd_col >= GDDRAM_COLS) {
@@ -323,16 +441,62 @@ static void gddram_feed(AppState* app, uint8_t b, bool is_cmd) {
 }
 
 /* Code hook: on entering the send-byte serializer, reads the already-assembled
- * byte and the DC level from the firmware's flags, and feeds it into the GDDRAM.
- * This way we capture EVERYTHING the firmware "draws" without touching it. */
+ * byte and decides command-vs-data (see PicProfile.dc_mode), then feeds it into
+ * the GDDRAM. This way we capture EVERYTHING the firmware "draws" untouched. */
 static void code_hook(Pic18Cpu* cpu, uint32_t pc, void* ctx) {
     AppState* app = (AppState*)ctx;
     if(pc != app->prof->send_byte_pc) return;
     uint8_t b = pic18_read_ram(cpu, app->prof->byte_reg);
-    uint8_t fa = pic18_read_ram(cpu, app->prof->dc_flag_a);
-    uint8_t fb = pic18_read_ram(cpu, app->prof->dc_flag_b);
-    bool is_cmd = (fa != 0) || (fb != 0); /* nonzero => COMMAND */
+    bool is_cmd;
+    if(app->disp_dc == 0u) {
+        /* caller-address D/C: the serializer is reached as display driver ->
+         * send wrapper -> here. The wrapper's own caller (TOS-1) is the
+         * command/addressing code (< dc_caller_below) for command bytes and the
+         * framebuffer/font blit code (>= it) for pixel bytes. */
+        uint32_t caller = (cpu->stkptr > 1) ? cpu->stack[cpu->stkptr - 2] : 0;
+        is_cmd = (caller < app->prof->dc_caller_below);
+    } else {
+        /* firmware RAM D/C flag (the v2.0.13 method): the firmware stores its own
+         * command/data state in these bank-1 flags before each byte. */
+        uint8_t fa = pic18_read_ram(cpu, app->prof->dc_flag_a);
+        uint8_t fb = pic18_read_ram(cpu, app->prof->dc_flag_b);
+        is_cmd = (fa != 0) || (fb != 0); /* nonzero => COMMAND */
+    }
     gddram_feed(app, b, is_cmd);
+}
+
+/* Interrupt-poll hook (installed as the core's on_irq). The core calls this
+ * between instructions while GIE is set and no on-chip interrupt is pending.
+ * We bridge a TMR0 overflow to the firmware's software tick-pending flag and,
+ * when that tick is enabled and pending, ask the core to vector to the ISR. */
+static int32_t pic_irq_hook(Pic18Cpu* cpu, void* ctx) {
+    UNUSED(ctx);
+    uint8_t intcon = pic18_read_ram(cpu, SFR_INTCON);
+    if(intcon & INTCON_TMR0IF) {
+        pic18_write_ram(cpu, SFR_INTCON, (uint8_t)(intcon & ~INTCON_TMR0IF));
+        pic18_write_ram(
+            cpu, TICK_PENDING_REG, (uint8_t)(pic18_read_ram(cpu, TICK_PENDING_REG) | TICK_BIT));
+    }
+    if((pic18_read_ram(cpu, TICK_ENABLE_REG) & TICK_BIT) &&
+       (pic18_read_ram(cpu, TICK_PENDING_REG) & TICK_BIT)) {
+        return (int32_t)TICK_ISR_VECTOR;
+    }
+    return -1;
+}
+
+/* Starts the keyfob's periodic timer tick after boot. The firmware waits for
+ * the first tick before arming the timebase itself, so the frontend starts
+ * TMR0 (TMR0ON, 16-bit, Fosc/4, 1:2 prescale) and enables the tick source;
+ * pic_irq_hook() then bridges each overflow into the firmware's ISR. */
+static void arm_keyfob_tick(AppState* app) {
+    Pic18Cpu* cpu = app->cpu;
+    pic18_write_data(cpu, SFR_T0CON, 0x80);
+    pic18_write_data(cpu, SFR_TMR0H, 0x00);
+    pic18_write_data(cpu, SFR_TMR0L, 0x00);
+    pic18_write_ram(
+        cpu, TICK_ENABLE_REG, (uint8_t)(pic18_read_ram(cpu, TICK_ENABLE_REG) | TICK_BIT));
+    cpu->on_irq = pic_irq_hook;
+    cpu->irq_ctx = app;
 }
 
 /* ----------------------------------------------------- buttons (PORT read) */
@@ -419,8 +583,16 @@ static void render_gddram(AppState* app) {
             for(int bit = 0; bit < 8; bit++) {
                 int src_y = page * 8 + bit; /* 0..31 */
                 if(!((v >> bit) & 1)) continue;
-                int y = y_off + src_y;
                 int x = col;
+                int yy = src_y;
+                /* user rotation (calibrate to the physical panel: A1/C8 remap) */
+                switch(app->disp_rot) {
+                case 1: x = (GDDRAM_COLS - 1) - col; break;            /* H-flip */
+                case 2: yy = 31 - src_y; break;                        /* V-flip */
+                case 3: x = (GDDRAM_COLS - 1) - col; yy = 31 - src_y; break; /* 180 */
+                default: break;
+                }
+                int y = y_off + yy;
                 if(x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) continue;
                 app->screen[(y >> 3) * SCREEN_W + x] |= (uint8_t)(1u << (y & 7));
             }
@@ -439,7 +611,7 @@ static void framebuffer_commit_callback(
     __atomic_fetch_add(&s_fb_cb_inflight, 1, __ATOMIC_RELAXED);
     AppState* app = (AppState*)context;
     UNUSED(orientation);
-    if(!app || !data || size < FB_SIZE || app->menu_active) {
+    if(!app || !data || size < FB_SIZE || app->menu_active || app->status_active) {
         __atomic_fetch_sub(&s_fb_cb_inflight, 1, __ATOMIC_RELAXED);
         return;
     }
@@ -526,45 +698,6 @@ static int pic_hexbyte(const char* s) {
     return (hi << 4) | lo;
 }
 
-/* Processes an Intel HEX line (without ':') writing to cpu->prog and config
- * words. Returns 1 EOF, 0 continue, -1 error. */
-static int pic_ihex_line(Pic18Cpu* cpu, const char* ln, size_t len, uint32_t* ext_lin) {
-    if(len < 10) return 0;
-    int count = pic_hexbyte(ln);
-    int ah = pic_hexbyte(ln + 2);
-    int al = pic_hexbyte(ln + 4);
-    int rtype = pic_hexbyte(ln + 6);
-    if(count < 0 || ah < 0 || al < 0 || rtype < 0) return -1;
-    uint32_t addr = ((uint32_t)ah << 8) | (uint32_t)al;
-    const char* data = ln + 8;
-    if(rtype == 0x00) {
-        uint32_t base = *ext_lin + addr;
-        for(int k = 0; k < count; k++) {
-            int b = pic_hexbyte(data + k * 2);
-            if(b < 0) return -1;
-            uint32_t a = base + (uint32_t)k;
-            if(a < cpu->prog_size) {
-                cpu->prog[a] = (uint8_t)b;
-            } else if(a >= 0x300000u && cpu->config_count < 64) {
-                /* config words: store in the core's table */
-                cpu->config_addr[cpu->config_count] = a;
-                cpu->config_val[cpu->config_count] = (uint8_t)b;
-                cpu->config_count++;
-            }
-        }
-    } else if(rtype == 0x01) {
-        return 1;
-    } else if(rtype == 0x04) {
-        int b0 = pic_hexbyte(data), b1 = pic_hexbyte(data + 2);
-        if(b0 < 0 || b1 < 0) return -1;
-        *ext_lin = (((uint32_t)b0 << 8) | (uint32_t)b1) << 16;
-    } else if(rtype == 0x02) {
-        int b0 = pic_hexbyte(data), b1 = pic_hexbyte(data + 2);
-        if(b0 < 0 || b1 < 0) return -1;
-        *ext_lin = (((uint32_t)b0 << 8) | (uint32_t)b1) << 4;
-    }
-    return 0;
-}
 
 static uint32_t pic_scan_prog_size(File* f) {
     static uint8_t sbuf[512];
@@ -620,11 +753,169 @@ static uint32_t pic_scan_prog_size(File* f) {
     return (hi > 0 && hi < PROG_MAX) ? hi : PROG_MAX;
 }
 
-/* STREAMING load from the SD (does not read the whole .hex into RAM; the .hex
- * files are 300KB+ and the Flipper has little heap). */
+/* ---- flash demand-paging ---------------------------------------------- */
+/* One 1KB page from the backing store, direct-mapped with a current-page fast
+ * path. Bytes past flash_bk_size read as 0xFF (unprogrammed flash). */
+static const uint8_t* pic_page_ptr(AppState* app, uint32_t page) {
+    if(page == app->cur_page) {
+        app->pg_hits++;
+        return app->cur_ptr;
+    }
+    uint32_t slot = page % PIC_PAGES;
+    uint8_t* ptr = app->page_cache + slot * PIC_PAGE;
+    if(app->page_tag[slot] != page) {
+        app->pg_misses++;
+        memset(ptr, 0xFF, PIC_PAGE);
+        uint32_t off = page * PIC_PAGE;
+        if(app->flash_file && off < app->flash_bk_size) {
+            uint32_t n = PIC_PAGE;
+            if(off + n > app->flash_bk_size) n = app->flash_bk_size - off;
+            storage_file_seek(app->flash_file, off, true);
+            storage_file_read(app->flash_file, ptr, (uint16_t)n);
+        }
+        app->page_tag[slot] = page;
+    } else {
+        app->pg_hits++;
+    }
+    app->cur_page = page;
+    app->cur_ptr = ptr;
+    return ptr;
+}
+
+/* One code byte at absolute address a (< 0x300000). */
+static uint8_t pic_code_byte(AppState* app, uint32_t a) {
+    const uint8_t* pg = pic_page_ptr(app, a / PIC_PAGE);
+    return pg[a % PIC_PAGE];
+}
+
+/* pic18core program-read hook: every code fetch / TBLRD of code space routes
+ * here. Config words (>= 0x300000) are handled inside the core, not here. */
+static uint8_t pic_prog_read_cb(Pic18Cpu* cpu, uint32_t a, void* ctx) {
+    (void)cpu;
+    return pic_code_byte((AppState*)ctx, a);
+}
+
+/* pic18core program-write hook (TBLWT): the paged image is read-only. These
+ * keyfob firmwares never self-program flash (host-verified: 0 TBLWT), so the
+ * write is dropped. */
+static void pic_prog_write_cb(Pic18Cpu* cpu, uint32_t a, uint8_t v, void* ctx) {
+    (void)cpu;
+    (void)a;
+    (void)v;
+    (void)ctx;
+}
+
+/* Releases the paging backing store + cache; removes the temp image if we made
+ * one. Safe to call repeatedly (fields nulled). */
+static void pic_free_flash(AppState* app, Storage* storage) {
+    if(app->flash_file) {
+        storage_file_close(app->flash_file);
+        storage_file_free(app->flash_file);
+        app->flash_file = NULL;
+    }
+    if(app->flash_temp && storage) {
+        storage_common_remove(storage, PIC_FLASH_TEMP_PATH);
+        app->flash_temp = false;
+    }
+    if(app->page_cache) {
+        free(app->page_cache);
+        app->page_cache = NULL;
+    }
+    app->cur_page = 0xFFFFFFFFu;
+    app->cur_ptr = NULL;
+}
+
+/* Streaming Intel-HEX -> flat code image + config table. Writes code bytes
+ * (addr < 0x300000) into `out` by absolute address (pre-filled 0xFF, seek+write
+ * so record order does not matter) and stores config words (>= 0x300000) in the
+ * core's config table. No full-size RAM buffer. (Host-verified byte-exact vs
+ * pic18_load_hex over the code space.) */
+static bool pic_hex_to_flat(Pic18Cpu* cpu, File* in, File* out, uint32_t codesz) {
+    static uint8_t fillbuf[512];
+    memset(fillbuf, 0xFF, sizeof(fillbuf));
+    storage_file_seek(out, 0, true);
+    uint32_t left = codesz;
+    while(left) {
+        uint32_t n = left < sizeof(fillbuf) ? left : sizeof(fillbuf);
+        if(storage_file_write(out, fillbuf, (uint16_t)n) != n) return false;
+        left -= n;
+    }
+    static uint8_t chunk[512];
+    static char line[600];
+    size_t linepos = 0, rd;
+    uint32_t ext = 0;
+    bool done = false;
+    storage_file_seek(in, 0, true);
+    while(!done && (rd = storage_file_read(in, chunk, sizeof(chunk))) > 0) {
+        for(size_t i = 0; i < rd; i++) {
+            char ch = (char)chunk[i];
+            if(ch == ':') {
+                linepos = 0;
+            } else if(ch == '\n' || ch == '\r') {
+                if(linepos >= 10) {
+                    int count = pic_hexbyte(line);
+                    int ah = pic_hexbyte(line + 2);
+                    int al = pic_hexbyte(line + 4);
+                    int rtype = pic_hexbyte(line + 6);
+                    if(count < 0 || ah < 0 || al < 0 || rtype < 0) return false;
+                    uint32_t addr = ((uint32_t)ah << 8) | (uint32_t)al;
+                    const char* data = line + 8;
+                    if(rtype == 0x00) {
+                        uint32_t base = ext + addr;
+                        if(base >= 0x300000u) {
+                            for(int k = 0; k < count; k++) {
+                                int b = pic_hexbyte(data + k * 2);
+                                if(b < 0) return false;
+                                if(cpu->config_count < 64) {
+                                    cpu->config_addr[cpu->config_count] = base + (uint32_t)k;
+                                    cpu->config_val[cpu->config_count] = (uint8_t)b;
+                                    cpu->config_count++;
+                                }
+                            }
+                        } else {
+                            uint8_t rec[256];
+                            int m = 0;
+                            for(int k = 0; k < count && m < (int)sizeof(rec); k++) {
+                                int b = pic_hexbyte(data + k * 2);
+                                if(b < 0) return false;
+                                rec[m++] = (uint8_t)b;
+                            }
+                            if(base < codesz) {
+                                uint32_t n = (uint32_t)m;
+                                if(base + n > codesz) n = codesz - base;
+                                storage_file_seek(out, base, true);
+                                if(storage_file_write(out, rec, (uint16_t)n) != n) return false;
+                            }
+                        }
+                    } else if(rtype == 0x01) {
+                        done = true;
+                        break;
+                    } else if(rtype == 0x04) {
+                        int b0 = pic_hexbyte(data), b1 = pic_hexbyte(data + 2);
+                        if(b0 < 0 || b1 < 0) return false;
+                        ext = (((uint32_t)b0 << 8) | (uint32_t)b1) << 16;
+                    } else if(rtype == 0x02) {
+                        int b0 = pic_hexbyte(data), b1 = pic_hexbyte(data + 2);
+                        if(b0 < 0 || b1 < 0) return false;
+                        ext = (((uint32_t)b0 << 8) | (uint32_t)b1) << 4;
+                    }
+                }
+                linepos = 0;
+            } else {
+                if(linepos < sizeof(line) - 1) line[linepos++] = ch;
+            }
+        }
+    }
+    return true;
+}
+
+/* STREAMING paged load: a .bin is paged directly; a .hex is converted once to a
+ * flat temp image (config captured) and paged from that. Only a 24KB page cache
+ * is held in RAM (see pic_page_ptr). */
 static LoadResult load_firmware(AppState* app, Storage* storage, const char* path) {
     File* f = storage_file_alloc(storage);
     LoadResult res = LoadIoError;
+    bool keep_f = false;
     do {
         if(!storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) break;
         uint64_t fsize = storage_file_size(f);
@@ -633,77 +924,92 @@ static LoadResult load_firmware(AppState* app, Storage* storage, const char* pat
             break;
         }
 
-        uint32_t prog_alloc = pic_scan_prog_size(f);
+        uint32_t codesz = pic_scan_prog_size(f); /* top code address (leaves pos at 0) */
 
-        app->prog = (uint8_t*)safe_malloc(prog_alloc);
-        if(!app->prog) {
-            FURI_LOG_E(TAG, "no heap for prog (%u B)", (unsigned)prog_alloc);
+        app->page_cache = (uint8_t*)safe_malloc(PIC_PAGES * PIC_PAGE);
+        if(!app->page_cache) {
+            FURI_LOG_E(TAG, "no heap for page cache (%u B)", (unsigned)(PIC_PAGES * PIC_PAGE));
             res = LoadNoMem;
             break;
         }
-        memset(app->prog, 0xFF, prog_alloc);
-        pic18_set_prog(app->cpu, app->prog, prog_alloc);
+        for(uint32_t i = 0; i < PIC_PAGES; i++) app->page_tag[i] = 0xFFFFFFFFu;
+        app->cur_page = 0xFFFFFFFFu;
+        app->cur_ptr = NULL;
+        app->pg_hits = app->pg_misses = 0;
+        app->flash_bk_size = codesz;
         app->cpu->config_count = 0;
 
         uint8_t first = 0;
         if(storage_file_read(f, &first, 1) != 1) break;
         storage_file_seek(f, 0, true);
 
-        /* shared streaming buffers (static: not on the stack). ~1.1KB .bss */
-        static uint8_t chunk[512];
-        static char line[600];
-        size_t rd;
-
         if(first == ':') {
-            size_t linepos = 0;
-            uint32_t ext_lin = 0;
-            bool eof_rec = false, err = false;
-            while(!eof_rec && (rd = storage_file_read(f, chunk, sizeof(chunk))) > 0) {
-                for(size_t i = 0; i < rd; i++) {
-                    char ch = (char)chunk[i];
-                    if(ch == ':') {
-                        linepos = 0;
-                    } else if(ch == '\n' || ch == '\r') {
-                        if(linepos > 0) {
-                            int r = pic_ihex_line(app->cpu, line, linepos, &ext_lin);
-                            if(r < 0) { err = true; break; }
-                            if(r == 1) { eof_rec = true; break; }
-                            linepos = 0;
-                        }
-                    } else {
-                        if(linepos < sizeof(line) - 1) line[linepos++] = ch;
-                    }
-                }
-                if(err) break;
+            /* .hex: stream-convert to a flat temp image + config table */
+            File* out = storage_file_alloc(storage);
+            if(!storage_file_open(out, PIC_FLASH_TEMP_PATH, FSAM_READ_WRITE, FSOM_CREATE_ALWAYS)) {
+                storage_file_free(out);
+                res = LoadIoError;
+                break;
             }
-            if(err) { res = LoadBadFormat; break; }
+            if(!pic_hex_to_flat(app->cpu, f, out, codesz)) {
+                storage_file_close(out);
+                storage_file_free(out);
+                res = LoadBadFormat;
+                break;
+            }
+            app->flash_file = out;
+            app->flash_temp = true;
         } else {
-            /* flat binary: copy in chunks directly to prog */
-            uint32_t off = 0;
-            while((rd = storage_file_read(f, chunk, sizeof(chunk))) > 0) {
-                for(size_t i = 0; i < rd && off < prog_alloc; i++, off++)
-                    app->prog[off] = chunk[i];
-                if(off >= prog_alloc) break;
-            }
+            /* .bin: page directly from the selected file */
+            app->flash_file = f;
+            app->flash_temp = false;
+            keep_f = true;
+            if((uint32_t)fsize < codesz) app->flash_bk_size = (uint32_t)fsize;
         }
+
+        pic18_set_prog(app->cpu, NULL, codesz);
+        app->cpu->on_prog = pic_prog_read_cb;
+        app->cpu->prog_ctx = app;
+        app->cpu->on_prog_write = pic_prog_write_cb;
+        app->cpu->progw_ctx = app;
         res = LoadOk;
     } while(false);
-    storage_file_close(f);
-    storage_file_free(f);
+    if(!keep_f) {
+        storage_file_close(f);
+        storage_file_free(f);
+    }
     return res;
 }
 
 /* Selects the profile by the config words (CONFIG3L 0xA2 full / 0xBF mario2).
  * Defaults to mariofull. */
-static const PicProfile* pick_profile(const char* path, Pic18Cpu* cpu) {
-    UNUSED(path);
-    /* CONFIG3L at 0x300004: 0xA2=full, 0xBF=mario2 */
+/* Case-insensitive substring match. */
+static bool pic_name_has(const char* hay, const char* needle) {
+    if(!hay) return false;
+    for(const char* p = hay; *p; p++) {
+        const char* a = p;
+        const char* b = needle;
+        while(*a && *b && ((*a | 0x20) == (*b | 0x20))) {
+            a++;
+            b++;
+        }
+        if(!*b) return true;
+    }
+    return false;
+}
+
+/* Picks mario2 vs mariofull. Primary: CONFIG3L (0xA2 full / 0xBF mario2),
+ * present when loaded from .hex. Fallback for a flat .bin (no config words):
+ * the file name, then the code size (mario2 tops ~0x178AC, full ~0x1A17C). */
+static const PicProfile* pick_profile(const char* path, Pic18Cpu* cpu, uint32_t codesz) {
     for(uint16_t i = 0; i < cpu->config_count; i++) {
         if(cpu->config_addr[i] == 0x300004u) {
             return (cpu->config_val[i] == 0xA2u) ? &PROFILE_FULL : &PROFILE_MARIO2;
         }
     }
-    return &PROFILE_FULL;
+    if(pic_name_has(path, "full")) return &PROFILE_FULL;
+    if(pic_name_has(path, "mario2") || pic_name_has(path, "v2")) return &PROFILE_MARIO2;
+    return (codesz >= 0x19000u) ? &PROFILE_FULL : &PROFILE_MARIO2;
 }
 
 /* ------------------------------------------------------------ boot/cinit */
@@ -718,13 +1024,13 @@ static void apply_cinit_records(AppState* app) {
     uint16_t fsr0 = 0x000;
     int guard = 0;
     while(tp < end && guard++ < 512) {
-        uint8_t n = (tp < cpu->prog_size) ? cpu->prog[tp] : 0;
+        uint8_t n = (tp < cpu->prog_size) ? pic_code_byte(app, tp) : 0;
         tp++;
         if(n == 0) break;
-        uint8_t fd = (tp < cpu->prog_size) ? cpu->prog[tp] : 0;
+        uint8_t fd = (tp < cpu->prog_size) ? pic_code_byte(app, tp) : 0;
         tp++;
         if(fd & 0x80) {
-            uint8_t lo = (tp < cpu->prog_size) ? cpu->prog[tp] : 0;
+            uint8_t lo = (tp < cpu->prog_size) ? pic_code_byte(app, tp) : 0;
             tp++;
             fsr0 = (uint16_t)(((fd & 0x0F) << 8) | lo);
         }
@@ -733,7 +1039,7 @@ static void apply_cinit_records(AppState* app) {
         }
         if(tp + n > end + 2) break; /* record runs off the table: desync */
         for(uint8_t k = 0; k < n; k++) {
-            uint8_t b = (tp < cpu->prog_size) ? cpu->prog[tp] : 0;
+            uint8_t b = (tp < cpu->prog_size) ? pic_code_byte(app, tp) : 0;
             tp++;
             if(fsr0 < 0xF80u) cpu->ram[fsr0 & 0xFFF] = b;
             fsr0 = (uint16_t)((fsr0 + 1) & 0xFFF);
@@ -868,10 +1174,13 @@ static void enter_pin(AppState* app) {
     cpu->halted = saved_halted;
 
     if(run.accept) {
+        app->pin_verdict = 1;
         FURI_LOG_I(TAG, "PIN %04ld -> ACCEPT (OOK service TX)", (long)app->pin_value);
     } else if(run.reject) {
+        app->pin_verdict = 2;
         FURI_LOG_I(TAG, "PIN %04ld -> REJECT (no transmit)", (long)app->pin_value);
     } else {
+        app->pin_verdict = 3;
         FURI_LOG_W(TAG, "PIN %04ld -> no verdict (budget exhausted)", (long)app->pin_value);
     }
 }
@@ -1078,23 +1387,79 @@ static void rf_cycle_mode(AppState* app) {
 
 /* ------------------------------------------------------------ help overlay */
 
+/* Count non-empty framebuffer bytes (cheap blank detector). */
+static int screen_lit_bytes(const AppState* app) {
+    int n = 0;
+    for(size_t i = 0; i < FB_SIZE; i++)
+        if(app->screen[i]) n++;
+    return n;
+}
+
+/* Status screen shown when the emulated OLED stays blank: explains WHY instead
+ * of leaving a bare black screen (locked keyfob / PIN / still booting). */
+static void status_draw(AppState* app) {
+    Canvas* c = app->canvas;
+    canvas_reset(c);
+    canvas_clear(c);
+    canvas_set_font(c, FontPrimary);
+    canvas_draw_str(c, 2, 11, "Pandora PIC");
+    canvas_draw_line(c, 0, 14, 127, 14);
+    canvas_set_font(c, FontSecondary);
+    canvas_draw_str(c, 2, 26, "Booting keyfob firmware");
+
+    /* Indeterminate progress bar (sweeping segment): the emulator is busy
+     * running the firmware while it boots and draws its first screen. */
+    {
+        const int bx = 4, by = 31, bw = 120, bh = 7;
+        canvas_draw_frame(c, bx, by, bw, bh);
+        const int seg = 26;
+        int span = bw - 2 - seg;
+        if(span < 1) span = 1;
+        int pos = (int)((furi_get_tick() / 6u) % (uint32_t)(2 * span));
+        if(pos > span) pos = 2 * span - pos; /* bounce back */
+        canvas_draw_box(c, bx + 1 + pos, by + 1, seg, bh - 2);
+    }
+
+    if(app->prof && app->prof->has_pin) {
+        char buf[36];
+        if(app->pin_verdict == 2)
+            snprintf(buf, sizeof(buf), "PIN %04ld: rejected", (long)app->pin_value);
+        else if(app->pin_verdict == 1)
+            snprintf(buf, sizeof(buf), "PIN %04ld: accepted", (long)app->pin_value);
+        else
+            snprintf(buf, sizeof(buf), "PIN %04ld", (long)app->pin_value);
+        canvas_draw_str(c, 2, 50, buf);
+    } else {
+        canvas_draw_str(c, 2, 50, "Please wait...");
+    }
+    canvas_draw_str(c, 2, 62, "Back: menu");
+    canvas_commit(c);
+}
+
 static void overlay_draw(AppState* app) {
     Canvas* c = app->canvas;
     canvas_reset(c);
     canvas_clear(c);
     canvas_set_font(c, FontPrimary);
-    canvas_draw_str(c, 2, 10, "Pandora PIC");
+    canvas_draw_str(c, 2, 10, "Display Setup");
     canvas_draw_line(c, 0, 12, 127, 12);
     canvas_set_font(c, FontSecondary);
-    char buf[48];
-    snprintf(buf, sizeof(buf), "FW: %s", app->prof ? app->prof->name : "?");
-    canvas_draw_str(c, 2, 24, buf);
-    const char* rf = "OFF";
-    if(app->rf_tx_enabled) rf = "TX";
-    if(app->rf_rx_enabled) rf = "RX";
-    snprintf(buf, sizeof(buf), "RF:%s %luMHz", rf, (unsigned long)(app->frequency / 1000000u));
-    canvas_draw_str(c, 2, 34, buf);
-    canvas_draw_str(c, 2, 44, "OK=cont  Left=RF  Back=exit");
+    char buf[40];
+    const char* dc = app->disp_dc ? "RAM-flag" : "caller";
+    const char* col = app->disp_colreset ? "reset" : "keep";
+    const char* rot = (app->disp_rot == 1) ? "H-flip" :
+                      (app->disp_rot == 2) ? "V-flip" :
+                      (app->disp_rot == 3) ? "180" : "0";
+    const char* rf = app->rf_tx_enabled ? "TX" : app->rf_rx_enabled ? "RX" : "OFF";
+    snprintf(buf, sizeof(buf), "Up   D/C src : %s", dc);
+    canvas_draw_str(c, 2, 23, buf);
+    snprintf(buf, sizeof(buf), "Down Column  : %s", col);
+    canvas_draw_str(c, 2, 32, buf);
+    snprintf(buf, sizeof(buf), "Rght Rotate  : %s", rot);
+    canvas_draw_str(c, 2, 41, buf);
+    snprintf(buf, sizeof(buf), "Left RF      : %s", rf);
+    canvas_draw_str(c, 2, 50, buf);
+    canvas_draw_str(c, 2, 62, "OK = view screen   Back = menu");
     canvas_commit(c);
 }
 
@@ -1149,11 +1514,11 @@ static const char* const ABOUT_TEXT =
     "Down = B3: menu / down\n"
     "Left = B5\n"
     "Right = B6\n"
-    "Back: exit emulator / overlay\n"
+    "Back: tap = start menu, hold = exit app\n"
     "\n"
     "\e#RF:\n"
     "Up+Down opens the overlay; inside it Ok continues, Left cycles RF "
-    "OFF/TX/RX, Back exits.\n"
+    "OFF/TX/RX, Back returns to the start menu.\n"
     "\n"
     "\e#PIN:\n"
     "The 'full' firmware (dxl5000_full_pin2552) needs PIN 2552, set it in the "
@@ -1167,7 +1532,10 @@ static void menu_rebuild(AppState* app) {
     char buf[48];
     snprintf(buf, sizeof(buf), "FOB Firmware: %s", app->fw_name[0] ? app->fw_name : "<none>");
     submenu_add_item(app->submenu, buf, MenuItemFirmware, menu_submenu_callback, app);
-    snprintf(buf, sizeof(buf), "PIN: %ld", (long)app->pin_value);
+    if(app->pin_value < 0)
+        snprintf(buf, sizeof(buf), "PIN: none");
+    else
+        snprintf(buf, sizeof(buf), "PIN: %04ld%s", (long)app->pin_value, app->pin_auto ? " (auto)" : "");
     submenu_add_item(app->submenu, buf, MenuItemPin, menu_submenu_callback, app);
     submenu_add_item(app->submenu, "Launch", MenuItemLaunch, menu_submenu_callback, app);
     submenu_add_item(app->submenu, "About", MenuItemAbout, menu_submenu_callback, app);
@@ -1210,6 +1578,7 @@ static void menu_submenu_callback(void* context, uint32_t index) {
 static void menu_number_input_callback(void* context, int32_t number) {
     AppState* app = (AppState*)context;
     app->pin_value = number;
+    app->pin_auto = false; /* user typed it */
     FURI_LOG_I(TAG, "PIN set in menu: %ld", (long)number);
     menu_rebuild(app);
     app->menu_current_view = PandoraViewSubmenu;
@@ -1255,7 +1624,8 @@ static MenuFlow run_menu(AppState* app, Gui* gui) {
     /* the number_input result callback is set once; the current value is passed
      * as current_number to pre-load the keyboard. */
     number_input_set_result_callback(
-        app->number_input, menu_number_input_callback, app, app->pin_value, 0, 9999);
+        app->number_input, menu_number_input_callback, app,
+        app->pin_value < 0 ? 0 : app->pin_value, 0, 9999);
 
     /* submenu items */
     menu_rebuild(app);
@@ -1282,12 +1652,167 @@ static MenuFlow run_menu(AppState* app, Gui* gui) {
 }
 
 /* Fills fw_name with the basename of the chosen path, for the menu label. */
+/* ---- PIN auto-detect for the menu PIN box -------------------------------- */
+/* (1) <stem>_PIN.txt beside the firmware (authoritative; written by the PIN
+ * bruteforcer). Parse the first 1-4 digit run. Returns PIN or -1. */
+static int pic_pin_from_txt(AppState* app) {
+    const char* src = furi_string_get_cstr(app->fw_path);
+    int len = (int)strlen(src), slash = -1, dot = -1;
+    for(int i = 0; i < len; i++)
+        if(src[i] == '/') slash = i;
+    for(int i = len - 1; i > slash; i--) {
+        if(src[i] == '.') {
+            dot = i;
+            break;
+        }
+    }
+    int stem_end = (dot > slash) ? dot : len;
+    char path[160];
+    if(stem_end > (int)sizeof(path) - 16) return -1;
+    memcpy(path, src, (size_t)stem_end);
+    snprintf(path + stem_end, sizeof(path) - (size_t)stem_end, "_PIN.txt");
+
+    File* f = storage_file_alloc(app->storage);
+    int pin = -1;
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char buf[48];
+        uint16_t n = storage_file_read(f, buf, sizeof(buf) - 1);
+        buf[n] = 0;
+        int i = 0;
+        while(i < n && (buf[i] < '0' || buf[i] > '9')) i++;
+        if(i < n) {
+            int v = 0, cnt = 0;
+            while(i < n && buf[i] >= '0' && buf[i] <= '9' && cnt < 4) {
+                v = v * 10 + (buf[i] - '0');
+                i++;
+                cnt++;
+            }
+            if(cnt > 0) pin = v;
+        }
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+    return (pin >= 0 && pin <= 9999) ? pin : -1;
+}
+
+/* Scan a code window (win[0] = byte at PROFILE_FULL.pin_validate) for the
+ * "MOVF digit,w; SUBLW k" compare and return the 4-digit PIN, or -1. */
+static int pic_pin_from_window(const uint8_t* win, uint32_t winlen) {
+    const PicProfile* p = &PROFILE_FULL;
+    int dig[4], found = 0;
+    uint16_t prev = 0;
+    bool have = false;
+    for(uint32_t off = 0; off + 1 < winlen && found < 4; off += 2) {
+        uint16_t w = (uint16_t)(win[off] | (win[off + 1] << 8));
+        if(have) {
+            uint8_t ph = (uint8_t)(prev >> 8);
+            if((ph == 0x50u || ph == 0x51u) && (prev & 0xFFu) == (p->pin_slot_lo[found] & 0xFFu) &&
+               (w & 0xFF00u) == 0x0800u) {
+                dig[found] = (int)(w & 0xFFu);
+                found++;
+            }
+        }
+        prev = w;
+        have = true;
+    }
+    if(found != 4) return -1;
+    for(int i = 0; i < 4; i++)
+        if(dig[i] > 9) return -1;
+    return dig[0] * 1000 + dig[1] * 100 + dig[2] * 10 + dig[3];
+}
+
+/* (2) Read the hardcoded PIN literals straight from the firmware file (no full
+ * load). Handles .bin (flat) and .hex (by address). mario2 has no code at the
+ * full-profile validate address, so the window stays 0xFF and this returns -1. */
+static int pic_pin_from_literals(AppState* app) {
+    const char* path = furi_string_get_cstr(app->fw_path);
+    uint32_t va = PROFILE_FULL.pin_validate;
+    uint8_t win[64];
+    memset(win, 0xFF, sizeof(win));
+    File* f = storage_file_alloc(app->storage);
+    int pin = -1;
+    do {
+        if(!storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) break;
+        uint8_t first = 0;
+        if(storage_file_read(f, &first, 1) != 1) break;
+        storage_file_seek(f, 0, true);
+        if(first != ':') {
+            if(storage_file_size(f) < (uint64_t)va + 8u) break;
+            storage_file_seek(f, va, true);
+            storage_file_read(f, win, sizeof(win));
+        } else {
+            static uint8_t chunk[512];
+            static char line[600];
+            size_t lp = 0, rd;
+            uint32_t ext = 0;
+            bool done = false;
+            while(!done && (rd = storage_file_read(f, chunk, sizeof(chunk))) > 0) {
+                for(size_t i = 0; i < rd; i++) {
+                    char ch = (char)chunk[i];
+                    if(ch == ':') {
+                        lp = 0;
+                    } else if(ch == '\n' || ch == '\r') {
+                        if(lp >= 10) {
+                            int cnt = pic_hexbyte(line), ah = pic_hexbyte(line + 2),
+                                al = pic_hexbyte(line + 4), rt = pic_hexbyte(line + 6);
+                            if(cnt >= 0 && ah >= 0 && al >= 0 && rt >= 0) {
+                                uint32_t a = ((uint32_t)ah << 8) | (uint32_t)al;
+                                const char* dp = line + 8;
+                                if(rt == 0x04) {
+                                    int b0 = pic_hexbyte(dp), b1 = pic_hexbyte(dp + 2);
+                                    if(b0 >= 0 && b1 >= 0) ext = (((uint32_t)b0 << 8) | (uint32_t)b1) << 16;
+                                } else if(rt == 0x02) {
+                                    int b0 = pic_hexbyte(dp), b1 = pic_hexbyte(dp + 2);
+                                    if(b0 >= 0 && b1 >= 0) ext = (((uint32_t)b0 << 8) | (uint32_t)b1) << 4;
+                                } else if(rt == 0x00) {
+                                    uint32_t base = ext + a;
+                                    for(int k = 0; k < cnt; k++) {
+                                        uint32_t aa = base + (uint32_t)k;
+                                        if(aa >= va && aa < va + sizeof(win)) {
+                                            int b = pic_hexbyte(dp + k * 2);
+                                            if(b >= 0) win[aa - va] = (uint8_t)b;
+                                        }
+                                    }
+                                } else if(rt == 0x01) {
+                                    done = true;
+                                }
+                            }
+                        }
+                        lp = 0;
+                    } else {
+                        if(lp < sizeof(line) - 1) line[lp++] = ch;
+                    }
+                }
+            }
+        }
+        pin = pic_pin_from_window(win, sizeof(win));
+    } while(false);
+    storage_file_close(f);
+    storage_file_free(f);
+    return pin;
+}
+
+/* Sets app->pin_value from a cracked _PIN.txt, else the code literals, else -1
+ * ("none" -> load with no PIN entered). Sets pin_auto. Runs on fw selection. */
+static void pic_detect_pin(AppState* app) {
+    int pin = pic_pin_from_txt(app);
+    if(pin < 0) pin = pic_pin_from_literals(app);
+    if(pin >= 0) {
+        app->pin_value = pin;
+        app->pin_auto = true;
+    } else {
+        app->pin_value = -1;
+        app->pin_auto = false;
+    }
+}
+
 static void set_fw_name_from_path(AppState* app) {
     const char* p = furi_string_get_cstr(app->fw_path);
     const char* slash = strrchr(p, '/');
     const char* base = slash ? slash + 1 : p;
     strncpy(app->fw_name, base, sizeof(app->fw_name) - 1);
     app->fw_name[sizeof(app->fw_name) - 1] = 0;
+    pic_detect_pin(app);
 }
 
 /* ------------------------------------------------------------ emulator */
@@ -1295,9 +1820,26 @@ static void set_fw_name_from_path(AppState* app) {
 /* Runs the emulator with direct-draw takeover. Returns on exit. Assumes the
  * firmware is ALREADY loaded and booted, and that the view_dispatcher was
  * already released. */
+/* Event-driven Back handling (via the input pubsub). Reliable short/long
+ * classification independent of how long an emulator frame (pic18_run) takes:
+ * short Back -> return to the start menu, long Back -> exit the whole app.
+ * Runs in the input service thread; only sets the volatile control flags. */
+static void pandora_pic_input_cb(const void* value, void* context) {
+    const InputEvent* event = value;
+    AppState* app = context;
+    if(event->key != InputKeyBack) return;
+    if(event->type == InputTypeShort) {
+        app->back_to_menu = true;
+    } else if(event->type == InputTypeLong) {
+        app->exit_requested = true;
+    }
+}
+
 static void run_emulator(AppState* app, Gui* gui) {
     Canvas* canvas = NULL;
     bool fb_cb_added = false;
+    FuriPubSub* input_events = NULL;
+    FuriPubSubSubscription* input_sub = NULL;
 
     app->fb_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     if(!app->fb_mutex) {
@@ -1327,47 +1869,78 @@ static void run_emulator(AppState* app, Gui* gui) {
     }
     app->canvas = canvas;
 
+    input_events = furi_record_open(RECORD_INPUT_EVENTS);
+    input_sub = furi_pubsub_subscribe(input_events, pandora_pic_input_cb, app);
+
     FURI_LOG_I(TAG, "emulator: boot OK, main loop (steps/frame=%lu)",
                (unsigned long)app->steps_per_frame);
 
     uint32_t epoch = furi_get_tick();
     uint64_t next_us = 0;
-    uint32_t back_since = 0;
+    app->content_seen = false;
+    app->status_active = false;
+    app->launch_tick = furi_get_tick();
 
-    while(!app->exit_requested) {
+    while(!app->exit_requested && !app->back_to_menu) {
         if(app->menu_requested) {
             app->menu_requested = false;
             app->menu_active = true;
             overlay_draw(app);
-            /* overlay: OK=continue, Left=cycle RF, Back=exit */
-            bool left_prev = false;
-            while(app->menu_active && !app->exit_requested) {
+            /* Display Setup overlay: Up=D/C src, Down=column, Right=rotate,
+             * Left=RF, OK=back to the live screen, Back=start menu. The Up+Down
+             * combo that opened it is still held, so seed those edges as pressed
+             * to avoid a spurious first toggle. */
+            bool left_prev = false, up_prev = true, down_prev = true, right_prev = false;
+            while(app->menu_active && !app->exit_requested && !app->back_to_menu) {
                 uint8_t k = poll_raw_keys();
-                if(k & KBIT_BACK) app->exit_requested = true;
+                if(k & KBIT_BACK) {
+                    app->back_to_menu = true; /* Back -> start menu */
+                    app->menu_active = false;
+                }
                 if(k & KBIT_OK) app->menu_active = false;
+                bool up = (k & KBIT_UP) != 0;
+                bool down = (k & KBIT_DOWN) != 0;
+                bool right = (k & KBIT_RIGHT) != 0;
                 bool left = (k & KBIT_LEFT) != 0;
+                /* don't act on Up/Down while BOTH are held (that is the open combo) */
+                bool combo = up && down;
+                if(up && !up_prev && !combo) {
+                    app->disp_dc ^= 1u;
+                    memset(app->gddram, 0, sizeof(app->gddram));
+                    memset(app->gddram_work, 0, sizeof(app->gddram_work));
+                    overlay_draw(app);
+                }
+                if(down && !down_prev && !combo) {
+                    app->disp_colreset ^= 1u;
+                    memset(app->gddram, 0, sizeof(app->gddram));
+                    memset(app->gddram_work, 0, sizeof(app->gddram_work));
+                    overlay_draw(app);
+                }
+                if(right && !right_prev) {
+                    app->disp_rot = (uint8_t)((app->disp_rot + 1u) & 3u);
+                    overlay_draw(app);
+                }
                 if(left && !left_prev) {
                     rf_cycle_mode(app);
                     overlay_draw(app);
                 }
+                up_prev = up;
+                down_prev = down;
+                right_prev = right;
                 left_prev = left;
                 furi_delay_ms(16);
             }
             epoch = furi_get_tick();
             next_us = 0;
-            back_since = 0;
             continue;
         }
 
-        /* input -> keyfob buttons */
+        /* input -> keyfob buttons. Back is the app-level control: a short press
+         * returns to the start menu; holding it for 700ms exits the whole app. */
         uint8_t keys = poll_raw_keys();
         apply_keys_to_buttons(app, keys);
-        if(keys & KBIT_BACK) {
-            if(back_since == 0) back_since = furi_get_tick();
-            else if(furi_get_tick() - back_since >= 700) app->exit_requested = true;
-        } else {
-            back_since = 0;
-        }
+        /* Back is handled event-driven in pandora_pic_input_cb (short -> start
+         * menu, long -> exit); no per-frame GPIO timing here. */
 
         /* run a slice of the real firmware (captures TX via lat_write_hook) */
         pic18_run(app->cpu, app->steps_per_frame);
@@ -1379,8 +1952,20 @@ static void run_emulator(AppState* app, Gui* gui) {
         /* reconstruct the screen from the captured GDDRAM */
         render_gddram(app);
 
+        /* blank-screen watchdog: never leave a bare black screen up */
+        if(!app->content_seen && screen_lit_bytes(app) >= STATUS_CONTENT_BYTES) {
+            app->content_seen = true;
+        }
+        app->status_active =
+            !app->content_seen && !app->menu_active &&
+            (furi_get_tick() - app->launch_tick > furi_ms_to_ticks(STATUS_GRACE_MS));
+
         /* present */
-        if(!app->menu_active) canvas_commit(canvas);
+        if(app->status_active) {
+            status_draw(app);
+        } else if(!app->menu_active) {
+            canvas_commit(canvas);
+        }
 
         /* pacing + mandatory yield (don't starve the input service) */
         next_us += FRAME_US;
@@ -1400,6 +1985,14 @@ static void run_emulator(AppState* app, Gui* gui) {
 
 teardown:
     radio_deinit(app);
+    if(input_sub) {
+        furi_pubsub_unsubscribe(input_events, input_sub);
+        input_sub = NULL;
+    }
+    if(input_events) {
+        furi_record_close(RECORD_INPUT_EVENTS);
+        input_events = NULL;
+    }
     if(fb_cb_added) gui_remove_framebuffer_callback(gui, framebuffer_commit_callback, app);
     wait_inflight_zero(&s_fb_cb_inflight);
     if(canvas) gui_direct_draw_release(gui);
@@ -1424,52 +2017,86 @@ int32_t pandora_pic_app(void* p) {
     memset(app, 0, sizeof(AppState));
     g_app = app;
     app->steps_per_frame = 150000; /* adjustable; the keyfob is not real-time */
-    app->pin_value = PIN_DEFAULT;
+    app->pin_value = -1; /* no PIN until a firmware is selected + auto-detected */
+    /* display defaults = the current reconstruction; calibrate on hardware via
+     * the Up+Down overlay (D/C source, column reset, rotation). */
+    app->disp_dc = 0;       /* caller-address D/C */
+    app->disp_colreset = 1; /* reset column on page cmd */
+    app->disp_rot = 0;      /* no rotation */
 
     Storage* storage = (Storage*)furi_record_open(RECORD_STORAGE);
+    app->storage = storage;
     DialogsApp* dialogs = (DialogsApp*)furi_record_open(RECORD_DIALOGS);
     Gui* gui = (Gui*)furi_record_open(RECORD_GUI);
 
     app->fw_path = furi_string_alloc_set_str("/ext/apps_assets/pandora_pic");
 
-    bool launch = false;
+    bool quit = false;
 
-    /* --- PHASE 1: menu (view_dispatcher). Loop until Launch or Exit. --- */
-    while(true) {
-        MenuFlow flow = run_menu(app, gui);
-        if(flow == FlowExit) {
-            launch = false;
-            break;
-        } else if(flow == FlowFileBrowser) {
-            /* the GUI is already free (view_dispatcher released in run_menu) */
-            DialogsFileBrowserOptions opts;
-            dialog_file_browser_set_basic_options(&opts, "*", NULL);
-            opts.base_path = "/ext";
-            opts.hide_ext = false;
-            if(dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
-                set_fw_name_from_path(app);
-                FURI_LOG_I(TAG, "firmware chosen: %s", app->fw_name);
-            }
-            continue; /* re-create the menu */
-        } else if(flow == FlowLaunch) {
-            if(app->fw_name[0] == 0) {
-                FURI_LOG_W(TAG, "Launch without firmware; opening file browser");
+    /* Outer loop: PHASE 1 menu -> PHASE 2 emulator -> (short Back) back to the
+     * menu, until Exit from the menu or a long-hold Back in the emulator. */
+    while(!quit) {
+        bool launch = false;
+
+        /* --- PHASE 1: menu (view_dispatcher). Loop until Launch or Exit. --- */
+        while(true) {
+            MenuFlow flow = run_menu(app, gui);
+            if(flow == FlowExit) {
+                quit = true;
+                break;
+            } else if(flow == FlowFileBrowser) {
+                /* the GUI is already free (view_dispatcher released in run_menu) */
                 DialogsFileBrowserOptions opts;
-                dialog_file_browser_set_basic_options(&opts, "*", NULL);
+                dialog_file_browser_set_basic_options(&opts, ".hex|.bin", NULL);
                 opts.base_path = "/ext";
                 opts.hide_ext = false;
-                if(!dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
-                    continue; /* cancelled: return to the menu */
+                if(dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
+                    set_fw_name_from_path(app);
+                    FURI_LOG_I(TAG, "firmware chosen: %s", app->fw_name);
                 }
-                set_fw_name_from_path(app);
+                continue; /* re-create the menu */
+            } else if(flow == FlowLaunch) {
+                if(app->fw_name[0] == 0) {
+                    FURI_LOG_W(TAG, "Launch without firmware; opening file browser");
+                    DialogsFileBrowserOptions opts;
+                    dialog_file_browser_set_basic_options(&opts, ".hex|.bin", NULL);
+                    opts.base_path = "/ext";
+                    opts.hide_ext = false;
+                    if(!dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
+                        continue; /* cancelled: return to the menu */
+                    }
+                    set_fw_name_from_path(app);
+                }
+                launch = true;
+                break;
             }
-            launch = true;
-            break;
         }
-    }
+        if(quit) break;
+        if(!launch) continue;
 
-    /* --- PHASE 2: emulator (direct-draw). Only if the user requested Launch. --- */
-    if(launch) {
+        /* --- PHASE 2: emulator (direct-draw). One session. --- */
+        /* reset per-session state (AppState persists across sessions) */
+        app->exit_requested = false;
+        app->back_to_menu = false;
+        app->menu_requested = false;
+        app->menu_active = false;
+        app->pin_entered = false;
+        app->pin_verdict = 0;
+        app->btn_mask = 0;
+        memset(app->gddram, 0, sizeof(app->gddram));
+        memset(app->gddram_work, 0, sizeof(app->gddram_work));
+        app->gd_page = 0;
+        app->gd_col = 0;
+        app->gd_cmd_arg_left = 0;
+        app->radio_on = false;
+        app->rf_tx_enabled = false;
+        app->rf_rx_enabled = false;
+        app->tx_active = false;
+        app->tx_head = 0;
+        app->tx_tail = 0;
+        app->tx_frames = 0;
+        app->rx_events = 0;
+
         do {
             app->cpu = (Pic18Cpu*)malloc(sizeof(Pic18Cpu));
             if(!app->cpu) {
@@ -1505,7 +2132,7 @@ int32_t pandora_pic_app(void* p) {
                 break;
             }
 
-            app->prof = pick_profile(furi_string_get_cstr(app->fw_path), app->cpu);
+            app->prof = pick_profile(furi_string_get_cstr(app->fw_path), app->cpu, app->flash_bk_size);
             FURI_LOG_I(TAG, "profile: %s (PIN=%s)", app->prof->name,
                        app->prof->has_pin ? "yes" : "no");
 
@@ -1530,13 +2157,27 @@ int32_t pandora_pic_app(void* p) {
             }
             FURI_LOG_I(TAG, "boot OK -> PC=0x%06lX", (unsigned long)app->cpu->pc);
 
+            /* start the keyfob's periodic timer tick so the OLED refreshes */
+            arm_keyfob_tick(app);
+
             run_emulator(app, gui);
         } while(false);
+
+        /* free per-session resources so a re-launch starts clean */
+        if(app->cpu) {
+            free(app->cpu);
+            app->cpu = NULL;
+        }
+        pic_free_flash(app, storage);
+
+        /* a long-hold Back in the emulator exits the app; a short Back, an
+         * overlay Back, or a load/boot error returns to the start menu */
+        if(app->exit_requested) quit = true;
     }
 
     /* --- teardown --- */
     if(app->cpu) free(app->cpu);
-    if(app->prog) free(app->prog);
+    pic_free_flash(app, storage);
     furi_string_free(app->fw_path);
     furi_record_close(RECORD_GUI);
     furi_record_close(RECORD_DIALOGS);

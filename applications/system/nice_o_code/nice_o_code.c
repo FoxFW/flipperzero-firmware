@@ -1,0 +1,891 @@
+/*
+ * Nice O-Code — recover a remote's 16 bit installer code.
+ *
+ * Nice O-Code is Nice Flor-S whose final cipher permutation is XORed with a per remote
+ * installer code instead of being inverted, plus a per parcel mask on the serial. A
+ * single capture is not enough to tell you the code, but four or more parcels from the
+ * same remote are: only the correct installer code makes every parcel decode to the same
+ * serial. This app listens for parcels, brute forces the code, and writes a .sub with
+ * the recovered "IC" key so the sub-ghz app can decode and replay that remote.
+ *
+ * It can also write a .sub for a remote that does not exist yet: the same installer code
+ * and button with a serial of its own, which the gate accepts once it is paired the way a
+ * new remote is.
+ */
+
+#include <furi.h>
+#include <furi_hal.h>
+#include <gui/gui.h>
+#include <input/input.h>
+#include <storage/storage.h>
+#include <dialogs/dialogs.h>
+#include <notification/notification_messages.h>
+#include <gui/elements.h>
+#include <gui/modules/text_input.h>
+#include <gui/view_holder.h>
+#include <toolbox/name_generator.h>
+#include <toolbox/path.h>
+
+#include <lib/subghz/receiver.h>
+#include <lib/subghz/subghz_worker.h>
+#include <lib/subghz/environment.h>
+#include <lib/subghz/transmitter.h>
+#include <lib/subghz/protocols/protocol_items.h>
+#include <lib/subghz/protocols/nice_flor_s.h>
+#include <lib/subghz/protocols/public_api.h>
+#include <lib/subghz/protocols/nice_flor_s_o.h>
+#include <lib/subghz/blocks/generic.h>
+#include <lib/subghz/devices/devices.h>
+#include <lib/subghz/devices/cc1101_int/cc1101_int_interconnect.h>
+#include "helpers/radio_device_loader.h"
+#include "raw/nice_o_raw.h"
+#include "nice_o_code_icons.h"
+#include <flipper_format/flipper_format.h>
+
+#define TAG              "NiceOCode"
+#define NICE_O_FOLDER    "/ext/subghz"
+#define NICE_O_EXT       ".sub"
+#define NICE_O_NAME_LEN  32
+#define NICE_O_KEYSTORE  "/ext/subghz/assets/nice_flor_s"
+#define NICE_O_MAX_KEYS  16
+#define NICE_O_MIN_KEYS  4
+#define NICE_O_FREQUENCY 433920000
+
+/* What a brand new remote looks like: a counter near zero, and the parcel index Add
+ * Manually writes, so a generated file reads back like any single captured frame. */
+#define NICE_O_NEW_CNT 0x0003
+
+#define NICE_O_SWEEP_TOTAL 0x10000u
+/* candidates per main loop pass: small enough that the screen keeps redrawing,
+ * large enough that the whole sweep is over in well under a second */
+#define NICE_O_SWEEP_CHUNK 4096u
+
+typedef enum {
+    NiceOSceneMenu,
+    NiceOSceneCapture,
+    NiceOSceneRaw,
+    NiceOSceneSolve,
+    NiceOSceneResult,
+} NiceOScene;
+
+typedef struct {
+    FuriMutex* mutex;
+    FuriMessageQueue* queue;
+    ViewPort* view_port;
+    Gui* gui;
+    Storage* storage;
+    DialogsApp* dialogs;
+    NotificationApp* notifications;
+
+    NiceOScene scene;
+    uint8_t menu_index;
+    FuriString* status;
+
+    // capture
+    SubGhzEnvironment* environment;
+    SubGhzReceiver* receiver;
+    SubGhzWorker* worker;
+    const SubGhzDevice* device;
+    bool device_external;
+    volatile bool rx_active;
+    NiceORaw* raw;
+    FuriString* progress;
+    uint64_t keys[NICE_O_MAX_KEYS];
+    uint8_t key_count;
+    /* the frame length the remote actually sends, so a saved remote has the same shape */
+    uint16_t key_bits;
+    uint32_t packets;
+
+    // sweep, run in chunks from the main loop so the UI never freezes
+    uint32_t mask_32[NICE_O_MAX_KEYS];
+    uint16_t mask_16[NICE_O_MAX_KEYS];
+    uint8_t sweep_keys;
+    uint32_t sweep_ic;
+    bool sweep_found;
+    bool sweep_ambiguous;
+    uint16_t sweep_ic_found;
+    uint32_t sweep_serial;
+
+    /* certificate as the 112 bit frame carries it, masked with the remote's serial;
+     * 0 when none was seen */
+    uint32_t cert;
+
+    // result
+    bool solved;
+    uint16_t ic;
+    uint32_t serial;
+
+    // preloaded rainbow table (loaded once; the IC sweep never touches the card)
+    uint8_t table[32];
+    bool table_ok;
+} NiceOCode;
+
+/* The receiver's own certificate, which the frame carries masked with the serial the
+ * sweep has to find first. */
+static uint32_t nice_o_cert(const NiceOCode* app) {
+    return (app->cert && app->solved) ? (app->cert ^ (app->serial & 0xFFFFFF)) : 0;
+}
+
+/* ------------------------------------------------------------------ drawing */
+
+static void nice_o_draw_callback(Canvas* canvas, void* ctx) {
+    NiceOCode* app = ctx;
+    char buf[48];
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    canvas_clear(canvas);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "Nice O-Code");
+    /* Which radio is in use, boxed so it does not read as part of the title. The box is
+     * sized to the text, so Int does not leave a gap. */
+    canvas_set_font(canvas, FontSecondary);
+    const char* radio = app->device_external ? "Ext" : "Int";
+    size_t radio_w = canvas_string_width(canvas, radio) + 6;
+    int32_t radio_x = 127 - (int32_t)radio_w;
+    elements_frame(canvas, radio_x, 0, radio_w, 12);
+    canvas_draw_str(canvas, radio_x + 3, 9, radio);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_line(canvas, 0, 13, 128, 13);
+    canvas_set_font(canvas, FontSecondary);
+
+    switch(app->scene) {
+    case NiceOSceneMenu: {
+        static const char* items[] = {"Capture remote", "Decode RAW file", "Exit"};
+        for(uint8_t i = 0; i < COUNT_OF(items); i++) {
+            if(i == app->menu_index) {
+                canvas_draw_box(canvas, 0, 17 + i * 12, 128, 11);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            canvas_draw_str(canvas, 4, 26 + i * 12, items[i]);
+            canvas_set_color(canvas, ColorBlack);
+        }
+        elements_frame(canvas, 0, 53, 128, 11);
+        canvas_draw_str(canvas, 4, 62, "4+ presses, do not hold");
+        break;
+    }
+
+    case NiceOSceneCapture: {
+        /* The progress bar leaves no room for a line of its own, so a certificate shares
+         * the top line and the wording shortens to make space. */
+        if(app->cert) {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "%u/%u %lupkt +Crt",
+                app->key_count,
+                NICE_O_MIN_KEYS,
+                app->packets);
+        } else {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "Presses %u/%u   %lupkt",
+                app->key_count,
+                NICE_O_MIN_KEYS,
+                app->packets);
+        }
+        canvas_draw_str(canvas, 2, 24, buf);
+
+        /* fills as the capture approaches the four packets the sweep needs */
+        const uint8_t have = MIN(app->key_count, (uint8_t)NICE_O_MIN_KEYS);
+        elements_progress_bar(canvas, 2, 28, 124, (float)have / (float)NICE_O_MIN_KEYS);
+
+        elements_frame(canvas, 0, 40, 128, 13);
+        canvas_draw_str(canvas, 4, 49, furi_string_get_cstr(app->status));
+
+        if(app->key_count >= NICE_O_MIN_KEYS) {
+            elements_button_center(canvas, "Solve");
+        }
+        elements_button_left(canvas, "Back");
+        break;
+    }
+
+    case NiceOSceneRaw: {
+        if(app->cert) {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "%u/%u %lupkt +Crt",
+                app->key_count,
+                NICE_O_MIN_KEYS,
+                app->packets);
+        } else {
+            snprintf(
+                buf,
+                sizeof(buf),
+                "Presses %u/%u   %lupkt",
+                app->key_count,
+                NICE_O_MIN_KEYS,
+                app->packets);
+        }
+        canvas_draw_str(canvas, 2, 24, buf);
+
+        /* Here the bar is how far into the file we are, which is the part that takes time;
+         * the press count is already on the line above. The worker reports it as "042%",
+         * so the leading digits are the whole of it. */
+        uint8_t pct = 0;
+        for(const char* c = furi_string_get_cstr(app->progress); *c >= '0' && *c <= '9'; c++) {
+            pct = (uint8_t)(pct * 10 + (*c - '0'));
+        }
+        elements_progress_bar(canvas, 2, 28, 124, (float)MIN(pct, (uint8_t)100) / 100.0f);
+
+        elements_frame(canvas, 0, 40, 128, 13);
+        canvas_draw_str(canvas, 4, 49, furi_string_get_cstr(app->status));
+        elements_button_left(canvas, "Back");
+        break;
+    }
+
+    case NiceOSceneSolve: {
+        canvas_draw_str(canvas, 2, 26, "Trying installer codes");
+        snprintf(buf, sizeof(buf), "%lu / %u", app->sweep_ic, NICE_O_SWEEP_TOTAL);
+        elements_progress_bar_with_text(
+            canvas, 2, 32, 124, (float)app->sweep_ic / (float)NICE_O_SWEEP_TOTAL, buf);
+        elements_button_left(canvas, "Cancel");
+        break;
+    }
+
+    default:
+        if(app->solved) {
+            elements_frame(canvas, 0, 17, 128, app->cert ? 34 : 30);
+            canvas_set_font(canvas, FontPrimary);
+            snprintf(buf, sizeof(buf), "IC  %04X", app->ic);
+            canvas_draw_str(canvas, 6, 29, buf);
+            canvas_set_font(canvas, FontSecondary);
+            snprintf(buf, sizeof(buf), "Serial  %07lX", app->serial);
+            canvas_draw_str(canvas, 6, 40, buf);
+            if(app->cert) {
+                snprintf(buf, sizeof(buf), "Cert  %06lX", nice_o_cert(app));
+                canvas_draw_str(canvas, 6, 49, buf);
+            }
+            elements_button_center(canvas, "Save");
+            elements_button_right(canvas, "New");
+        } else {
+            elements_multiline_text_aligned(
+                canvas, 64, 32, AlignCenter, AlignCenter, furi_string_get_cstr(app->status));
+        }
+        elements_button_left(canvas, "Back");
+        break;
+    }
+
+    furi_mutex_release(app->mutex);
+}
+
+static void nice_o_input_callback(InputEvent* event, void* ctx) {
+    FuriMessageQueue* queue = ctx;
+    furi_message_queue_put(queue, event, FuriWaitForever);
+}
+
+/* ------------------------------------------------------------------ capture */
+
+/*
+ * Every frame of a single press carries the same counter and only rotates the parcel
+ * index. The sweep XORs the parcel mask into the trial IC on both the encrypt and the
+ * decrypt side, so it cancels: same counter frames agree on the recovered serial for
+ * EVERY candidate IC and rule nothing out. Holding the button therefore yields any
+ * number of packets and still leaves all 65536 codes standing.
+ *
+ * Two probe ICs are enough to tell the two cases apart: if a new frame agrees with one
+ * already held at both probes, it is the same press.
+ */
+static bool nice_o_key_adds_info(NiceOCode* app, uint64_t key) {
+    static const uint16_t probe[2] = {0x0000u, 0x0001u};
+
+    uint32_t mask_32_new = 0;
+    uint16_t mask_16_new = 0;
+    nice_o_mask(
+        nice_o_get_parcel(key), &mask_32_new, &mask_16_new);
+
+    for(uint8_t i = 0; i < app->key_count; i++) {
+        if(app->keys[i] == key) return false;
+
+        uint32_t mask_32_old = 0;
+        uint16_t mask_16_old = 0;
+        nice_o_mask(
+            nice_o_get_parcel(app->keys[i]), &mask_32_old, &mask_16_old);
+
+        bool same_press = true;
+        for(uint8_t p = 0; p < COUNT_OF(probe); p++) {
+            const uint64_t a =
+                nice_o_decrypt_buf(key, (uint16_t)(probe[p] ^ mask_16_new), app->table);
+            const uint64_t b =
+                nice_o_decrypt_buf(app->keys[i], (uint16_t)(probe[p] ^ mask_16_old), app->table);
+            if((((uint32_t)(a >> 16) ^ mask_32_new) & 0x0FFFFFFFu) !=
+               (((uint32_t)(b >> 16) ^ mask_32_old) & 0x0FFFFFFFu)) {
+                same_press = false;
+                break;
+            }
+        }
+        if(same_press) return false;
+    }
+    return true;
+}
+
+/* Runs on the SubGhzWorker thread, so allocating here is fine. */
+static void
+    nice_o_rx_callback(SubGhzReceiver* receiver, SubGhzProtocolDecoderBase* base, void* ctx) {
+    UNUSED(receiver);
+    NiceOCode* app = ctx;
+
+    if(strcmp(base->protocol->name, SUBGHZ_PROTOCOL_NICE_FLOR_S_NAME) != 0) return;
+
+    /* Plain Flor-S and Nice One reuse one encrypted body for the whole press, so their
+     * frames carry nothing for the sweep and would only break it. Keep O-Code alone. */
+    if(!subghz_protocol_decoder_nice_flor_s_is_o_code_no_ic(base)) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        app->packets++;
+        furi_string_set(app->status, "Not O-Code, ignored");
+        furi_mutex_release(app->mutex);
+        return;
+    }
+
+    // pull the raw key out through the public serializer instead of poking at internals
+    uint64_t key = 0;
+    FlipperFormat* fff = flipper_format_string_alloc();
+    SubGhzRadioPreset preset = {
+        .name = furi_string_alloc_set("AM650"),
+        .frequency = NICE_O_FREQUENCY,
+        .data = NULL,
+        .data_size = 0,
+    };
+    uint8_t key_data[8] = {0};
+    uint8_t d2_data[8] = {0};
+    uint32_t bits = 0;
+    uint32_t cert = 0;
+    if((subghz_protocol_decoder_base_serialize(base, fff, &preset) == SubGhzProtocolStatusOk) &&
+       flipper_format_rewind(fff) &&
+       flipper_format_read_hex(fff, "Key", key_data, sizeof(key_data))) {
+        for(size_t i = 0; i < sizeof(key_data); i++) {
+            key = (key << 8) | key_data[i];
+        }
+        if(flipper_format_rewind(fff)) flipper_format_read_uint32(fff, "Bit", &bits, 1);
+        /* The certificate is masked with the serial, which the sweep has not found yet,
+         * so take the raw field out of the frame tail and un-mask it later. */
+        if(flipper_format_rewind(fff) &&
+           flipper_format_read_hex(fff, "Data2", d2_data, sizeof(d2_data))) {
+            uint64_t d2 = 0;
+            for(size_t i = 0; i < sizeof(d2_data); i++) {
+                d2 = (d2 << 8) | d2_data[i];
+            }
+            cert = (uint32_t)((d2 >> 8) ^ key) & 0xFFFFFF;
+        }
+    }
+    furi_string_free(preset.name);
+    flipper_format_free(fff);
+    if(key == 0) return;
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app->packets++;
+    if(cert) app->cert = cert;
+    if((app->key_count < NICE_O_MAX_KEYS) && nice_o_key_adds_info(app, key)) {
+        /* A remote sending the longer frame also sends 72 bit parcels, and 72 is the
+         * longest the encoder builds, so anything above 52 is saved as 72. */
+        if(bits > 52) app->key_bits = 72;
+        app->keys[app->key_count++] = key;
+        furi_string_printf(
+            app->status, "Press %u: %010llX", app->key_count, key & 0xFFFFFFFFFFULL);
+        notification_message(app->notifications, &sequence_blink_green_10);
+    } else {
+        furi_string_printf(app->status, "Same press, ignored");
+    }
+    furi_mutex_release(app->mutex);
+}
+
+/* Pick the radio once, when the app opens, so the module in use is known before the
+ * first screen is drawn. The loader does the OTG power handshake and begin() for the
+ * external case. */
+static void nice_o_radio_init(NiceOCode* app) {
+    subghz_devices_init();
+    app->device = radio_device_loader_set(NULL, SubGhzRadioDeviceTypeExternalCC1101);
+    if(!app->device) return;
+    app->device_external =
+        (app->device != subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME));
+    if(!app->device_external) subghz_devices_begin(app->device);
+}
+
+static void nice_o_radio_deinit(NiceOCode* app) {
+    if(app->device) radio_device_loader_end(app->device);
+    subghz_devices_deinit();
+    app->device = NULL;
+}
+
+/* The decoder chain on its own. Live capture feeds it from the radio worker, Decode
+ * RAW feeds it from a file, and neither cares which. */
+static void nice_o_receiver_alloc(NiceOCode* app) {
+    app->environment = subghz_environment_alloc();
+    subghz_environment_set_protocol_registry(app->environment, (void*)&subghz_protocol_registry);
+    subghz_environment_set_nice_flor_s_rainbow_table_file_name(app->environment, NICE_O_KEYSTORE);
+
+    app->receiver = subghz_receiver_alloc_init(app->environment);
+    subghz_receiver_set_filter(app->receiver, SubGhzProtocolFlag_Decodable);
+    subghz_receiver_set_rx_callback(app->receiver, nice_o_rx_callback, app);
+}
+
+static void nice_o_receiver_free(NiceOCode* app) {
+    if(app->receiver) subghz_receiver_free(app->receiver);
+    if(app->environment) subghz_environment_free(app->environment);
+    app->receiver = NULL;
+    app->environment = NULL;
+}
+
+static bool nice_o_rx_start(NiceOCode* app) {
+    if(!app->device) return false;
+    nice_o_receiver_alloc(app);
+
+    subghz_devices_reset(app->device);
+    subghz_devices_load_preset(app->device, FuriHalSubGhzPresetOok650Async, NULL);
+    subghz_devices_set_frequency(app->device, NICE_O_FREQUENCY);
+    app->worker = subghz_worker_alloc();
+    subghz_worker_set_overrun_callback(
+        app->worker, (SubGhzWorkerOverrunCallback)subghz_receiver_reset);
+    subghz_worker_set_pair_callback(app->worker, (SubGhzWorkerPairCallback)subghz_receiver_decode);
+    subghz_worker_set_context(app->worker, app->receiver);
+
+    subghz_devices_start_async_rx(app->device, subghz_worker_rx_callback, app->worker);
+    subghz_worker_start(app->worker);
+    subghz_devices_set_rx(app->device);
+    app->rx_active = true;
+    return true;
+}
+
+static void nice_o_rx_stop(NiceOCode* app) {
+    if(!app->rx_active) return;
+    if(app->worker && subghz_worker_is_running(app->worker)) subghz_worker_stop(app->worker);
+    subghz_devices_stop_async_rx(app->device);
+    subghz_devices_idle(app->device);
+    subghz_devices_sleep(app->device);
+    if(app->worker) {
+        subghz_worker_free(app->worker);
+        app->worker = NULL;
+    }
+    nice_o_receiver_free(app);
+    app->rx_active = false;
+}
+
+static void nice_o_reset_capture(NiceOCode* app) {
+    app->key_count = 0;
+    app->key_bits = 52;
+    app->packets = 0;
+    app->cert = 0;
+    app->solved = false;
+    furi_string_reset(app->progress);
+}
+
+/* Ask for a .sub and point the decoder chain at it. No radio is claimed, so this works
+ * with the module unplugged. */
+static bool nice_o_raw_begin(NiceOCode* app) {
+    FuriString* path = furi_string_alloc_set(NICE_O_FOLDER);
+    DialogsFileBrowserOptions browser;
+    dialog_file_browser_set_basic_options(&browser, NICE_O_EXT, &I_sub1_10px);
+    browser.base_path = NICE_O_FOLDER;
+
+    bool ok = false;
+    if(dialog_file_browser_show(app->dialogs, path, path, &browser)) {
+        nice_o_receiver_alloc(app);
+        ok = nice_o_raw_start(app->raw, furi_string_get_cstr(path), app->receiver);
+        if(!ok) nice_o_receiver_free(app);
+    }
+    furi_string_free(path);
+    return ok;
+}
+
+static void nice_o_raw_end(NiceOCode* app) {
+    nice_o_raw_stop(app->raw);
+    nice_o_receiver_free(app);
+}
+
+/* -------------------------------------------------------------------- solve */
+
+/* Set up a sweep over all 65536 installer codes. The rainbow table is read once
+ * here: reading it opens and decrypts a file on the SD card, so doing that per
+ * candidate would turn a sub second search into one that never seems to end. */
+static bool nice_o_solve_begin(NiceOCode* app) {
+    if(app->key_count < NICE_O_MIN_KEYS) {
+        furi_string_set(app->status, "Need 4+ packets");
+        return false;
+    }
+    if(!app->table_ok) {
+        furi_string_set(app->status, "No rainbow table");
+        return false;
+    }
+
+    app->sweep_keys = app->key_count;
+    for(uint8_t i = 0; i < app->sweep_keys; i++) {
+        nice_o_mask(
+            nice_o_get_parcel(app->keys[i]), &app->mask_32[i], &app->mask_16[i]);
+    }
+    app->sweep_ic = 0;
+    app->sweep_found = false;
+    app->sweep_ambiguous = false;
+    return true;
+}
+
+/* Try one chunk of candidates. Returns true once the whole range has been swept. */
+static bool nice_o_solve_step(NiceOCode* app) {
+    const uint32_t end = MIN(app->sweep_ic + NICE_O_SWEEP_CHUNK, NICE_O_SWEEP_TOTAL);
+
+    for(; app->sweep_ic < end; app->sweep_ic++) {
+        const uint16_t ic = (uint16_t)app->sweep_ic;
+        uint64_t d =
+            nice_o_decrypt_buf(app->keys[0], (uint16_t)(ic ^ app->mask_16[0]), app->table);
+        const uint32_t serial = (uint32_t)((d >> 16) ^ app->mask_32[0]) & 0x0FFFFFFFu;
+
+        uint8_t i = 1;
+        for(; i < app->sweep_keys; i++) {
+            d = nice_o_decrypt_buf(app->keys[i], (uint16_t)(ic ^ app->mask_16[i]), app->table);
+            if(((uint32_t)((d >> 16) ^ app->mask_32[i]) & 0x0FFFFFFFu) != serial) break;
+        }
+        if(i != app->sweep_keys) continue;
+
+        /* a second hit means the captures cannot tell the codes apart */
+        if(app->sweep_found) {
+            app->sweep_ambiguous = true;
+            app->sweep_ic = NICE_O_SWEEP_TOTAL;
+            return true;
+        }
+        app->sweep_found = true;
+        app->sweep_ic_found = ic;
+        app->sweep_serial = serial;
+    }
+    return app->sweep_ic >= NICE_O_SWEEP_TOTAL;
+}
+
+static void nice_o_solve_finish(NiceOCode* app) {
+    if(app->sweep_ambiguous) {
+        app->solved = false;
+        furi_string_set(app->status, "Ambiguous, capture more");
+    } else if(app->sweep_found) {
+        app->solved = true;
+        app->ic = app->sweep_ic_found;
+        app->serial = app->sweep_serial;
+        furi_string_set(app->status, "Found");
+    } else {
+        app->solved = false;
+        furi_string_set(app->status, "No code fits, not O-Code?");
+    }
+}
+
+typedef struct {
+    FuriSemaphore* done;
+    bool accepted;
+} NiceONameCtx;
+
+static void nice_o_name_done(void* context) {
+    NiceONameCtx* ctx = context;
+    ctx->accepted = true;
+    furi_semaphore_release(ctx->done);
+}
+
+static void nice_o_name_back(void* context) {
+    NiceONameCtx* ctx = context;
+    ctx->accepted = false;
+    furi_semaphore_release(ctx->done);
+}
+
+/* Hands the screen to the keyboard, blocks until the name is confirmed or dropped,
+ * then gives the screen back. Returns false if the user backed out. */
+static bool nice_o_ask_name(NiceOCode* app, char* name, size_t name_size) {
+    gui_remove_view_port(app->gui, app->view_port);
+
+    NiceONameCtx ctx = {.done = furi_semaphore_alloc(1, 0), .accepted = false};
+    TextInput* text_input = text_input_alloc();
+    text_input_set_header_text(text_input, "Name the .sub file");
+    text_input_set_result_callback(text_input, nice_o_name_done, &ctx, name, name_size, false);
+
+    ValidatorIsFile* validator = validator_is_file_alloc_init(NICE_O_FOLDER, NICE_O_EXT, NULL);
+    text_input_set_validator(text_input, validator_is_file_callback, validator);
+
+    ViewHolder* view_holder = view_holder_alloc();
+    view_holder_attach_to_gui(view_holder, app->gui);
+    view_holder_set_back_callback(view_holder, nice_o_name_back, &ctx);
+    view_holder_set_view(view_holder, text_input_get_view(text_input));
+
+    furi_semaphore_acquire(ctx.done, FuriWaitForever);
+
+    view_holder_set_view(view_holder, NULL);
+    view_holder_free(view_holder);
+    text_input_free(text_input);
+    validator_is_file_free(validator);
+    furi_semaphore_free(ctx.done);
+
+    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
+    return ctx.accepted;
+}
+
+/* Status is read by the draw callback on the GUI thread, so every write takes the
+ * mutex. It is never held across nice_o_ask_name(), which blocks on the keyboard. */
+static void nice_o_set_status(NiceOCode* app, const char* text) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    furi_string_set(app->status, text);
+    furi_mutex_release(app->mutex);
+}
+
+/* Writes one .sub holding @p key and the recovered installer code. */
+/* Let the protocol build the file: it encrypts the parcel, works out the Nice One tail
+ * for the 72 bit frame and writes the installer code, none of which can be assembled
+ * correctly from a captured frame alone. */
+static bool
+    nice_o_save_key(NiceOCode* app, uint32_t serial, uint8_t btn, uint16_t cnt, const char* prefix) {
+    char name[NICE_O_NAME_LEN];
+    name_generator_make_random_prefixed(name, sizeof(name), prefix);
+    if(!nice_o_ask_name(app, name, sizeof(name))) {
+        nice_o_set_status(app, "Save cancelled");
+        return false;
+    }
+
+    FuriString* path = furi_string_alloc();
+    furi_string_printf(path, "%s/%s%s", NICE_O_FOLDER, name, NICE_O_EXT);
+
+    SubGhzEnvironment* env = subghz_environment_alloc();
+    subghz_environment_set_protocol_registry(env, (void*)&subghz_protocol_registry);
+    subghz_environment_set_nice_flor_s_rainbow_table_file_name(env, NICE_O_KEYSTORE);
+    SubGhzTransmitter* tx = subghz_transmitter_alloc_init(env, SUBGHZ_PROTOCOL_NICE_FLOR_S_NAME);
+    FlipperFormat* fff = flipper_format_file_alloc(app->storage);
+    SubGhzRadioPreset preset = {
+        .name = furi_string_alloc_set("AM650"),
+        .frequency = NICE_O_FREQUENCY,
+        .data = NULL,
+        .data_size = 0,
+    };
+
+    bool ok = false;
+    if(tx && flipper_format_file_open_always(fff, furi_string_get_cstr(path))) {
+        void* protocol = subghz_transmitter_get_protocol_instance(tx);
+        ok = subghz_protocol_nice_flor_s_create_data_ic(
+            protocol, fff, serial, btn, cnt, &preset, (app->key_bits == 72), true, app->ic);
+        /* A certificate seen in a long frame belongs to the gate, not to the remote, so
+         * the new remote keeps it and enrols itself with it. */
+        const uint32_t cert = nice_o_cert(app);
+        if(ok && cert) {
+            uint8_t cert_data[3] = {(uint8_t)(cert >> 16), (uint8_t)(cert >> 8), (uint8_t)cert};
+            ok = flipper_format_rewind(fff) &&
+                 flipper_format_insert_or_update_hex(fff, "Cert", cert_data, sizeof(cert_data));
+        }
+    }
+
+    furi_string_free(preset.name);
+    flipper_format_free(fff);
+    if(tx) subghz_transmitter_free(tx);
+    subghz_environment_free(env);
+
+    char msg[NICE_O_NAME_LEN + 16];
+    snprintf(msg, sizeof(msg), ok ? "Saved %s%s" : "Save failed: %s%s", name, NICE_O_EXT);
+    nice_o_set_status(app, msg);
+    furi_string_free(path);
+    return ok;
+}
+
+/* The counter sits in the decrypted parcel; the button is the clear nibble on top. The
+ * raw cipher is used here, so the field still needs unscrambling into a plain count. */
+static uint16_t nice_o_captured_cnt(NiceOCode* app) {
+    uint64_t d =
+        nice_o_decrypt_buf(app->keys[0], (uint16_t)(app->ic ^ app->mask_16[0]), app->table);
+    return nice_o_cnt_swap((uint16_t)(d & 0xFFFFu));
+}
+
+static uint8_t nice_o_captured_btn(NiceOCode* app) {
+    return (uint8_t)((app->keys[0] >> 48) & 0x0Fu);
+}
+
+static bool nice_o_save(NiceOCode* app) {
+    return nice_o_save_key(
+        app, app->serial, nice_o_captured_btn(app), nice_o_captured_cnt(app), "NiceO");
+}
+
+/*
+ * A second remote for the same gate. The installer code is what the receiver is paired
+ * to, so it stays, and so does the button; what makes it a remote of its own is a serial
+ * of its own, and a new remote leaves the factory with its counter near zero. The gate
+ * still has to be taught it, the same as any remote bought over the counter.
+ */
+static bool nice_o_save_new(NiceOCode* app) {
+    uint32_t serial = app->serial;
+    while(serial == app->serial) {
+        serial = furi_hal_random_get() & 0x0FFFFFFFu;
+    }
+
+    return nice_o_save_key(app, serial, nice_o_captured_btn(app), NICE_O_NEW_CNT, "NiceO_new");
+}
+
+/* ---------------------------------------------------------------------- main */
+
+int32_t nice_o_code_app(void* p) {
+    UNUSED(p);
+
+    NiceOCode* app = malloc(sizeof(NiceOCode));
+    memset(app, 0, sizeof(NiceOCode));
+    app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    app->queue = furi_message_queue_alloc(16, sizeof(InputEvent));
+    app->storage = furi_record_open(RECORD_STORAGE);
+    app->table_ok =
+        subghz_keystore_raw_get_data(NICE_O_KEYSTORE, 0, app->table, sizeof(app->table));
+    app->dialogs = furi_record_open(RECORD_DIALOGS);
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
+    app->status = furi_string_alloc_set("Idle");
+    app->progress = furi_string_alloc();
+    app->raw = nice_o_raw_alloc();
+    app->scene = NiceOSceneMenu;
+
+    nice_o_radio_init(app);
+
+    app->view_port = view_port_alloc();
+    view_port_draw_callback_set(app->view_port, nice_o_draw_callback, app);
+    view_port_input_callback_set(app->view_port, nice_o_input_callback, app->queue);
+    app->gui = furi_record_open(RECORD_GUI);
+    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
+
+    bool running = true;
+    InputEvent event;
+    while(running) {
+        /* the sweep runs a chunk at a time here rather than in one blocking call, so
+         * the progress bar keeps moving and Back still cancels */
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        const bool solving = (app->scene == NiceOSceneSolve);
+        const bool decoding = (app->scene == NiceOSceneRaw);
+        if(solving) {
+            if(nice_o_solve_step(app)) {
+                nice_o_solve_finish(app);
+                app->scene = NiceOSceneResult;
+                notification_message(
+                    app->notifications, app->solved ? &sequence_success : &sequence_error);
+            }
+        }
+        furi_mutex_release(app->mutex);
+
+        /* The rx callback takes the mutex, so the file is pumped with it released. */
+        if(decoding) {
+            const bool more = nice_o_raw_next(app->raw);
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            nice_o_raw_progress(app->raw, app->progress);
+            if(!more) {
+                furi_mutex_release(app->mutex);
+                nice_o_raw_end(app);
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                furi_string_reset(app->progress);
+                if(nice_o_solve_begin(app)) {
+                    app->scene = NiceOSceneSolve;
+                } else {
+                    app->solved = false;
+                    app->scene = NiceOSceneResult;
+                    notification_message(app->notifications, &sequence_error);
+                }
+            }
+            furi_mutex_release(app->mutex);
+        }
+
+        if(solving || decoding) view_port_update(app->view_port);
+
+        if(furi_message_queue_get(app->queue, &event, (solving || decoding) ? 0 : 200) ==
+           FuriStatusOk) {
+            if(event.type == InputTypeShort) {
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                switch(app->scene) {
+                case NiceOSceneMenu:
+                    if(event.key == InputKeyUp && app->menu_index) app->menu_index--;
+                    if(event.key == InputKeyDown && app->menu_index < 2) app->menu_index++;
+                    if(event.key == InputKeyBack) running = false;
+                    if(event.key == InputKeyOk) {
+                        if(app->menu_index == 2) {
+                            running = false;
+                        } else if(app->menu_index == 1) {
+                            nice_o_reset_capture(app);
+                            furi_string_set(app->status, "Reading file");
+                            furi_mutex_release(app->mutex);
+                            const bool started = nice_o_raw_begin(app);
+                            furi_mutex_acquire(app->mutex, FuriWaitForever);
+                            if(started) {
+                                app->scene = NiceOSceneRaw;
+                            } else {
+                                furi_string_set(app->status, "No file picked");
+                            }
+                        } else {
+                            nice_o_reset_capture(app);
+                            furi_string_set(app->status, "Listening 433.92");
+                            app->scene = NiceOSceneCapture;
+                            furi_mutex_release(app->mutex);
+                            if(!nice_o_rx_start(app)) {
+                                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                                furi_string_set(app->status, "Radio busy");
+                                app->scene = NiceOSceneMenu;
+                                furi_mutex_release(app->mutex);
+                            }
+                            furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        }
+                    }
+                    break;
+
+                case NiceOSceneCapture:
+                    if((event.key == InputKeyBack) || (event.key == InputKeyLeft)) {
+                        furi_mutex_release(app->mutex);
+                        nice_o_rx_stop(app);
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        app->scene = NiceOSceneMenu;
+                    } else if((event.key == InputKeyOk) && (app->key_count >= NICE_O_MIN_KEYS)) {
+                        furi_mutex_release(app->mutex);
+                        nice_o_rx_stop(app);
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        if(nice_o_solve_begin(app)) {
+                            app->scene = NiceOSceneSolve;
+                        } else {
+                            app->solved = false;
+                            app->scene = NiceOSceneResult;
+                            notification_message(app->notifications, &sequence_error);
+                        }
+                    }
+                    break;
+
+                case NiceOSceneRaw:
+                    if((event.key == InputKeyBack) || (event.key == InputKeyLeft)) {
+                        furi_mutex_release(app->mutex);
+                        nice_o_raw_end(app);
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        furi_string_reset(app->progress);
+                        app->scene = NiceOSceneMenu;
+                    }
+                    break;
+
+                case NiceOSceneSolve:
+                    if((event.key == InputKeyBack) || (event.key == InputKeyLeft)) {
+                        furi_string_set(app->status, "Cancelled");
+                        app->solved = false;
+                        app->scene = NiceOSceneResult;
+                    }
+                    break;
+
+                case NiceOSceneResult:
+                    if((event.key == InputKeyBack) || (event.key == InputKeyLeft)) {
+                        app->scene = NiceOSceneMenu;
+                    } else if(
+                        ((event.key == InputKeyOk) || (event.key == InputKeyRight)) &&
+                        app->solved) {
+                        const bool as_new = (event.key == InputKeyRight);
+                        furi_mutex_release(app->mutex);
+                        const bool saved = as_new ? nice_o_save_new(app) : nice_o_save(app);
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        notification_message(
+                            app->notifications, saved ? &sequence_success : &sequence_error);
+                    }
+                    break;
+                }
+                furi_mutex_release(app->mutex);
+            }
+        }
+        view_port_update(app->view_port);
+    }
+
+    nice_o_rx_stop(app);
+    nice_o_raw_end(app);
+    nice_o_raw_free(app->raw);
+    nice_o_radio_deinit(app);
+    gui_remove_view_port(app->gui, app->view_port);
+    view_port_free(app->view_port);
+    furi_record_close(RECORD_GUI);
+    furi_record_close(RECORD_NOTIFICATION);
+    furi_record_close(RECORD_DIALOGS);
+    furi_record_close(RECORD_STORAGE);
+    furi_message_queue_free(app->queue);
+    furi_mutex_free(app->mutex);
+    furi_string_free(app->status);
+    furi_string_free(app->progress);
+    free(app);
+    return 0;
+}

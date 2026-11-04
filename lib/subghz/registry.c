@@ -5,6 +5,10 @@ const SubGhzProtocol* subghz_protocol_registry_get_by_name(
     const char* name) {
     furi_check(protocol_registry);
 
+    if(name && strcmp(name, "Renault V1") == 0) {
+        name = "Hitag-2";
+    }
+
     for(size_t i = 0; i < subghz_protocol_registry_count(protocol_registry); i++) {
         if(strcmp(name, protocol_registry->items[i]->name) == 0) {
             return protocol_registry->items[i];

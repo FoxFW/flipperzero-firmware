@@ -34,6 +34,8 @@ void picopass_scene_write_card_failure_on_enter(void* context) {
     widget_add_string_element(
         widget, 64, 5, AlignCenter, AlignCenter, FontSecondary, furi_string_get_cstr(str));
 
+    widget_add_icon_element(widget, 48, 14, &I_fox_right_32x32);
+
     furi_string_free(str);
 
     view_dispatcher_switch_to_view(picopass->view_dispatcher, PicopassViewWidget);

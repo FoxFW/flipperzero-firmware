@@ -1,5 +1,8 @@
 #include "phoenix_v2.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -10,7 +13,10 @@
 
 #define TAG "SubGhzProtocolPhoenixV2"
 
+static bool phoenix_v2_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+
 static bool bypass = false;
+static uint8_t v2_phoenix_counter_mode = 0;
 
 static const SubGhzBlockConst subghz_protocol_phoenix_v2_const = {
     .te_short = 427,
@@ -33,6 +39,9 @@ struct SubGhzProtocolEncoderPhoenix_V2 {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderPhoenix_V2);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderPhoenix_V2);
+
 typedef enum {
     Phoenix_V2DecoderStepReset = 0,
     Phoenix_V2DecoderStepFoundStartBit,
@@ -42,61 +51,41 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_phoenix_v2_decoder = {
     .alloc = subghz_protocol_decoder_phoenix_v2_alloc,
-    .free = subghz_protocol_decoder_phoenix_v2_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_phoenix_v2_feed,
-    .reset = subghz_protocol_decoder_phoenix_v2_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_phoenix_v2_get_hash_data,
-    .serialize = subghz_protocol_decoder_phoenix_v2_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_phoenix_v2_deserialize,
-    .get_string = subghz_protocol_decoder_phoenix_v2_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_phoenix_v2_encoder = {
-    .alloc = subghz_protocol_encoder_phoenix_v2_alloc,
-    .free = subghz_protocol_encoder_phoenix_v2_free,
-
-    .deserialize = subghz_protocol_encoder_phoenix_v2_deserialize,
-    .stop = subghz_protocol_encoder_phoenix_v2_stop,
-    .yield = subghz_protocol_encoder_phoenix_v2_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    void* bypass;
+    void* phoenix_v2_raw_replay;
+    void* v2_phoenix_counter_mode;
+} enc_phoenix_v2_host_t;
+static const enc_phoenix_v2_host_t enc_phoenix_v2_host = {
+    .bypass = (void*)&bypass,
+    .phoenix_v2_raw_replay = (void*)&phoenix_v2_raw_replay,
+    .v2_phoenix_counter_mode = (void*)&v2_phoenix_counter_mode,
 };
+static const SubGhzEncoderExternal subghz_protocol_phoenix_v2_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_phoenix_v2", &enc_phoenix_v2_host);
 
 const SubGhzProtocol subghz_protocol_phoenix_v2 = {
     .name = SUBGHZ_PROTOCOL_PHOENIX_V2_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
 
     .decoder = &subghz_protocol_phoenix_v2_decoder,
-    .encoder = &subghz_protocol_phoenix_v2_encoder,
+    .encoder = &subghz_protocol_phoenix_v2_encoder_ext.vtable,
 };
 
-void* subghz_protocol_encoder_phoenix_v2_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderPhoenix_V2* instance = malloc(sizeof(SubGhzProtocolEncoderPhoenix_V2));
-
-    instance->base.protocol = &subghz_protocol_phoenix_v2;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 128;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_phoenix_v2_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderPhoenix_V2* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static uint8_t v2_phoenix_counter_mode = 0;
-
 static uint16_t subghz_protocol_phoenix_v2_encrypt_counter(uint64_t full_key, uint16_t counter);
-static void subghz_protocol_phoenix_v2_check_remote_controller(SubGhzBlockGeneric* instance);
 
 bool subghz_protocol_phoenix_v2_create_data(
     void* context,
@@ -129,302 +118,10 @@ bool subghz_protocol_phoenix_v2_create_data(
            subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 }
 
-static uint8_t subghz_protocol_phoenix_v2_get_btn_code(void) {
-    uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t original_btn_code = subghz_custom_btn_get_original();
-    uint8_t btn = original_btn_code;
-
-    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
-
-        btn = original_btn_code;
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x2;
-            break;
-        case 0x2:
-            btn = 0x1;
-            break;
-        case 0x4:
-            btn = 0x1;
-            break;
-        case 0x8:
-            btn = 0x1;
-            break;
-        case 0x3:
-            btn = 0x1;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x4;
-            break;
-        case 0x2:
-            btn = 0x4;
-            break;
-        case 0x4:
-            btn = 0x2;
-            break;
-        case 0x8:
-            btn = 0x4;
-            break;
-        case 0x3:
-            btn = 0x4;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x8;
-            break;
-        case 0x2:
-            btn = 0x8;
-            break;
-        case 0x4:
-            btn = 0x8;
-            break;
-        case 0x8:
-            btn = 0x2;
-            break;
-        case 0x3:
-            btn = 0x8;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_RIGHT) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x3;
-            break;
-        case 0x2:
-            btn = 0x3;
-            break;
-        case 0x4:
-            btn = 0x3;
-            break;
-        case 0x8:
-            btn = 0x3;
-            break;
-        case 0x3:
-            btn = 0x2;
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    return btn;
-}
-
-static bool
-    subghz_protocol_encoder_phoenix_v2_get_upload(SubGhzProtocolEncoderPhoenix_V2* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    uint8_t btn = instance->generic.btn;
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(btn);
-    }
-
-    btn = subghz_protocol_phoenix_v2_get_btn_code();
-
-    if(subghz_block_generic_global_button_override_get(&btn)) {
-        bypass = true;
-        FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", btn);
-    }
-
-    if(subghz_block_generic_global.cnt_need_override) bypass = true;
-
-    if(v2_phoenix_counter_mode == 0 || bypass) {
-
-        if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF || bypass) {
-            bypass = false;
-
-            if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
-
-                if((instance->generic.cnt + furi_hal_subghz_get_rolling_counter_mult()) > 0xFFFF) {
-                    instance->generic.cnt = 0;
-                } else {
-                    instance->generic.cnt += furi_hal_subghz_get_rolling_counter_mult();
-                }
-            }
-        } else {
-            if((instance->generic.cnt + 0x1) > 0xFFFF) {
-                instance->generic.cnt = 0;
-            } else if(instance->generic.cnt >= 0x1 && instance->generic.cnt != 0xFFFE) {
-                instance->generic.cnt = 0xFFFE;
-            } else {
-                instance->generic.cnt++;
-            }
-        }
-    } else if(v2_phoenix_counter_mode == 1) {
-
-        if((instance->generic.cnt + 0x1) > 0xFFFF) {
-            instance->generic.cnt = 0;
-        } else if(instance->generic.cnt >= 0x1 && instance->generic.cnt != 0xFFFE) {
-            instance->generic.cnt = 0xFFFE;
-        } else {
-            instance->generic.cnt++;
-        }
-    } else {
-
-        if(instance->generic.cnt >= 0x0004) {
-            instance->generic.cnt = 0;
-        } else {
-            instance->generic.cnt++;
-        }
-    }
-
-    uint64_t local_data_rev = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit + 4);
-
-    uint16_t encrypted_counter = (uint16_t)subghz_protocol_phoenix_v2_encrypt_counter(
-        local_data_rev, instance->generic.cnt);
-
-    instance->generic.data = subghz_protocol_blocks_reverse_key(
-        (uint64_t)(((uint64_t)encrypted_counter << 40) | ((uint64_t)btn << 32) |
-                   (uint64_t)instance->generic.serial),
-        instance->generic.data_count_bit + 4);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_phoenix_v2_const.te_short * 60);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_phoenix_v2_const.te_short * 6);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(!bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_phoenix_v2_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_phoenix_v2_const.te_short);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_phoenix_v2_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_phoenix_v2_const.te_long);
-        }
-    }
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_phoenix_v2_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderPhoenix_V2* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_phoenix_v2_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-
-        uint32_t tmp_counter_mode;
-        if(flipper_format_read_uint32(flipper_format, "CounterMode", &tmp_counter_mode, 1)) {
-            v2_phoenix_counter_mode = (uint8_t)tmp_counter_mode;
-        } else {
-            v2_phoenix_counter_mode = 0;
-        }
-
-        subghz_protocol_phoenix_v2_check_remote_controller(&instance->generic);
-
-        if(!subghz_protocol_encoder_phoenix_v2_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
-        }
-        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "Unable to add Key");
-            break;
-        }
-
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_phoenix_v2_stop(void* context) {
-    SubGhzProtocolEncoderPhoenix_V2* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_phoenix_v2_yield(void* context) {
-    SubGhzProtocolEncoderPhoenix_V2* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
-
 void* subghz_protocol_decoder_phoenix_v2_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderPhoenix_V2* instance = malloc(sizeof(SubGhzProtocolDecoderPhoenix_V2));
-    instance->base.protocol = &subghz_protocol_phoenix_v2;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_phoenix_v2_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPhoenix_V2* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_phoenix_v2_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPhoenix_V2* instance = context;
-    instance->decoder.parser_step = Phoenix_V2DecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderPhoenix_V2), &subghz_protocol_phoenix_v2);
 }
 
 void subghz_protocol_decoder_phoenix_v2_feed(void* context, bool level, uint32_t duration) {
@@ -525,65 +222,6 @@ static uint16_t subghz_protocol_phoenix_v2_encrypt_counter(uint64_t full_key, ui
     return (uint16_t)byte1 << 8 | byte2;
 }
 
-static uint16_t subghz_protocol_phoenix_v2_decrypt_counter(uint64_t full_key) {
-    uint16_t encrypted_value = (uint16_t)((full_key >> 40) & 0xFFFF);
-
-    uint8_t byte1 = (uint8_t)(encrypted_value >> 8);
-    uint8_t byte2 = (uint8_t)(encrypted_value & 0xFF);
-
-    uint8_t xor_key1 = (uint8_t)(full_key >> 24);
-    uint8_t xor_key2 = (uint8_t)((full_key >> 16) & 0xFF);
-
-    for(int i = 0; i < 16; i++) {
-
-        uint8_t msb_of_byte1 = byte1 & 0x80;
-
-        uint8_t lsb_of_byte2 = byte2 & 1;
-
-        byte2 = (byte2 >> 1) | msb_of_byte1;
-        byte1 = (byte1 << 1) | lsb_of_byte2;
-
-        if(msb_of_byte1 == 0) {
-            byte1 ^= xor_key1;
-
-            byte2 = (byte2 ^ xor_key2) & 0x7F;
-        }
-    }
-
-    return (uint16_t)byte2 << 8 | byte1;
-}
-
-static void subghz_protocol_phoenix_v2_check_remote_controller(SubGhzBlockGeneric* instance) {
-
-    uint64_t data_rev =
-        subghz_protocol_blocks_reverse_key(instance->data, instance->data_count_bit + 4);
-
-    instance->serial = data_rev & 0xFFFFFFFF;
-    instance->cnt = subghz_protocol_phoenix_v2_decrypt_counter(data_rev);
-    instance->btn = (data_rev >> 32) & 0xF;
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(instance->btn);
-    }
-    subghz_custom_btn_set_max(4);
-}
-
-uint8_t subghz_protocol_decoder_phoenix_v2_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPhoenix_V2* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_phoenix_v2_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPhoenix_V2* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_phoenix_v2_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -609,30 +247,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_phoenix_v2_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPhoenix_V2* instance = context;
-    subghz_protocol_phoenix_v2_check_remote_controller(&instance->generic);
-
-    subghz_block_generic_global.cnt_is_available = true;
-    subghz_block_generic_global.cnt_length_bit = 16;
-    subghz_block_generic_global.current_cnt = instance->generic.cnt;
-
-    subghz_block_generic_global.btn_is_available = true;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-    subghz_block_generic_global.btn_length_bit = 4;
-
-    furi_string_cat_printf(
-        output,
-        "V2 Phoenix %dbit\r\n"
-        "Key:%05lX%08lX\r\n"
-        "Sn:0x%07lX \r\n"
-        "Cnt:%04lX\r\n"
-        "Btn:%X\r\n",
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data >> 32) & 0xFFFFFFFF,
-        (uint32_t)(instance->generic.data & 0xFFFFFFFF),
-        instance->generic.serial,
-        instance->generic.cnt,
-        instance->generic.btn);
-}

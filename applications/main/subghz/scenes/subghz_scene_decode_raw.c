@@ -1,10 +1,18 @@
 #include "../subghz_i.h"
 #include "../subghz_protocol_filter.h"
 #include <lib/subghz/subghz_protocol_registry.h>
+#include <string.h>
+#include "../helpers/subghz_lowram_guard.h"
+#include "../helpers/subghz_decode_plugin_loader.h"
 
 #define TAG "SubGhzDecodeRaw"
 
 #define SAMPLES_TO_READ_PER_TICK 400
+
+/* Below this free heap a PC (qFlipper) is eating too much RAM for decode_raw's
+ * file-worker + decode to run; refuse with a message instead of OOM-crashing.
+ * decode_raw uses only the resident live decoders (no .fal load). */
+#define SUBGHZ_DECODE_RAW_MIN_HEAP 18432u
 
 static void subghz_scene_receiver_update_statusbar(void* context) {
     SubGhz* subghz = context;
@@ -50,30 +58,42 @@ static void subghz_scene_add_to_history_callback(
     void* context) {
     furi_assert(context);
     SubGhz* subghz = context;
-    FuriString* item_name = furi_string_alloc();
-    FuriString* item_time = furi_string_alloc();
-    uint16_t idx = subghz_history_get_item(subghz->history);
     SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
 
-    if(subghz_history_add_to_history(subghz->history, decoder_base, &preset)) {
-        furi_string_reset(item_name);
-        furi_string_reset(item_time);
+    bool identical_ping = false;
+    {
+        bool ping_notify = false;
+        int16_t ident =
+            subghz_history_find_identical(subghz->history, decoder_base, &preset, &ping_notify);
+        if(ident >= 0) {
+            identical_ping = true;
+            subghz_view_receiver_flash_item(subghz->subghz_receiver, (uint16_t)ident);
+            if(ping_notify) {
+                subghz->state_notifications = SubGhzNotificationStateRxDone;
+            }
+        }
+    }
 
+    if(!identical_ping && subghz_history_add_to_history(
+                                 subghz->history, decoder_base, &preset, SubGhzHistorySourceNone)) {
         subghz->state_notifications = SubGhzNotificationStateRxDone;
 
-        subghz_history_get_text_item_menu(subghz->history, item_name, idx);
-        subghz_history_get_time_item_menu(subghz->history, item_time, idx);
-        subghz_view_receiver_add_item_to_menu(
-            subghz->subghz_receiver,
-            furi_string_get_cstr(item_name),
-            furi_string_get_cstr(item_time),
-            subghz_history_get_type_protocol(subghz->history, idx));
+        subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
+
+        int16_t dedup_removed = subghz_history_dedup_last_fiat_hitag2(subghz->history);
+        if(dedup_removed >= 0) {
+            subghz_view_receiver_disable_draw_callback(subghz->subghz_receiver);
+            subghz_view_receiver_delete_item(subghz->subghz_receiver, (uint16_t)dedup_removed);
+            subghz_view_receiver_enable_draw_callback(subghz->subghz_receiver);
+        }
 
         subghz_scene_receiver_update_statusbar(subghz);
     }
-    subghz_receiver_reset(receiver);
-    furi_string_free(item_name);
-    furi_string_free(item_time);
+    if(decoder_base->protocol->name && !strcmp(decoder_base->protocol->name, "Hitag-2")) {
+        subghz_receiver_reset_except_by_name(receiver, "Fiat V1");
+    } else {
+        subghz_receiver_reset(receiver);
+    }
 }
 
 bool subghz_scene_decode_raw_start(SubGhz* subghz) {
@@ -91,6 +111,7 @@ bool subghz_scene_decode_raw_start(SubGhz* subghz) {
             break;
         }
 
+        furi_string_set(subghz->decode_raw_source, file_name);
         success = true;
     } while(false);
 
@@ -167,9 +188,10 @@ bool subghz_scene_decode_raw_next(SubGhz* subghz) {
 
 void subghz_scene_decode_raw_on_enter(void* context) {
     SubGhz* subghz = context;
-
-    FuriString* item_name = furi_string_alloc();
-    FuriString* item_time = furi_string_alloc();
+    subghz_decode_plugin_loader_flush();
+    subghz_lowram_mitigate(
+        SUBGHZ_LOWRAM_SOFTLOCK_THRESHOLD + subghz_txrx_receiver_heap_needed(subghz->txrx));
+    subghz_history_release_cache(subghz->history);
 
     subghz_view_receiver_set_mode(subghz->subghz_receiver, SubGhzViewReceiverModeFile);
     subghz_view_receiver_set_callback(
@@ -178,35 +200,32 @@ void subghz_scene_decode_raw_on_enter(void* context) {
     subghz_txrx_set_rx_callback(subghz->txrx, subghz_scene_add_to_history_callback, subghz);
 
     subghz_txrx_receiver_set_filter(subghz->txrx, SubGhzProtocolFlag_Decodable);
+    subghz_txrx_receiver_apply_modulation_filter(subghz->txrx);
 
     if(scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneDecodeRAW) ==
        SubGhzDecodeRawStateStart) {
 
-        subghz_history_reset(subghz->history);
-        if(subghz_scene_decode_raw_start(subghz)) {
-            scene_manager_set_scene_state(
-                subghz->scene_manager, SubGhzSceneDecodeRAW, SubGhzDecodeRawStateLoading);
-            subghz->state_notifications = SubGhzNotificationStateRx;
+        if(memmgr_get_free_heap() < SUBGHZ_DECODE_RAW_MIN_HEAP) {
+            /* PC connected: not enough free RAM to decode without OOM -> refuse. */
+            subghz->decode_raw_file_worker_encoder = NULL;
+            subghz_view_receiver_add_data_progress(
+                subghz->subghz_receiver, "RAM too low");
+        } else {
+            subghz_history_reset(subghz->history);
+            if(subghz_scene_decode_raw_start(subghz)) {
+                scene_manager_set_scene_state(
+                    subghz->scene_manager, SubGhzSceneDecodeRAW, SubGhzDecodeRawStateLoading);
+                subghz->state_notifications = SubGhzNotificationStateRx;
+            }
         }
     } else {
 
         subghz_view_receiver_exit(subghz->subghz_receiver);
         for(uint16_t i = 0; i < subghz_history_get_item(subghz->history); i++) {
-            furi_string_reset(item_name);
-            furi_string_reset(item_time);
-            subghz_history_get_text_item_menu(subghz->history, item_name, i);
-            subghz_history_get_time_item_menu(subghz->history, item_time, i);
-            subghz_view_receiver_add_item_to_menu(
-                subghz->subghz_receiver,
-                furi_string_get_cstr(item_name),
-                furi_string_get_cstr(item_time),
-                subghz_history_get_type_protocol(subghz->history, i));
+            subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
         }
         subghz_view_receiver_set_idx_menu(subghz->subghz_receiver, subghz->idx_menu_chosen);
     }
-
-    furi_string_free(item_name);
-    furi_string_free(item_time);
 
     subghz_scene_receiver_update_statusbar(subghz);
 
@@ -225,10 +244,14 @@ bool subghz_scene_decode_raw_on_event(void* context, SceneManagerEvent event) {
 
             subghz_txrx_set_rx_callback(subghz->txrx, NULL, subghz);
 
-            if(subghz_file_encoder_worker_is_running(subghz->decode_raw_file_worker_encoder)) {
-                subghz_file_encoder_worker_stop(subghz->decode_raw_file_worker_encoder);
+            if(subghz->decode_raw_file_worker_encoder) {
+                if(subghz_file_encoder_worker_is_running(
+                       subghz->decode_raw_file_worker_encoder)) {
+                    subghz_file_encoder_worker_stop(subghz->decode_raw_file_worker_encoder);
+                }
+                subghz_file_encoder_worker_free(subghz->decode_raw_file_worker_encoder);
+                subghz->decode_raw_file_worker_encoder = NULL;
             }
-            subghz_file_encoder_worker_free(subghz->decode_raw_file_worker_encoder);
 
             subghz->state_notifications = SubGhzNotificationStateIDLE;
             scene_manager_set_scene_state(
@@ -240,6 +263,12 @@ bool subghz_scene_decode_raw_on_event(void* context, SceneManagerEvent event) {
         case SubGhzCustomEventViewReceiverOK:
             subghz->idx_menu_chosen = subghz_view_receiver_get_idx_menu(subghz->subghz_receiver);
             subghz->state_notifications = SubGhzNotificationStateIDLE;
+            subghz_txrx_set_rx_callback(subghz->txrx, NULL, subghz);
+            if(subghz->decode_raw_file_worker_encoder &&
+               subghz_file_encoder_worker_is_running(
+                   subghz->decode_raw_file_worker_encoder)) {
+                subghz_file_encoder_worker_stop(subghz->decode_raw_file_worker_encoder);
+            }
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiverInfo);
             consumed = true;
             break;
@@ -255,12 +284,17 @@ bool subghz_scene_decode_raw_on_event(void* context, SceneManagerEvent event) {
             break;
         }
     } else if(event.type == SceneManagerEventTypeTick) {
+        subghz_history_flush(subghz->history);
         switch(subghz->state_notifications) {
         case SubGhzNotificationStateRx:
             notification_message(subghz->notifications, &sequence_blink_cyan_10);
             break;
         case SubGhzNotificationStateRxDone:
-            notification_message(subghz->notifications, &subghz_sequence_rx);
+            if(subghz_txrx_speaker_get_state(subghz->txrx) == SubGhzSpeakerStateEnable) {
+                notification_message(subghz->notifications, &subghz_sequence_rx);
+            } else {
+                notification_message(subghz->notifications, &subghz_sequence_rx_nosound);
+            }
             subghz->state_notifications = SubGhzNotificationStateRx;
             break;
         default:
@@ -280,4 +314,5 @@ bool subghz_scene_decode_raw_on_event(void* context, SceneManagerEvent event) {
 
 void subghz_scene_decode_raw_on_exit(void* context) {
     UNUSED(context);
+    subghz_lowram_softlock_release();
 }

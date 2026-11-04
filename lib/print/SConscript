@@ -60,11 +60,11 @@ wrapped_fn_list = [
     #
     # "fscanf",
     # "scanf",
-    # "sscanf",
+    "sscanf",
     # "vsprintf",
     # "vfscanf",
     # "vscanf",
-    # "vsscanf",
+    "vsscanf",
     # "fiscanf",
     # "iscanf",
     # "siscanf",

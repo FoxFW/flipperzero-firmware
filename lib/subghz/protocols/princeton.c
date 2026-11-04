@@ -1,5 +1,10 @@
 #include "princeton.h"
 
+#include "common.h"
+#include "../encode_plugin.h"
+
+#include "decode_plugin.h"
+
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -40,6 +45,9 @@ struct SubGhzProtocolEncoderPrinceton {
     uint32_t guard_time;
 };
 
+SUBGHZ_ASSERT_DECODER_TE_LAYOUT(SubGhzProtocolDecoderPrinceton);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderPrinceton);
+
 typedef enum {
     PrincetonDecoderStepReset = 0,
     PrincetonDecoderStepSaveDuration,
@@ -48,25 +56,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_princeton_decoder = {
     .alloc = subghz_protocol_decoder_princeton_alloc,
-    .free = subghz_protocol_decoder_princeton_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_princeton_feed,
     .reset = subghz_protocol_decoder_princeton_reset,
 
-    .get_hash_data = subghz_protocol_decoder_princeton_get_hash_data,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
     .serialize = subghz_protocol_decoder_princeton_serialize,
     .deserialize = subghz_protocol_decoder_princeton_deserialize,
     .get_string = subghz_protocol_decoder_princeton_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_princeton_encoder = {
-    .alloc = subghz_protocol_encoder_princeton_alloc,
-    .free = subghz_protocol_encoder_princeton_free,
-
-    .deserialize = subghz_protocol_encoder_princeton_deserialize,
-    .stop = subghz_protocol_encoder_princeton_stop,
-    .yield = subghz_protocol_encoder_princeton_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_princeton_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_princeton");
 
 const SubGhzProtocol subghz_protocol_princeton = {
     .name = SUBGHZ_PROTOCOL_PRINCETON_NAME,
@@ -76,335 +77,13 @@ const SubGhzProtocol subghz_protocol_princeton = {
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_Princeton,
 
     .decoder = &subghz_protocol_princeton_decoder,
-    .encoder = &subghz_protocol_princeton_encoder,
+    .encoder = &subghz_protocol_princeton_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_princeton_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderPrinceton* instance = malloc(sizeof(SubGhzProtocolEncoderPrinceton));
-
-    instance->base.protocol = &subghz_protocol_princeton;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 52;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_princeton_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderPrinceton* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static uint8_t subghz_protocol_princeton_get_btn_code(void) {
-    uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t original_btn_code = subghz_custom_btn_get_original();
-    uint8_t btn = original_btn_code;
-
-    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
-
-        btn = original_btn_code;
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x2;
-            break;
-        case 0x2:
-            btn = 0x1;
-            break;
-        case 0x4:
-            btn = 0x2;
-            break;
-        case 0x8:
-            btn = 0x2;
-            break;
-        case 0xF:
-            btn = 0x2;
-            break;
-
-        case 0x30:
-            btn = 0xC0;
-            break;
-        case 0xC0:
-            btn = 0x30;
-            break;
-        case 0xF3:
-            btn = 0xC0;
-            break;
-        case 0xFC:
-            btn = 0xC0;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x4;
-            break;
-        case 0x2:
-            btn = 0x4;
-            break;
-        case 0x4:
-            btn = 0x1;
-            break;
-        case 0x8:
-            btn = 0x1;
-            break;
-        case 0xF:
-            btn = 0x1;
-            break;
-
-        case 0x30:
-            btn = 0xF3;
-            break;
-        case 0xC0:
-            btn = 0xF3;
-            break;
-        case 0xF3:
-            btn = 0x30;
-            break;
-        case 0xFC:
-            btn = 0xF3;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0x8;
-            break;
-        case 0x2:
-            btn = 0x8;
-            break;
-        case 0x4:
-            btn = 0x8;
-            break;
-        case 0x8:
-            btn = 0x4;
-            break;
-        case 0xF:
-            btn = 0x4;
-            break;
-
-        case 0x30:
-            btn = 0xFC;
-            break;
-        case 0xC0:
-            btn = 0xFC;
-            break;
-        case 0xF3:
-            btn = 0xFC;
-            break;
-        case 0xFC:
-            btn = 0x30;
-            break;
-
-        default:
-            break;
-        }
-    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_RIGHT) {
-        switch(original_btn_code) {
-        case 0x1:
-            btn = 0xF;
-            break;
-        case 0x2:
-            btn = 0xF;
-            break;
-        case 0x4:
-            btn = 0xF;
-            break;
-        case 0x8:
-            btn = 0xF;
-            break;
-        case 0xF:
-            btn = 0x8;
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    return btn;
-}
-
-static bool
-    subghz_protocol_encoder_princeton_get_upload(SubGhzProtocolEncoderPrinceton* instance) {
-    furi_assert(instance);
-
-    instance->generic.btn = subghz_protocol_princeton_get_btn_code();
-
-    if(subghz_block_generic_global_button_override_get(&instance->generic.btn))
-        FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", instance->generic.btn);
-
-    if(instance->generic.btn == 0x30 || instance->generic.btn == 0xC0) {
-        instance->generic.data =
-            ((uint64_t)instance->generic.serial << 8 | (uint64_t)instance->generic.btn);
-    } else if(instance->generic.btn == 0xF3 || instance->generic.btn == 0xFC) {
-        instance->generic.data =
-            ((uint64_t)instance->generic.serial << 8 | (uint64_t)(instance->generic.btn & 0xF));
-    } else {
-        instance->generic.data =
-            ((uint64_t)instance->generic.serial << 4 | (uint64_t)instance->generic.btn);
-    }
-
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)instance->te * 3);
-            instance->encoder.upload[index++] = level_duration_make(false, (uint32_t)instance->te);
-        } else {
-
-            instance->encoder.upload[index++] = level_duration_make(true, (uint32_t)instance->te);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)instance->te * 3);
-        }
-    }
-
-    instance->encoder.upload[index++] = level_duration_make(true, (uint32_t)instance->te);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)instance->te * instance->guard_time);
-
-    return true;
-}
-
-static void subghz_protocol_princeton_check_remote_controller(SubGhzBlockGeneric* instance) {
-
-    if((instance->data & 0xFF) == 0x30 || (instance->data & 0xFF) == 0xC0) {
-
-        instance->serial = instance->data >> 8;
-        instance->btn = instance->data & 0xFF;
-    } else if((instance->data & 0xFF) == 0x03 || (instance->data & 0xFF) == 0x0C) {
-
-        instance->serial = instance->data >> 8;
-        instance->btn = (instance->data & 0xFF) | 0xF0;
-    } else {
-        instance->serial = instance->data >> 4;
-        instance->btn = instance->data & 0xF;
-    }
-
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(instance->btn);
-    }
-    subghz_custom_btn_set_max(4);
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_princeton_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderPrinceton* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize_check_count_bit(
-            &instance->generic,
-            flipper_format,
-            subghz_protocol_princeton_const.min_count_bit_for_found);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            ret = SubGhzProtocolStatusErrorParserOthers;
-            break;
-        }
-        if(!flipper_format_read_uint32(flipper_format, "TE", (uint32_t*)&instance->te, 1)) {
-            FURI_LOG_E(TAG, "Missing TE");
-            ret = SubGhzProtocolStatusErrorParserTe;
-            break;
-        }
-
-        if(!flipper_format_read_uint32(
-               flipper_format, "Guard_time", (uint32_t*)&instance->guard_time, 1)) {
-            instance->guard_time = PRINCETON_GUARD_TIME_DEFALUT;
-        } else {
-
-            if((instance->guard_time < 15) || (instance->guard_time > 72)) {
-                instance->guard_time = PRINCETON_GUARD_TIME_DEFALUT;
-            }
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        subghz_protocol_princeton_check_remote_controller(&instance->generic);
-
-        if(!subghz_protocol_encoder_princeton_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-
-        if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        uint8_t key_data[sizeof(uint64_t)] = {0};
-        for(size_t i = 0; i < sizeof(uint64_t); i++) {
-            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
-        }
-        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "Unable to add Key");
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_princeton_stop(void* context) {
-    SubGhzProtocolEncoderPrinceton* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_princeton_yield(void* context) {
-    SubGhzProtocolEncoderPrinceton* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_princeton_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderPrinceton* instance = malloc(sizeof(SubGhzProtocolDecoderPrinceton));
-    instance->base.protocol = &subghz_protocol_princeton;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_princeton_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPrinceton* instance = context;
-    free(instance);
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderPrinceton), &subghz_protocol_princeton);
 }
 
 void subghz_protocol_decoder_princeton_reset(void* context) {
@@ -492,26 +171,15 @@ void subghz_protocol_decoder_princeton_feed(void* context, bool level, uint32_t 
     }
 }
 
-uint8_t subghz_protocol_decoder_princeton_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderPrinceton* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
 SubGhzProtocolStatus subghz_protocol_decoder_princeton_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
-    furi_assert(context);
+    // common_serialize_te writes the generic block + the TE field; we only add
+    // princeton's extra Guard_time on top (the "common helper + custom tail" pattern).
     SubGhzProtocolDecoderPrinceton* instance = context;
     SubGhzProtocolStatus ret =
-        subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-    if((ret == SubGhzProtocolStatusOk) &&
-       !flipper_format_write_uint32(flipper_format, "TE", &instance->te, 1)) {
-        FURI_LOG_E(TAG, "Unable to add TE");
-        ret = SubGhzProtocolStatusErrorParserTe;
-    }
+        subghz_protocol_decoder_common_serialize_te(context, flipper_format, preset);
     if((ret == SubGhzProtocolStatusOk) &&
        !flipper_format_write_uint32(flipper_format, "Guard_time", &instance->guard_time, 1)) {
         FURI_LOG_E(TAG, "Unable to add Guard_time");
@@ -562,49 +230,11 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_princeton_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderPrinceton* instance = context;
-    subghz_protocol_princeton_check_remote_controller(&instance->generic);
-    uint32_t data_rev = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit);
-
-    subghz_block_generic_global.btn_is_available = true;
-    subghz_block_generic_global.current_btn = instance->generic.btn;
-
-    if(instance->generic.btn == 0x30 || instance->generic.btn == 0xC0 ||
-       instance->generic.btn == 0xF3 || instance->generic.btn == 0xFC) {
-        subghz_block_generic_global.btn_length_bit = 8;
-        furi_string_cat_printf(
-            output,
-            "%s %dbit\r\n"
-            "Key:0x%08lX\r\n"
-            "Yek:0x%08lX\r\n"
-            "Sn:0x%05lX Btn:%02X (8b)\r\n"
-            "Te:%luus  GT:Te*%lu\r\n",
-            instance->generic.protocol_name,
-            instance->generic.data_count_bit,
-            (uint32_t)(instance->generic.data & 0xFFFFFF),
-            data_rev,
-            instance->generic.serial,
-            (instance->generic.btn == 0xF3 || instance->generic.btn == 0xFC) ?
-                instance->generic.btn & 0xF :
-                instance->generic.btn,
-            instance->te,
-            instance->guard_time);
-    } else {
-        subghz_block_generic_global.btn_length_bit = 4;
-        furi_string_cat_printf(
-            output,
-            "%s %dbit\r\n"
-            "Key:0x%08lX\r\n"
-            "Yek:0x%08lX\r\n"
-            "Sn:0x%05lX Btn:%01X (4b)\r\n"
-            "Te:%luus  GT:Te*%lu\r\n",
-            instance->generic.protocol_name,
-            instance->generic.data_count_bit,
-            (uint32_t)(instance->generic.data & 0xFFFFFF),
-            data_rev,
-            instance->generic.serial,
-            instance->generic.btn,
-            instance->te,
-            instance->guard_time);
-    }
+    const uint64_t extra[2] = {instance->te, instance->guard_time};
+    const SubGhzDecodeInput input = {
+        .generic = &instance->generic,
+        .extra = extra,
+        .extra_count = 2,
+    };
+    subghz_decode_plugin_get_string("Princeton", &input, output);
 }

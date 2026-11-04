@@ -22,6 +22,10 @@ typedef struct {
 
     uint32_t l0_start;
     uint32_t l0_end;
+
+    /* Optional: checked cheaply inside the hot i1 loop so a running sweep aborts within one
+     * inner iteration (~ms) instead of only at the far-apart progress callbacks. */
+    const volatile bool* cancel;
 } Hitag2HellConfig;
 
 typedef struct {

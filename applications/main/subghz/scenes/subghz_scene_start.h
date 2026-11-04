@@ -13,7 +13,8 @@ enum SubmenuIndex {
     SubmenuIndexRadioSetting,
     SubmenuIndexKeeloqKeys,
     SubmenuIndexKeeloqBf2,
-    SubmenuIndexGarageDoorRemote,
-    SubmenuIndexRFJammer,
+    SubmenuIndexRFJammer = 23,
     SubmenuIndexTpmsReader,
+    SubmenuIndexSubRATT,
+    SubmenuIndexReadDual,
 };

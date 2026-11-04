@@ -235,12 +235,17 @@ bool picopass_is_memset(const uint8_t* data, const uint8_t pattern, size_t size)
 }
 
 int32_t picopass_app(void* p) {
-    UNUSED(p);
+    const char* args = (const char*)p;
     picopass_migrate_from_old_folder();
 
     Picopass* picopass = picopass_alloc();
 
     scene_manager_next_scene(picopass->scene_manager, PicopassSceneStart);
+
+    // A dump handed over by another app (FFB / the saved list) opens straight to its menu.
+    if(args && strlen(args) && picopass_device_load(picopass->dev, args)) {
+        scene_manager_next_scene(picopass->scene_manager, PicopassSceneSavedMenu);
+    }
 
     view_dispatcher_run(picopass->view_dispatcher);
 

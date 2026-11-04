@@ -19,6 +19,16 @@ static bool namechanger_init() {
 
     }
 
+    if(storage_file_exists(storage, EXT_PATH("dolphin/name.settings")) &&
+       !storage_file_exists(storage, NAMECHANGER_PATH)) {
+        storage_simply_mkdir(storage, EXT_PATH("System"));
+        storage_common_rename(
+            storage, EXT_PATH("dolphin/name.settings"), NAMECHANGER_PATH);
+    }
+    storage_simply_remove(storage, EXT_PATH("dolphin/name.settings"));
+    storage_simply_remove(storage, EXT_PATH("dolphin"));
+    storage_simply_remove(storage, EXT_PATH("apps_data/fox_setup/name.pending"));
+
     FuriString* str = furi_string_alloc();
     FlipperFormat* file = flipper_format_file_alloc(storage);
 
@@ -80,13 +90,15 @@ int32_t namechanger_on_system_start(void* p) {
     }
 
     if(namechanger_init()) {
-        CliVcp* cli = furi_record_open(RECORD_CLI_VCP);
-        cli_vcp_disable(cli);
-        furi_delay_ms(2);
-        cli_vcp_enable(cli);
-        furi_record_close(RECORD_CLI_VCP);
+        /* cli_vcp already brought USB up with the FACTORY name (storage wasn't mounted
+         * yet), so the CDC serial is flip_<factory>. Rebuild it now with the custom name
+         * while the boot gate still holds the pullup down, so the host's FIRST enumeration
+         * is flip_<customname>. Without this, boot enumerates the factory-name serial (one
+         * COM) and the first USB reseat rebuilds it as the custom-name serial (a different
+         * COM) -- the COM drift seen only on renamed units. reinit respects the boot gate
+         * (USB stays down until desktop releases it), so nothing enumerates early. */
+        furi_hal_usb_reinit();
 
-        furi_delay_ms(3);
         Bt* bt = furi_record_open(RECORD_BT);
         if(!bt_profile_restore_default(bt)) {
 

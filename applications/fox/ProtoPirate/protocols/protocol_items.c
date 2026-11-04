@@ -62,6 +62,12 @@ static const ProtoPirateProtocolCatalogEntry protopirate_protocol_catalog[] = {
     {"Star Line", ProtoPirateProtocolCatalogRouteAMDefault, PROTOPIRATE_TX_KEY("star_line")},
     {"Subaru", ProtoPirateProtocolCatalogRouteAMDefault, PROTOPIRATE_TX_KEY("subaru")},
     {"VAG", ProtoPirateProtocolCatalogRouteAMVag, PROTOPIRATE_TX_KEY("vag")},
+    // --- FoxFW2.0 2026-10-18 zip-import batch (applab pp-framework autos/alarm, RX-only) ---
+    {"Alps FWB1U545", ProtoPirateProtocolCatalogRouteFMDefault, NULL},
+    {"Microchip 6SC2", ProtoPirateProtocolCatalogRouteAMDefault, NULL},
+    {"SantaFe 13-16", ProtoPirateProtocolCatalogRouteAMDefault, NULL},
+    {"Porsche Touareg", ProtoPirateProtocolCatalogRouteAMDefault, NULL},
+    {"Code Alarm", ProtoPirateProtocolCatalogRouteAMDefault, NULL},
 };
 
 static const ProtoPirateProtocolCatalogAlias protopirate_protocol_catalog_aliases[] = {

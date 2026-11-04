@@ -48,7 +48,7 @@ bool tagtinker_scene_barcode_input_on_event(void* ctx, SceneManagerEvent event) 
 
         widget_reset(app->widget);
         widget_add_string_element(app->widget, 64, 10, AlignCenter, AlignTop, FontPrimary, "Unsupported Tag");
-        widget_add_string_multiline_element(app->widget, 64, 30, AlignCenter, AlignTop, FontSecondary, "No profile detected\nfor this barcode.");
+        widget_add_string_multiline_element(app->widget, 64, 24, AlignCenter, AlignTop, FontSecondary, "No profile detected\nfor this barcode.");
         widget_add_button_element(app->widget, GuiButtonTypeLeft, "Back", unsupported_tag_back_cb, app);
         view_dispatcher_switch_to_view(app->view_dispatcher, TagTinkerViewWidget);
         return true;

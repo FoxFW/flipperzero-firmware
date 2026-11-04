@@ -15,6 +15,10 @@
 #include "../subaru.h"
 #include "../star_line.h"
 #include "../honda_v1.h"
+#include "../mic6sc2.h"
+#include "../santa_fe.h"
+#include "../porsche_touareg.h"
+#include "../code_alarm.h"
 #include <lib/flipper_application/flipper_application.h>
 
 static const SubGhzProtocol* const protopirate_protocol_registry_am_items[] = {
@@ -33,6 +37,10 @@ static const SubGhzProtocol* const protopirate_protocol_registry_am_items[] = {
     &renault_v1_protocol,
     &subaru_protocol,
     &subghz_protocol_star_line,
+    &subghz_protocol_mic6sc2,
+    &santa_fe_protocol,
+    &porsche_touareg_protocol,
+    &subghz_protocol_code_alarm,
 };
 
 static const SubGhzProtocolRegistry protopirate_protocol_registry_am = {

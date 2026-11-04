@@ -1,0 +1,552 @@
+/* enc_ditec_gol4.fal : SD encoder for ditec_gol4 (auto-split enc v1). FoxFW2.0 2026-10-21. */
+/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+#define subghz_protocol_ditec_gol4 enc_ditec_gol4__subghz_protocol_ditec_gol4
+#define subghz_protocol_encoder_common_free enc_ditec_gol4__subghz_protocol_encoder_common_free
+#define subghz_protocol_encoder_common_stop enc_ditec_gol4__subghz_protocol_encoder_common_stop
+#define subghz_protocol_encoder_common_yield enc_ditec_gol4__subghz_protocol_encoder_common_yield
+#define subghz_protocol_encoder_ditec_gol4_alloc enc_ditec_gol4__subghz_protocol_encoder_ditec_gol4_alloc
+#define subghz_protocol_encoder_ditec_gol4_deserialize enc_ditec_gol4__subghz_protocol_encoder_ditec_gol4_deserialize
+#include <lib/subghz/encode_plugin.h>
+#include <flipper_application/flipper_application.h>
+#include <string.h>
+#include <lib/subghz/protocols/ditec_gol4.h>
+#include <lib/subghz/blocks/const.h>
+#include <lib/subghz/blocks/decoder.h>
+#include <lib/subghz/blocks/encoder.h>
+#include <lib/subghz/blocks/generic.h>
+#include <lib/subghz/blocks/math.h>
+#include <lib/subghz/blocks/custom_btn_i.h>
+#include <string.h>
+#include <lib/subghz/protocols/common.h>
+
+#define TAG "SubGhzProtocolDitecGOL4"
+#define DITEC_GOL4_UPLOAD_SIZE 128
+#define GOL4_RAW_BYTES 7
+
+struct SubGhzProtocolEncoderDitecGOL4 {
+    SubGhzProtocolEncoderBase base;
+
+    SubGhzProtocolBlockEncoder encoder;
+    SubGhzBlockGeneric generic;
+};
+
+static const SubGhzBlockConst subghz_protocol_ditec_gol4_const = {
+    .te_short = 400,
+    .te_long = 1100,
+    .te_delta = 200,
+    .min_count_bit_for_found = 54,
+};
+
+/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
+extern bool ditec_gol4_raw_replay__bridge_ty;
+typedef struct {
+    void* ditec_gol4_raw_replay;
+} enc_ditec_gol4_host_t;
+static const void* enc_ditec_gol4_host_raw;
+#define ENC_DITEC_GOL4_HOST ((const enc_ditec_gol4_host_t*)enc_ditec_gol4_host_raw)
+#define ditec_gol4_raw_replay (*(__typeof__(ditec_gol4_raw_replay__bridge_ty)*)(ENC_DITEC_GOL4_HOST->ditec_gol4_raw_replay))
+
+static uint8_t gol4_bit_reverse(uint8_t b);
+static uint8_t gol4_bit_parity(uint8_t b);
+static uint8_t gol4_lcg_step(uint8_t seed, uint8_t steps);
+static uint8_t gol4_lcg_inverse(uint8_t target, uint8_t steps);
+static void gol4_decode_rotate_and_bitrev(uint8_t* raw);
+static bool gol4_decode_lcg_xor(uint8_t* raw);
+static bool gol4_rolling_decode(uint8_t* raw);
+static bool gol4_encode_lcg_xor(uint8_t* raw);
+static void gol4_encode_bitrev_and_rotate(uint8_t* raw);
+static bool gol4_rolling_encode(uint8_t* raw);
+static void bits_to_raw(const uint8_t* bits, uint8_t* raw);
+static void raw_to_bits(const uint8_t* raw, uint8_t* bits);
+static uint64_t bits_to_data(const uint8_t* bits);
+static uint32_t serial_to_display(const uint8_t* s);
+static void
+    subghz_protocol_encoder_ditec_gol4_get_upload(SubGhzProtocolEncoderDitecGOL4* instance);
+static void subghz_protocol_ditec_gol4_decode_key(SubGhzBlockGeneric* instance);
+static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance);
+static uint8_t subghz_protocol_ditec_gol4_get_btn_code(void);
+
+static uint8_t gol4_bit_reverse(uint8_t b) {
+    b &= 0xFF;
+    uint8_t result = 0;
+    for(uint8_t i = 0; i < 8; i++) {
+        result = (uint8_t)((result << 1) | (b & 1));
+        b >>= 1;
+    }
+    return result;
+}
+
+static uint8_t gol4_bit_parity(uint8_t b) {
+    uint8_t p = 0;
+    for(uint8_t i = 0; i < 8; i++) {
+        if((b >> i) & 1u) p ^= 1u;
+    }
+    return p;
+}
+
+static uint8_t gol4_lcg_step(uint8_t seed, uint8_t steps) {
+    uint8_t x = seed & 0xFF;
+    steps &= 0xFF;
+    for(uint8_t i = 0; i < steps; i++) {
+        x = (uint8_t)((21 * x + 1) & 0xFF);
+    }
+    return x;
+}
+
+static uint8_t gol4_lcg_inverse(uint8_t target, uint8_t steps) {
+    steps &= 0xFF;
+    if(steps == 0) return target & 0xFF;
+    return gol4_lcg_step(target, (uint8_t)(256 - steps));
+}
+
+static void gol4_decode_rotate_and_bitrev(uint8_t* raw) {
+    uint8_t carry = 0;
+    for(uint8_t r = 0; r < 3; r++) {
+        for(uint8_t i = 2; i < 7; i++) {
+            uint8_t new_carry = raw[i] & 1;
+            raw[i] = (uint8_t)(((raw[i] >> 1) | (carry << 7)) & 0xFF);
+            carry = new_carry;
+        }
+    }
+
+    raw[0] = gol4_bit_reverse(raw[0]);
+    raw[1] = gol4_bit_reverse(raw[1]);
+    raw[3] = gol4_bit_reverse(raw[3]);
+    raw[4] = gol4_bit_reverse(raw[4]);
+
+    uint8_t b2 = raw[2] & 0xDF;
+    b2 = (uint8_t)(((b2 << 4) | (b2 >> 4)) & 0xFF);
+    b2 = (uint8_t)((~b2) & 0xFF);
+    raw[2] = gol4_bit_reverse(b2);
+
+    raw[5] = gol4_bit_reverse(raw[5]);
+    raw[6] = gol4_bit_reverse(raw[6]);
+}
+
+static bool gol4_decode_lcg_xor(uint8_t* raw) {
+    if(raw[6] & 0x80) raw[5] ^= 1;
+
+    uint8_t out5 = gol4_lcg_inverse(raw[5], 0xFE);
+    raw[5] = out5;
+
+    uint8_t out6 = gol4_lcg_inverse(raw[6], raw[5]);
+    raw[6] = out6;
+
+    raw[5] ^= 0xA7;
+    raw[6] ^= 0x69;
+    return true;
+}
+
+static bool gol4_rolling_decode(uint8_t* raw) {
+    gol4_decode_rotate_and_bitrev(raw);
+    return gol4_decode_lcg_xor(raw);
+}
+
+static bool gol4_encode_lcg_xor(uint8_t* raw) {
+    uint8_t dec5 = (uint8_t)(raw[5] ^ 0xA7);
+    uint8_t dec6 = (uint8_t)(raw[6] ^ 0x69);
+
+    uint8_t enc6 = gol4_lcg_step(dec6, dec5);
+    uint8_t enc5 = gol4_lcg_step(dec5, 0xFE);
+
+    if(enc6 & 0x80) enc5 ^= 1;
+
+    raw[5] = enc5;
+    raw[6] = enc6;
+    return true;
+}
+
+static void gol4_encode_bitrev_and_rotate(uint8_t* raw) {
+    raw[0] = gol4_bit_reverse(raw[0]);
+    raw[1] = gol4_bit_reverse(raw[1]);
+    raw[3] = gol4_bit_reverse(raw[3]);
+    raw[4] = gol4_bit_reverse(raw[4]);
+
+    if(raw[2] == 0x0) {
+        raw[2] = 0xF0;
+    }
+    uint8_t b2 = gol4_bit_reverse(raw[2]);
+    b2 = (uint8_t)(~b2);
+    b2 = (uint8_t)(((b2 << 4) | (b2 >> 4)) & 0xFF);
+    b2 &= 0xDF;
+    raw[2] = b2;
+
+    raw[5] = gol4_bit_reverse(raw[5]);
+    raw[6] = gol4_bit_reverse(raw[6]);
+
+    uint8_t p5 = gol4_bit_parity(raw[5]);
+    uint8_t p6 = gol4_bit_parity(raw[6]);
+
+    uint8_t carry = 0;
+    for(uint8_t r = 0; r < 3; r++) {
+        for(int8_t i = 6; i >= 2; i--) {
+            uint8_t new_carry = (uint8_t)((raw[i] >> 7) & 1);
+            raw[i] = (uint8_t)(((raw[i] << 1) | carry) & 0xFF);
+            carry = new_carry;
+        }
+    }
+
+    raw[6] = (p5 == p6) ? (uint8_t)(raw[6] & 0xFBu) : (uint8_t)(raw[6] | 0x04u);
+}
+
+static bool gol4_rolling_encode(uint8_t* raw) {
+    if(!raw) return false;
+    if(!gol4_encode_lcg_xor(raw)) return false;
+    gol4_encode_bitrev_and_rotate(raw);
+    return true;
+}
+
+static void bits_to_raw(const uint8_t* bits, uint8_t* raw) {
+    memset(raw, 0, GOL4_RAW_BYTES);
+    for(uint8_t i = 0; i < subghz_protocol_ditec_gol4_const.min_count_bit_for_found; i++) {
+        uint8_t byte_idx = i / 8;
+        uint8_t bit_idx = 7 - (i % 8);
+        if(bits[i]) raw[byte_idx] |= (1 << bit_idx);
+    }
+}
+
+static void raw_to_bits(const uint8_t* raw, uint8_t* bits) {
+    for(uint8_t i = 0; i < subghz_protocol_ditec_gol4_const.min_count_bit_for_found; i++) {
+        uint8_t byte_idx = i / 8;
+        uint8_t bit_idx = 7 - (i % 8);
+        bits[i] = (uint8_t)((raw[byte_idx] >> bit_idx) & 1);
+    }
+}
+
+static uint64_t bits_to_data(const uint8_t* bits) {
+    uint64_t data = 0;
+    for(uint8_t i = 0; i < subghz_protocol_ditec_gol4_const.min_count_bit_for_found; i++) {
+        data = (data << 1) | (uint64_t)(bits[i] & 1);
+    }
+    return data;
+}
+
+static uint32_t serial_to_display(const uint8_t* s) {
+    if(!s) return 0;
+    return (uint32_t)((s[0] << 24) | (s[4] << 16) | (s[1] << 8) | s[3]);
+}
+
+static void
+    subghz_protocol_encoder_ditec_gol4_get_upload(SubGhzProtocolEncoderDitecGOL4* instance) {
+    furi_assert(instance);
+    size_t index = 0;
+
+    instance->encoder.upload[index++] =
+        level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_long * 22);
+
+    instance->encoder.upload[index++] =
+        level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_short * 2);
+
+    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
+        if(bit_read(instance->generic.data, i - 1)) {
+
+            instance->encoder.upload[index++] =
+                level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_short);
+            instance->encoder.upload[index++] =
+                level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_long);
+        } else {
+
+            instance->encoder.upload[index++] =
+                level_duration_make(false, (uint32_t)subghz_protocol_ditec_gol4_const.te_long);
+            instance->encoder.upload[index++] =
+                level_duration_make(true, (uint32_t)subghz_protocol_ditec_gol4_const.te_short);
+        }
+    }
+
+    instance->encoder.size_upload = index;
+}
+
+static void subghz_protocol_ditec_gol4_decode_key(SubGhzBlockGeneric* instance) {
+    uint8_t bits[subghz_protocol_ditec_gol4_const.min_count_bit_for_found];
+    uint64_t data = instance->data;
+    for(int i = subghz_protocol_ditec_gol4_const.min_count_bit_for_found - 1; i >= 0; i--) {
+        bits[i] = (uint8_t)(data & 1);
+        data >>= 1;
+    }
+    uint8_t decrypted[GOL4_RAW_BYTES];
+    bits_to_raw(bits, decrypted);
+
+    if(gol4_rolling_decode(decrypted)) {
+        uint8_t temp_serial[5];
+        memcpy(temp_serial, decrypted, 5);
+        instance->serial = serial_to_display(temp_serial);
+        instance->btn = decrypted[2] & 0x0F;
+        instance->cnt = (uint16_t)((decrypted[5] | (decrypted[6] << 8)) & 0xFFFF);
+
+        if(subghz_custom_btn_get_original() == 0) {
+            subghz_custom_btn_set_original(instance->btn);
+        }
+        subghz_custom_btn_set_max(4);
+    }
+}
+
+static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance) {
+    uint8_t decrypted[GOL4_RAW_BYTES];
+
+    if(subghz_custom_btn_get_original() == 0) {
+        subghz_custom_btn_set_original(instance->btn);
+    }
+
+    instance->btn = subghz_protocol_ditec_gol4_get_btn_code();
+
+    if(subghz_block_generic_global_button_override_get(&instance->btn)) {
+        FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", instance->btn);
+    }
+
+    if(ditec_gol4_raw_replay) {
+        /* #16: freeze counter on TxRaw verbatim replay */
+    } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
+
+        if(!subghz_block_generic_global_counter_override_get(&instance->cnt)) {
+
+            if((instance->cnt + furi_hal_subghz_get_rolling_counter_mult()) > 0xFFFF) {
+                instance->cnt = 0;
+            } else {
+                instance->cnt += furi_hal_subghz_get_rolling_counter_mult();
+            }
+        }
+    } else {
+        if((instance->cnt + 0x1) > 0xFFFF) {
+            instance->cnt = 0;
+        } else if(instance->cnt >= 0x1 && instance->cnt != 0xFFFE) {
+            instance->cnt = 0xFFFE;
+        } else {
+            instance->cnt++;
+        }
+    }
+
+    decrypted[0] = (uint8_t)((instance->serial >> 24) & 0xFF);
+    decrypted[4] = (uint8_t)((instance->serial >> 16) & 0xFF);
+    decrypted[1] = (uint8_t)((instance->serial >> 8) & 0xFF);
+    decrypted[3] = (uint8_t)(instance->serial & 0xFF);
+    decrypted[2] = (uint8_t)(instance->btn & 0x0F);
+
+    uint16_t counter = (uint16_t)(instance->cnt & 0xFFFF);
+    decrypted[5] = (uint8_t)(counter & 0xFF);
+    decrypted[6] = (uint8_t)((counter >> 8) & 0xFF);
+
+    gol4_rolling_encode(decrypted);
+
+    uint8_t bits[subghz_protocol_ditec_gol4_const.min_count_bit_for_found];
+    raw_to_bits(decrypted, bits);
+    instance->data = bits_to_data(bits);
+}
+
+static uint8_t subghz_protocol_ditec_gol4_get_btn_code(void) {
+    uint8_t custom_btn_id = subghz_custom_btn_get();
+    uint8_t original_btn_code = subghz_custom_btn_get_original();
+    uint8_t btn = original_btn_code;
+
+    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
+
+        btn = original_btn_code;
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
+        switch(original_btn_code) {
+        case 0x1:
+            btn = 0x2;
+            break;
+        case 0x2:
+            btn = 0x1;
+            break;
+        case 0x4:
+            btn = 0x1;
+            break;
+        case 0x8:
+            btn = 0x1;
+            break;
+        case 0x0:
+            btn = 0x1;
+            break;
+
+        default:
+            break;
+        }
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
+        switch(original_btn_code) {
+        case 0x1:
+            btn = 0x4;
+            break;
+        case 0x2:
+            btn = 0x4;
+            break;
+        case 0x4:
+            btn = 0x2;
+            break;
+        case 0x8:
+            btn = 0x4;
+            break;
+        case 0x0:
+            btn = 0x4;
+            break;
+
+        default:
+            break;
+        }
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
+        switch(original_btn_code) {
+        case 0x1:
+            btn = 0x8;
+            break;
+        case 0x2:
+            btn = 0x8;
+            break;
+        case 0x4:
+            btn = 0x8;
+            break;
+        case 0x8:
+            btn = 0x2;
+            break;
+        case 0x0:
+            btn = 0x2;
+            break;
+
+        default:
+            break;
+        }
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_RIGHT) {
+        switch(original_btn_code) {
+        case 0x1:
+            btn = 0x0;
+            break;
+        case 0x2:
+            btn = 0x0;
+            break;
+        case 0x4:
+            btn = 0x0;
+            break;
+        case 0x8:
+            btn = 0x0;
+            break;
+        case 0x0:
+            btn = 0x8;
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    return btn;
+}
+
+/* vendored from lib/subghz/protocols/common.c (not exported) */
+void subghz_protocol_encoder_common_free(void* context) {
+    furi_assert(context);
+    SubGhzProtocolEncoderCommon* instance = context;
+    free(instance->encoder.upload);
+    free(instance);
+}
+
+/* vendored from lib/subghz/protocols/common.c (not exported) */
+void subghz_protocol_encoder_common_stop(void* context) {
+    SubGhzProtocolEncoderCommon* instance = context;
+    instance->encoder.is_running = false;
+}
+
+/* vendored from lib/subghz/protocols/common.c (not exported) */
+LevelDuration subghz_protocol_encoder_common_yield(void* context) {
+    SubGhzProtocolEncoderCommon* instance = context;
+
+    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
+        instance->encoder.is_running = false;
+        return level_duration_reset();
+    }
+
+    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
+
+    if(++instance->encoder.front == instance->encoder.size_upload) {
+        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
+        instance->encoder.front = 0;
+    }
+
+    return ret;
+}
+
+void* subghz_protocol_encoder_ditec_gol4_alloc(SubGhzEnvironment* environment) {
+    UNUSED(environment);
+    SubGhzProtocolEncoderDitecGOL4* instance = malloc(sizeof(SubGhzProtocolEncoderDitecGOL4));
+
+    instance->base.protocol = &subghz_protocol_ditec_gol4;
+    instance->generic.protocol_name = instance->base.protocol->name;
+
+    instance->encoder.repeat = 4;
+    instance->encoder.size_upload = DITEC_GOL4_UPLOAD_SIZE;
+    instance->encoder.upload = malloc(DITEC_GOL4_UPLOAD_SIZE * sizeof(LevelDuration));
+    instance->encoder.front = 0;
+    instance->encoder.is_running = false;
+    return instance;
+}
+
+SubGhzProtocolStatus
+    subghz_protocol_encoder_ditec_gol4_deserialize(void* context, FlipperFormat* flipper_format) {
+    furi_assert(context);
+    SubGhzProtocolEncoderDitecGOL4* instance = context;
+    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
+    do {
+        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+        ditec_gol4_raw_replay = false;
+        {
+            uint32_t ditec_gol4_txraw = 0;
+            flipper_format_rewind(flipper_format);
+            if(flipper_format_read_uint32(flipper_format, "TxRaw", &ditec_gol4_txraw, 1) &&
+               ditec_gol4_txraw != 0) {
+                ditec_gol4_raw_replay = true;
+            }
+            flipper_format_rewind(flipper_format);
+        }
+        ret = subghz_block_generic_deserialize_check_count_bit(
+            &instance->generic,
+            flipper_format,
+            subghz_protocol_ditec_gol4_const.min_count_bit_for_found);
+        if(ret != SubGhzProtocolStatusOk) {
+            break;
+        }
+
+        flipper_format_read_uint32(
+            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
+
+        subghz_protocol_ditec_gol4_decode_key(&instance->generic);
+        subghz_protocol_ditec_gol4_encode_key(&instance->generic);
+        subghz_protocol_encoder_ditec_gol4_get_upload(instance);
+
+        if(!flipper_format_rewind(flipper_format)) {
+            FURI_LOG_E(TAG, "Rewind error");
+            break;
+        }
+        uint8_t key_data[sizeof(uint64_t)] = {0};
+        for(size_t i = 0; i < sizeof(uint64_t); i++) {
+            key_data[sizeof(uint64_t) - i - 1] = (instance->generic.data >> i * 8) & 0xFF;
+        }
+        if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
+            FURI_LOG_E(TAG, "Unable to update Key");
+            break;
+        }
+
+        instance->encoder.front = 0;
+        instance->encoder.is_running = true;
+    } while(false);
+
+    return ret;
+}
+
+static const SubGhzProtocolEncoder enc_ditec_gol4_vt = {
+    .alloc = subghz_protocol_encoder_ditec_gol4_alloc,
+    .free = subghz_protocol_encoder_common_free,
+    .deserialize = subghz_protocol_encoder_ditec_gol4_deserialize,
+    .stop = subghz_protocol_encoder_common_stop,
+    .yield = subghz_protocol_encoder_common_yield,
+};
+
+/* Plugin-local protocol object: encoder alloc points base.protocol here. */
+const SubGhzProtocol subghz_protocol_ditec_gol4 = {
+    .name = SUBGHZ_PROTOCOL_DITEC_GOL4_NAME,
+    .type = SubGhzProtocolTypeDynamic,
+    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
+    .decoder = NULL,
+    .encoder = &enc_ditec_gol4_vt,
+};
+
+static const SubGhzEncodePluginEntry enc_ditec_gol4_entry = {.name = SUBGHZ_PROTOCOL_DITEC_GOL4_NAME, .encoder = &enc_ditec_gol4_vt, .host_slot = &enc_ditec_gol4_host_raw};
+static const FlipperAppPluginDescriptor enc_ditec_gol4_descriptor = {.appid = SUBGHZ_ENCODE_PLUGIN_APP_ID, .ep_api_version = SUBGHZ_ENCODE_PLUGIN_API_VERSION, .entry_point = &enc_ditec_gol4_entry};
+const FlipperAppPluginDescriptor* enc_ditec_gol4_ep(void) { return &enc_ditec_gol4_descriptor; }

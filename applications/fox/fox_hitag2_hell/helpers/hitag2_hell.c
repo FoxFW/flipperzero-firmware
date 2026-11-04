@@ -267,7 +267,7 @@ bool hitag2_hell_recover(
     }
     const uint32_t l0_total = l0_end - l0_start;
 
-    const uint32_t progress_step = 128U;
+    const uint32_t progress_step = 32U;
     uint32_t next_progress = l0_start + progress_step;
     uint32_t t_start = 0;
     if(config && config->timeout_ms > 0 && config->now_ms_cb) {
@@ -301,6 +301,10 @@ bool hitag2_hell_recover(
         }
 
         for(uint32_t i1 = 0; i1 < (1U << 9); i1++) {
+            if(config && config->cancel && *config->cancel) {
+                result->cancelled = true;
+                break;
+            }
             for(uint8_t k = 0; k < 9U; k++) {
                 uint8_t bit_pos = k_layer1_bits[k_layer1_scalar_sel[k]];
                 state[bit_pos] = bs_from_bit((uint8_t)((i1 >> k) & 1U));
@@ -315,6 +319,8 @@ bool hitag2_hell_recover(
         }
 
         ctx.states_tested += (1U << 9);
+
+        if(result->cancelled) break;
 
         if(i0 >= next_progress) {
             next_progress += progress_step;

@@ -499,6 +499,32 @@ void fox_settings_update_desktop_settings(uint32_t auto_lock_ms, uint8_t usb_inh
     furi_record_close(RECORD_STORAGE);
 }
 
+uint8_t fox_settings_get_notification_text(void) {
+    Storage* storage = (Storage*)furi_record_open(RECORD_STORAGE);
+    FoxSettingsData s;
+    uint8_t mode = FOX_NOTIFY_TEXT_ALL;
+    if(fox_settings_read_from(storage, FOX_SETTINGS_EXT_PATH, &s) ||
+       fox_settings_read_from(storage, FOX_SETTINGS_INT_PATH, &s)) {
+        mode = s.reserved[0];
+    }
+    furi_record_close(RECORD_STORAGE);
+    if(mode > FOX_NOTIFY_TEXT_NONE) mode = FOX_NOTIFY_TEXT_ALL; /* garbage -> default */
+    return mode;
+}
+
+void fox_settings_set_notification_text(uint8_t mode) {
+    Storage* storage = (Storage*)furi_record_open(RECORD_STORAGE);
+    FoxSettingsData s;
+    if(!fox_settings_read_from(storage, FOX_SETTINGS_EXT_PATH, &s) &&
+       !fox_settings_read_from(storage, FOX_SETTINGS_INT_PATH, &s)) {
+        fox_settings_build_current(&s);
+    }
+    s.reserved[0] = (mode > FOX_NOTIFY_TEXT_NONE) ? FOX_NOTIFY_TEXT_ALL : mode;
+    fox_settings_write_to(storage, FOX_SETTINGS_EXT_PATH, &s);
+    fox_settings_write_to(storage, FOX_SETTINGS_INT_PATH, &s);
+    furi_record_close(RECORD_STORAGE);
+}
+
 #ifdef __cplusplus
 }
 #endif

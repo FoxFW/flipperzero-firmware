@@ -17,6 +17,27 @@
 
 #include <furi.h>
 #include <furi_hal.h>
+/* --- Debug logging compiled out (unused; set to 1 to re-enable) --- */
+#define PANDORA_DEBUG_LOG 0
+#if !PANDORA_DEBUG_LOG
+#undef FURI_LOG_E
+#undef FURI_LOG_W
+#undef FURI_LOG_I
+#undef FURI_LOG_D
+#undef FURI_LOG_T
+/* Strip the log statements but still reference their args in a dead if(0)
+ * branch: avoids -Werror=unused-* on log-only locals, keeps format strings
+ * type-checked, and the branch is optimized away (no code, no overhead). */
+static inline void pandora_log_sink(const char* tag, const char* fmt, ...) {
+    (void)tag;
+    (void)fmt;
+}
+#define FURI_LOG_E(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_W(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_I(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_D(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#define FURI_LOG_T(...) do { if(0) pandora_log_sink(__VA_ARGS__); } while(0)
+#endif
 #include <furi_hal_subghz.h>
 #include <gui/gui.h>
 #include <gui/view_dispatcher.h>
@@ -39,8 +60,23 @@
 
 /* Keyfob OLED: 92 columns x 16 pages = 1472 bytes (panel 92x64 2bpp) */
 #define OLED_COLS 92
+#define OLED_VISIBLE_COLS 88 /* physical D-605 glass width (cols 88..91 off-glass) */
 #define OLED_PAGES 16
 #define OLED_FB_SIZE (OLED_COLS * OLED_PAGES)
+/* OLED SPI capture (Leeroy's working approach): the OLED + Si4432 SHARE USART0,
+ * selected by the Si4432 chip-select PE9 (port4 bit9, active-HIGH): CS HIGH =
+ * radio, CS LOW = OLED. The OLED's DC pin A9 (port0 bit9) is HIGH=command,
+ * LOW=pixel-data. The firmware streams a 92x16 2bpp framebuffer and ends each
+ * flush with 0xAF (display ON) -> commit. */
+#define SI_CS_PORT 4u
+#define SI_CS_PIN  9u
+#define OLED_DC_PORT 0u
+#define OLED_DC_PIN  9u
+/* Blank-screen watchdog: a locked keyfob draws nothing. Never leave a bare
+ * black screen up; after STATUS_GRACE_MS with no real content, show a status
+ * screen that explains the state (locked / knock-code / still drawing). */
+#define STATUS_GRACE_MS 3500u
+#define STATUS_CONTENT_BYTES 6
 
 /* Memory map of the emulated EFM32 (NOT the Flipper; PA_ prefix to avoid
  * clashing with the PA_FLASH_BASE/PA_FLASH_SIZE from the Flipper's own STM32WB CMSIS). */
@@ -48,6 +84,12 @@
 #define PA_FLASH_SIZE 0x00042000u /* 264 KB (covers pandora 0x3FFFF + margin) */
 #define PA_RAM_BASE 0x20000000u
 #define PA_RAM_SIZE 0x00008000u /* 32 KB */
+/* Flash demand-paging: instead of malloc'ing the whole ~78-85KB code image,
+ * keep a small page cache and fault-load 1KB pages from the backing .bin on
+ * SD. Saves ~55KB of heap so the ARM firmwares fit. (page size power-of-two) */
+#define PA_PAGE  1024u
+#define PA_PAGES 24u   /* 24KB cache instead of the full flash */
+#define PA_FLASH_TEMP_PATH "/ext/pandora_arm_flash.tmp" /* .hex -> flat temp */
 
 #define ALLOC_MARGIN 1024u
 #define FRAME_US 30000u /* ~33 Hz UI refresh */
@@ -97,9 +139,6 @@ typedef struct {
     uint8_t back_port, back_pin;
     uint8_t b5_port, b5_pin;
     uint8_t b6_port, b6_pin;
-    /* knock-code: up to 8 steps, terminated with 0xFF */
-    uint8_t knock[8];
-    uint8_t knock_len;
     uint8_t gate; /* button of the 2nd gate (BTN_* index) */
     uint32_t scan_head; /* head of the knock scanner */
     uint32_t spin_heads[8]; /* heads wait-release */
@@ -136,8 +175,6 @@ static const ArmProfile PROFILE_PANDORA = {
     .back_port = 2, .back_pin = 7,
     .b5_port = 0, .b5_pin = 1,
     .b6_port = 0, .b6_pin = 6,
-    .knock = {B_UP, B_OK, B_OK, B_UP, B_UP, B_DOWN, 0xFF, 0xFF},
-    .knock_len = 6,
     .gate = B5,
     .scan_head = 0xFDFAu,
     .spin_heads = {0xFE5E, 0xFE82, 0xFE9A, 0xFEB2, 0xFECC, 0xFEF4, 0xFF12, 0},
@@ -168,8 +205,6 @@ static const ArmProfile PROFILE_PANDORAMAX = {
     .back_port = 0, .back_pin = 15,
     .b5_port = 0, .b5_pin = 1,
     .b6_port = 0, .b6_pin = 6,
-    .knock = {B_UP, B_OK, B_DOWN, B_OK, B_UP, B_DOWN, 0xFF, 0xFF},
-    .knock_len = 6,
     .gate = B5,
     .scan_head = 0x112E4u,
     .spin_heads = {0x1135A, 0x11382, 0x1139A, 0x113B2, 0x113CA, 0x113E2, 0x1144C, 0x11464},
@@ -261,12 +296,15 @@ enum {
 
 /* Maps a tracked Flipper key (FK_*) to the keyfob logical button (B_*). */
 static const uint8_t FK_TO_BTN[FK_COUNT] = {
-    [FK_UP] = B_UP,
-    [FK_OK] = B_OK,
-    [FK_DOWN] = B_DOWN,
-    [FK_LEFT] = B_BACK,
-    [FK_RIGHT] = B5,
-    [FK_BACK] = B6,
+    /* Match Leeroy's working layout (Flipper D-pad -> keyfob button number):
+     * UP->6, OK->5, DOWN->4(BACK pin), LEFT->2(OK pin), RIGHT->1(UP pin),
+     * BACK->3(DOWN pin). This is what the firmware's menus expect. */
+    [FK_UP] = B6,
+    [FK_OK] = B5,
+    [FK_DOWN] = B_BACK,
+    [FK_LEFT] = B_OK,
+    [FK_RIGHT] = B_UP,
+    [FK_BACK] = B_DOWN,
 };
 
 /* Maps a tracked Flipper key (FK_*) to its KBIT_* mask bit. */
@@ -314,7 +352,16 @@ typedef struct {
 typedef struct {
     ThumbCore* cpu;
     const ArmProfile* prof;
-    uint8_t* flash; /* FLASH buffer (safe_malloc) */
+    uint8_t* flash; /* legacy full-image buffer (unused with paging; kept NULL) */
+    /* --- flash demand-paging (replaces the full flash buffer) --- */
+    File* flash_file;       /* backing file (.bin, or converted temp), kept open */
+    uint32_t flash_bk_size; /* backing size; reads past it return 0xFF */
+    bool flash_temp;        /* flash_file is a temp we created (delete on exit) */
+    uint8_t* page_cache;    /* PA_PAGES * PA_PAGE */
+    uint32_t page_tag[PA_PAGES];
+    uint32_t cur_page;
+    const uint8_t* cur_ptr;
+    uint32_t pg_hits, pg_misses;
     uint8_t* ram; /* RAM buffer 32KB */
 
     Si4432 si;
@@ -329,7 +376,20 @@ typedef struct {
     uint16_t gpio_din[16]; /* din per port (bit=1 released) */
     uint16_t gpio_dout[16];
 
+    /* --- OLED SPI capture (double-buffered) - ported from Leeroy's working
+     * build. render_oled reads oled_fb (the stable VISIBLE buffer); oled_work is
+     * filled byte-by-byte off the SPI bus and committed to oled_fb on 0xAF. --- */
+    uint8_t oled_fb[OLED_FB_SIZE];   /* VISIBLE buffer (what render_oled reads) */
+    uint8_t oled_work[OLED_FB_SIZE]; /* WORK buffer (written during a flush) */
+    uint8_t oled_page;               /* current page pointer (set-page command) */
+    uint8_t oled_col;                /* current column pointer (auto-increments) */
+    uint8_t oled_work_dirty;         /* 1 if data was written this pass */
+    uint32_t oled_frames;            /* commits performed (diagnostic) */
+
     uint16_t timer_cnt[4];
+    uint64_t timer_t0[4];  /* emu_insn at the last CNT reset (write) */
+    uint32_t timer_top[4]; /* TOP configured by the firmware (wrap) */
+    uint32_t timer_rate[4];/* CNT advance per instruction (HFPERCLK proxy) */
 
     /* minimal NVIC */
     uint8_t in_irq;
@@ -401,6 +461,9 @@ typedef struct {
     volatile bool exit_requested;
     volatile bool menu_requested;
     bool menu_active;
+    bool content_seen; /* the keyfob display has shown real content at least once */
+    bool status_active; /* status screen is up -> framebuffer blit is skipped */
+    uint32_t launch_tick; /* tick at emulator launch, for the blank watchdog */
 
     uint64_t ninsn;
     uint32_t pc;
@@ -414,6 +477,7 @@ typedef struct {
     ViewDispatcher* view_dispatcher;
     Submenu* submenu;
     Widget* about_widget; /* About screen (scrollable text) */
+    Storage* storage; /* for reading <name>_KNOCK.txt on selection */
     FuriString* fw_path; /* chosen firmware path */
     char fw_name[32]; /* short name for the label */
 } AppState;
@@ -462,6 +526,56 @@ static void init_buttons_released(AppState* app) {
 
 /* ------------------------------------------------------------ MMIO (callbacks) */
 
+/* ---- flash demand-paging: fault-load pages from the backing .bin on SD ---- */
+static const uint8_t* pa_page_ptr(AppState* app, uint32_t page) {
+    if(page == app->cur_page && app->cur_ptr) return app->cur_ptr;
+    uint32_t slot = page % PA_PAGES;
+    uint8_t* ptr = app->page_cache + slot * PA_PAGE;
+    if(app->page_tag[slot] != page) {
+        app->pg_misses++;
+        memset(ptr, 0xFF, PA_PAGE);
+        uint32_t off = page * PA_PAGE;
+        if(off < app->flash_bk_size) {
+            uint32_t n = PA_PAGE;
+            if(off + n > app->flash_bk_size) n = app->flash_bk_size - off;
+            storage_file_seek(app->flash_file, off, true);
+            storage_file_read(app->flash_file, ptr, n);
+        }
+        app->page_tag[slot] = page;
+    } else {
+        app->pg_hits++;
+    }
+    app->cur_page = page;
+    app->cur_ptr = ptr;
+    return ptr;
+}
+static uint32_t pa_flash_read(AppState* app, uint32_t addr, int size) {
+    uint32_t off = addr & (PA_PAGE - 1u);
+    uint32_t v = 0;
+    if(off + (uint32_t)size <= PA_PAGE) {
+        const uint8_t* pg = pa_page_ptr(app, addr / PA_PAGE);
+        for(int i = 0; i < size; i++) v |= (uint32_t)pg[off + i] << (8 * i);
+    } else {
+        for(int i = 0; i < size; i++) {
+            uint32_t a = addr + (uint32_t)i;
+            const uint8_t* pg = pa_page_ptr(app, a / PA_PAGE);
+            v |= (uint32_t)pg[a & (PA_PAGE - 1u)] << (8 * i);
+        }
+    }
+    return v;
+}
+
+/* ThumbCore counts each completed instruction. Treat the instruction
+ * currently executing as +1 so MMIO callbacks see a consistent virtual
+ * timestamp whether the per-instruction hook is enabled or bypassed.
+ * (Matches Leeroy/darkside: the post-unlock fast path drops the hook, so
+ * any timing that read the hook-incremented ninsn would freeze -- reading
+ * cpu->cycles keeps the emulated timers advancing.) */
+static uint64_t emu_insn_now(const AppState* app) {
+    if(!app->cpu) return app->ninsn;
+    return app->cpu->cycles + 1u;
+}
+
 static uint32_t mmio_read(void* ctx, uint32_t addr, int size) {
     AppState* app = (AppState*)ctx;
     uint32_t base = addr & 0xFFFFF000u;
@@ -470,7 +584,10 @@ static uint32_t mmio_read(void* ctx, uint32_t addr, int size) {
     /* Unallocated flash (above flash_used and below 0x42000): the real firmware
      * would see 0xFF there. We only allocate the used code to save heap; we
      * return 0xFF so that reads of that region are faithful (not 0). */
-    if(addr < 0x42000u && addr >= app->prof->flash_used) {
+    if(addr < app->prof->flash_used) {
+        return pa_flash_read(app, addr, size); /* demand-paged flash */
+    }
+    if(addr < 0x42000u) { /* unallocated flash above flash_used -> 0xFF */
         return (size == 1) ? 0xFFu : (size == 2) ? 0xFFFFu : 0xFFFFFFFFu;
     }
     if(base == 0x4000C000u) { /* USART0 (SPI Si4432) */
@@ -493,7 +610,11 @@ static uint32_t mmio_read(void* ctx, uint32_t addr, int size) {
             v = (1u << 16); /* SINGLEDV ready */
         else if(off == 0x24)
             v = 0x0C00; /* data ~3.9V */
-    } else if(base == 0x40080000u || base == 0x400C8000u) { /* CMU */
+    } else if(base == 0x400C8000u) { /* CMU #2: firmware busy-waits on bits 3/7/9
+         * of 0x400C802C (clock-ready); return just those (0x288) so the wait exits
+         * without disturbing other bits (0xFFFFFFFF breaks pmax boot). */
+        v = (off == 0x2Cu) ? ((1u << 3) | (1u << 7) | (1u << 9)) : 0u;
+    } else if(base == 0x40080000u) { /* CMU #1 */
         v = 0;
     } else if(base == 0x40010000u) { /* TIMER0..3 */
         uint32_t tn = off >> 10;
@@ -504,16 +625,93 @@ static uint32_t mmio_read(void* ctx, uint32_t addr, int size) {
             if(tn == 1 && app->rx_feeding) {
                 v = app->rx_pulse_ticks & 0xFFFFu;
             } else {
-                app->timer_cnt[tn] = (uint16_t)(app->timer_cnt[tn] + 0x2000u);
-                v = app->timer_cnt[tn];
+                /* Faithful free-running CNT: advances with emulated instructions
+                 * and wraps at TOP. Consistent per-delay cost gives smooth pacing
+                 * and -- critically -- a timer that KEEPS advancing post-unlock
+                 * when the per-instruction hook is bypassed, so the firmware's
+                 * main loop keeps iterating and re-reads the buttons each pass.
+                 * Matches Leeroy/darkside's confirmed-working build. */
+                uint32_t top = app->timer_top[tn] ? app->timer_top[tn] : 0xFFFFu;
+                uint64_t elapsed =
+                    (emu_insn_now(app) - app->timer_t0[tn]) * (uint64_t)app->timer_rate[tn];
+                v = (uint32_t)(elapsed % ((uint64_t)top + 1u));
             }
+        } else if(sub == 0x3C && tn < 4) { /* TOP reached? (IF overflow proxy) */
+            uint32_t top = app->timer_top[tn] ? app->timer_top[tn] : 0xFFFFu;
+            uint64_t elapsed =
+                (emu_insn_now(app) - app->timer_t0[tn]) * (uint64_t)app->timer_rate[tn];
+            v = (elapsed >= top) ? 1u : 0u;
         }
     }
     (void)size;
     return v;
 }
 
+/* ------------------------------------------------------------ OLED capture (SPI)
+ * Double-buffered capture of the keyfob OLED (UC16xx/ST7528) off the shared
+ * USART0 SPI bus. Ported from Leeroy's working build (faithful to
+ * emu/pandora_tui.py _dc_level/_oled_cmd/_oled_data/_oled_commit). The DC pin is
+ * port0 bit9 (A9); a flush addresses by raw page number (0x00..0x0F), resets the
+ * column with 0x60/0x70, streams 92 data bytes/page, and ends with 0xAF. */
+static int oled_dc_level(AppState* app) {
+    return (app->gpio_dout[OLED_DC_PORT] >> OLED_DC_PIN) & 1u;
+}
+/* Atomic commit: copy WORK -> VISIBLE. Skips if nothing was written this pass or
+ * the frame is entirely blank (the firmware's internal clear emits its OWN 0xAF;
+ * committing that would flash a black frame - the real content reuses the same
+ * work buffer and commits on its own 0xAF). */
+static void oled_commit(AppState* app) {
+    if(!app->oled_work_dirty) return;
+    bool any = false;
+    for(int i = 0; i < OLED_FB_SIZE; i++) {
+        if(app->oled_work[i]) { any = true; break; }
+    }
+    if(!any) return; /* blank clear frame: keep dirty, wait for the content 0xAF */
+    memcpy(app->oled_fb, app->oled_work, OLED_FB_SIZE);
+    app->oled_work_dirty = 0;
+    app->oled_frames++;
+}
+/* One OLED controller command (set page / reset column / display-on). */
+static void oled_cmd(AppState* app, uint8_t b) {
+    if(b < OLED_PAGES) { /* 0x00..0x0F = raw page number */
+        app->oled_page = b;
+        app->oled_col = 0;
+    } else if(b == 0x60 || b == 0x70) { /* set column address -> column 0 */
+        app->oled_col = 0;
+    } else if(b == 0xAF) { /* display ON = end of a flush pass -> commit */
+        oled_commit(app);
+    }
+    /* other commands (init table, 0x81 contrast, etc.) don't move the pointers */
+}
+/* One pixel byte -> WORK buffer. Layout fb[page*cols + col], byte = 8 vertical
+ * pixels (bit0 = top). Column auto-increments; flush emits an explicit set-page
+ * per page, so clamp. */
+static void oled_data(AppState* app, uint8_t b) {
+    if(app->oled_page < OLED_PAGES && app->oled_col < OLED_COLS) {
+        uint32_t idx = (uint32_t)app->oled_page * OLED_COLS + app->oled_col;
+        if(idx < (uint32_t)OLED_FB_SIZE) {
+            app->oled_work[idx] = b;
+            app->oled_work_dirty = 1;
+        }
+    }
+    if(app->oled_col < 0xFF) app->oled_col++;
+}
+
 static void spi_byte(AppState* app, uint8_t b) {
+    /* SPI routing by chip-select: the OLED and Si4432 share USART0. Si4432 CS is
+     * PE9 (active-HIGH); when it is LOW the byte belongs to the OLED (command vs
+     * pixel data chosen by the DC pin A9). This is the fix: the old code fed every
+     * byte (incl. ~55k OLED pixel bytes) to the Si4432, corrupting the radio and
+     * never capturing the display. */
+    uint8_t si_cs = (uint8_t)((app->gpio_dout[SI_CS_PORT] >> SI_CS_PIN) & 1u);
+    if(!si_cs) {
+        app->spi_phase = -1; /* abort any partial Si4432 transaction */
+        if(oled_dc_level(app))
+            oled_cmd(app, b); /* DC HIGH = command */
+        else
+            oled_data(app, b); /* DC LOW = pixel data */
+        return;
+    }
     if(app->spi_phase < 0) {
         if(b & 0x80) {
             app->spi_kind = 'w';
@@ -562,15 +760,24 @@ static void mmio_write(void* ctx, uint32_t addr, uint32_t val, int size) {
                 tx_capture_data_edge(app, level);
             }
         }
+    } else if(base == 0x40010000u) { /* TIMER0..3: track CNT reset + TOP */
+        uint32_t tn = off >> 10;
+        uint32_t sub = off & 0x3FFu;
+        if(tn < 4) {
+            if(sub == 0x24) {
+                /* firmware writes CNT (usually 0): re-anchor t0 so CNT restarts
+                 * counting from here (faithful free-running model). */
+                app->timer_t0[tn] = emu_insn_now(app);
+            } else if(sub == 0x3C) {
+                app->timer_top[tn] = val ? val : 0xFFFFu; /* TOP (wrap) */
+            }
+        }
     }
     (void)size;
 }
 
 /* ------------------------------------------------------------ minimal NVIC */
 
-static uint32_t read_u32_le(const uint8_t* p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
 
 /* Current VTOR (SCB->VTOR at 0xE000ED08). We read it via the core (callback). */
 static uint32_t cur_vtor(AppState* app) {
@@ -602,10 +809,10 @@ static void nvic_tick(AppState* app) {
 }
 
 /* Locates a WFI instruction (0xBF30) in the app code to detect sleep. */
-static uint32_t find_wfi(const uint8_t* flash, uint32_t size) {
+static uint32_t find_wfi(AppState* app, uint32_t size) {
     uint32_t lim = size < 0x20000u ? size : 0x20000u;
     for(uint32_t off = 0x8100u; off + 1 < lim; off += 2) {
-        if(flash[off] == 0x30 && flash[off + 1] == 0xBF) return off;
+        if(pa_flash_read(app, off, 2) == 0xBF30u) return off; /* WFI = 0xBF30 */
     }
     return 0xFFFFFFFFu;
 }
@@ -697,28 +904,43 @@ static void code_hook(void* ctx, uint32_t pc) {
 /* A burst of instructions with WFI/tick + EXC_RETURN handling. Replica of
  * run_burst from pandora_tui.py. */
 static void run_burst(AppState* app, uint32_t count) {
+    ThumbCore* cpu = app->cpu;
+    ThumbHook saved_hook = cpu->hook;
+    void* saved_hook_ctx = cpu->hook_ctx;
+    /* Perf (matches Leeroy's build): once unlocked and idle - no knock/nav
+     * injection in progress - drop the per-instruction code hook. It is only
+     * needed for unlock detection (done) and the knock/nav FSMs (inactive), so
+     * removing it gives the big post-unlock speedup (smooth menus / responsive
+     * buttons). The hook stays ON during knock/nav so injection still works, and
+     * the OLED capture + ticks run in mmio_write/run_burst (not the hook). All
+     * timing now reads cpu->cycles (live) instead of the hook-incremented ninsn,
+     * so it stays correct while the hook is off. */
+    bool skip_hook = app->unlocked && !app->nav_active && !app->knock_active;
     bool app_running = cur_vtor(app) >= 0x8000u;
     bool stuck_wfi = app_running && (app->next_pc & ~1u) == (app->wfi_pc_hint & ~1u);
     bool want_tick = app_running &&
-                     (stuck_wfi || (app->ninsn - app->last_tick_insn) > 20000ull);
+                     (stuck_wfi || (cpu->cycles - app->last_tick_insn) > 20000ull);
     if(want_tick && !app->in_irq) {
-        app->last_tick_insn = app->ninsn;
+        app->last_tick_insn = cpu->cycles;
         nvic_tick(app);
     }
-    thumb_set_reg(app->cpu, 15, app->next_pc);
+    if(skip_hook) thumb_set_hook(cpu, NULL, NULL);
+    thumb_set_reg(cpu, 15, app->next_pc);
     for(uint32_t i = 0; i < count; i++) {
-        int rc = thumb_step(app->cpu);
+        int rc = thumb_step(cpu);
         if(rc < 0) break;
-        uint32_t pc = thumb_get_reg(app->cpu, 15);
+        uint32_t pc = thumb_get_reg(cpu, 15);
         /* EXC_RETURN: the ISR finished (bx lr with 0xFFFFFFFx) */
         if((pc & 0xFFFFFFF0u) == 0xFFFFFFF0u) {
-            thumb_exc_return(app->cpu, pc);
+            thumb_exc_return(cpu, pc);
             app->in_irq = 0;
-            app->next_pc = thumb_get_reg(app->cpu, 15);
+            app->next_pc = thumb_get_reg(cpu, 15);
+            if(skip_hook) thumb_set_hook(cpu, saved_hook, saved_hook_ctx);
             return;
         }
     }
-    app->next_pc = thumb_get_reg(app->cpu, 15);
+    app->next_pc = thumb_get_reg(cpu, 15);
+    if(skip_hook) thumb_set_hook(cpu, saved_hook, saved_hook_ctx);
 }
 
 static void tap(AppState* app, int btn) {
@@ -754,6 +976,7 @@ static uint32_t fb_hash(AppState* app) {
     }
     return h;
 }
+
 
 /* Injects ONE navigation button POST-unlock and lets the UI advance. Faithful
  * port of nav_button() in pandora_tui.py.
@@ -823,16 +1046,15 @@ static bool auto_unlock(AppState* app) {
     /* 2) inject the full sequence synchronized with the scanner.
      * Prefer the sequence ENTERED by the user in the menu; if none was defined,
      * use the default of the detected profile. */
-    if(app->knock_user_len > 0) {
-        app->knock_seq = app->knock_user;
-        app->knock_len = app->knock_user_len;
-        FURI_LOG_I(TAG, "knock: using user sequence (len=%u)", app->knock_user_len);
-    } else {
-        app->knock_seq = app->prof->knock;
-        app->knock_len = app->prof->knock_len;
-        FURI_LOG_I(TAG, "knock: using default of profile %s (len=%u)",
-                   app->prof->name, app->prof->knock_len);
-    }
+    /* The unlock code comes from <name>_KNOCK.txt (read on selection) or the
+     * in-app knock builder. No baked-in example default: with no code the
+     * firmware boots locked and the status screen explains it. */
+    app->knock_seq = app->knock_user;
+    app->knock_len = app->knock_user_len;
+    if(app->knock_len)
+        FURI_LOG_I(TAG, "knock: sequence len=%u", app->knock_len);
+    else
+        FURI_LOG_I(TAG, "knock: none set -> booting locked");
     app->knock_idx = 0;
     app->knock_sub = 0;
     app->knock_cur = 0;
@@ -878,12 +1100,15 @@ static bool auto_unlock(AppState* app) {
 static void render_oled(AppState* app) {
     furi_mutex_acquire(app->fb_mutex, FuriWaitForever);
     memset(app->screen, 0, FB_SIZE);
-    uint32_t fb = app->prof->fb_addr;
-    const int x_off = (SCREEN_W - OLED_COLS) / 2; /* center 92 in 128 => 18 */
+    /* Read the STABLE VISIBLE buffer (double-buffered SPI capture), NOT firmware
+     * RAM. oled_fb only changes in oled_commit (on the content 0xAF of a flush),
+     * so it is always a coherent, non-blank frame -> no torn/black frames. */
+    const uint8_t* fbv = app->oled_fb;
+    /* center the 88 VISIBLE columns in the 128-wide screen (=> 20) */
+    const int x_off = (SCREEN_W - OLED_VISIBLE_COLS) / 2;
     for(int page = 0; page < OLED_PAGES; page++) {
-        for(int col = 0; col < OLED_COLS; col++) {
-            uint32_t a = fb + (uint32_t)(page * OLED_COLS + col);
-            uint8_t v = (uint8_t)thumb_read_mem(app->cpu, a, 1);
+        for(int col = 0; col < OLED_VISIBLE_COLS; col++) {
+            uint8_t v = fbv[page * OLED_COLS + col];
             for(int k = 0; k < 4; k++) {
                 /* pixel level = popcount of the 2 bits (2k, 2k+1) */
                 int lvl = ((v >> (2 * k)) & 1) + ((v >> (2 * k + 1)) & 1);
@@ -906,7 +1131,7 @@ static void framebuffer_commit_callback(
     __atomic_fetch_add(&s_fb_cb_inflight, 1, __ATOMIC_RELAXED);
     AppState* app = (AppState*)context;
     (void)orientation;
-    if(!app || !data || size < FB_SIZE || app->menu_active) {
+    if(!app || !data || size < FB_SIZE || app->menu_active || app->status_active) {
         __atomic_fetch_sub(&s_fb_cb_inflight, 1, __ATOMIC_RELAXED);
         return;
     }
@@ -958,32 +1183,82 @@ static int hexbyte(const char* s) {
 
 /* Processes ONE line of Intel HEX (without the leading ':') writing to flash.
  * Updates *ext_lin. Returns 1 if it was EOF, 0 if next, -1 on error. */
-static int ihex_line(const char* ln, size_t len, uint8_t* flash, uint32_t flash_size,
-                     uint32_t* ext_lin) {
-    if(len < 10) return 0; /* line too short: ignore (stray CR/LF) */
-    int count = hexbyte(ln);
-    int ah = hexbyte(ln + 2);
-    int al = hexbyte(ln + 4);
-    int rtype = hexbyte(ln + 6);
-    if(count < 0 || ah < 0 || al < 0 || rtype < 0) return -1;
-    uint32_t addr = ((uint32_t)ah << 8) | (uint32_t)al;
-    const char* data = ln + 8;
-    if(rtype == 0x00) { /* data */
-        uint32_t base = *ext_lin + addr;
-        for(int k = 0; k < count; k++) {
-            int b = hexbyte(data + k * 2);
-            if(b < 0) return -1;
-            if(base + (uint32_t)k < flash_size) flash[base + k] = (uint8_t)b;
-        }
-    } else if(rtype == 0x01) { /* EOF */
-        return 1;
-    } else if(rtype == 0x04) { /* ext linear addr */
-        int b0 = hexbyte(data), b1 = hexbyte(data + 2);
-        if(b0 < 0 || b1 < 0) return -1;
-        *ext_lin = (((uint32_t)b0 << 8) | (uint32_t)b1) << 16;
+/* Stream a .hex into a flat temp .bin on SD: 0xFF-fill gaps, write records by
+ * seeking (order-independent), batched over contiguous runs. Low RAM (no full
+ * image buffer). Proven byte-exact vs a full parse for all four firmwares. */
+static bool hex_to_flat(File* in, File* out, uint32_t fsz) {
+    uint8_t ff[64];
+    memset(ff, 0xFF, sizeof(ff));
+    if(!storage_file_seek(out, 0, true)) return false;
+    for(uint32_t w = 0; w < fsz;) {
+        uint32_t c = (fsz - w < (uint32_t)sizeof(ff)) ? (fsz - w) : (uint32_t)sizeof(ff);
+        if(storage_file_write(out, ff, c) != c) return false;
+        w += c;
     }
-    /* other types (02/03/05): ignore */
-    return 0;
+    static uint8_t chunk[512];
+    static char line[600];
+    uint8_t rbuf[256];
+    size_t linepos = 0;
+    uint32_t ext = 0, rstart = 0, rlen = 0;
+    bool eof = false, err = false;
+    size_t rd;
+    if(!storage_file_seek(in, 0, true)) return false;
+    while(!eof && !err && (rd = storage_file_read(in, chunk, sizeof(chunk))) > 0) {
+        for(size_t i = 0; i < rd; i++) {
+            char ch = (char)chunk[i];
+            if(ch == ':') {
+                linepos = 0;
+            } else if(ch == '\n' || ch == '\r') {
+                if(linepos >= 8) {
+                    int cnt = hexbyte(line), ah = hexbyte(line + 2), al = hexbyte(line + 4),
+                        rt = hexbyte(line + 6);
+                    if(cnt < 0 || ah < 0 || al < 0 || rt < 0) { err = true; break; }
+                    uint32_t addr = ((uint32_t)ah << 8) | (uint32_t)al;
+                    const char* d = line + 8;
+                    if(rt == 0x04) {
+                        if(rlen) {
+                            storage_file_seek(out, rstart, true);
+                            storage_file_write(out, rbuf, rlen);
+                            rlen = 0;
+                        }
+                        int b0 = hexbyte(d), b1 = hexbyte(d + 2);
+                        if(b0 < 0 || b1 < 0) { err = true; break; }
+                        ext = (((uint32_t)b0 << 8) | (uint32_t)b1) << 16;
+                    } else if(rt == 0x01) {
+                        eof = true;
+                    } else if(rt == 0x00) {
+                        uint32_t bse = ext + addr;
+                        for(int k = 0; k < cnt; k++) {
+                            int b = hexbyte(d + k * 2);
+                            if(b < 0) { err = true; break; }
+                            uint32_t a = bse + (uint32_t)k;
+                            if(a >= fsz) continue;
+                            if(rlen && a == rstart + rlen && rlen < (uint32_t)sizeof(rbuf)) {
+                                rbuf[rlen++] = (uint8_t)b;
+                            } else {
+                                if(rlen) {
+                                    storage_file_seek(out, rstart, true);
+                                    storage_file_write(out, rbuf, rlen);
+                                }
+                                rstart = a;
+                                rbuf[0] = (uint8_t)b;
+                                rlen = 1;
+                            }
+                        }
+                    }
+                    linepos = 0;
+                }
+            } else {
+                if(linepos < sizeof(line) - 1) line[linepos++] = ch;
+            }
+            if(err) break;
+        }
+    }
+    if(rlen) {
+        storage_file_seek(out, rstart, true);
+        storage_file_write(out, rbuf, rlen);
+    }
+    return !err;
 }
 
 /* Loads the firmware by STREAMING from the SD (does NOT read the whole file to
@@ -991,76 +1266,59 @@ static int ihex_line(const char* ln, size_t len, uint8_t* flash, uint32_t flash_
  * flash buffer is allocated to the real size the firmware uses (flash_used of
  * the profile). */
 static LoadResult load_firmware(AppState* app, Storage* storage, const char* path) {
-    File* f = storage_file_alloc(storage);
-    LoadResult res = LoadIoError;
     const uint32_t flash_size = app->prof->flash_used;
+
+    /* page cache instead of the full flash image */
+    app->page_cache = (uint8_t*)safe_malloc(PA_PAGES * PA_PAGE);
+    if(!app->page_cache) return LoadNoMem;
+    for(uint32_t i = 0; i < PA_PAGES; i++) app->page_tag[i] = 0xFFFFFFFFu;
+    app->cur_page = 0xFFFFFFFFu;
+    app->cur_ptr = NULL;
+    app->flash_temp = false;
+    app->flash_file = NULL;
+
+    File* in = storage_file_alloc(storage);
+    LoadResult res = LoadIoError;
+    bool keep_in = false;
     do {
-        if(!storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) break;
-        uint64_t fsize = storage_file_size(f);
+        if(!storage_file_open(in, path, FSAM_READ, FSOM_OPEN_EXISTING)) break;
+        uint64_t fsize = storage_file_size(in);
         if(fsize == 0 || fsize > 4u * 1024u * 1024u) {
             res = LoadBadFormat;
             break;
         }
 
-        app->flash = (uint8_t*)safe_malloc(flash_size);
-        if(!app->flash) {
-            FURI_LOG_E(TAG, "no heap for flash (%lu B)", (unsigned long)flash_size);
-            res = LoadNoMem;
-            break;
-        }
-        memset(app->flash, 0xFF, flash_size);
-
-        /* detect format by reading the first byte */
         uint8_t first = 0;
-        if(storage_file_read(f, &first, 1) != 1) break;
-        storage_file_seek(f, 0, true);
-
-        /* shared streaming buffers (static: not on the stack). ~1.1KB .bss */
-        static uint8_t chunk[512];
-        static char line[600];
-        size_t rd;
+        if(storage_file_read(in, &first, 1) != 1) break;
+        storage_file_seek(in, 0, true);
 
         if(first == ':') {
-            /* Intel HEX: read in chunks and parse by lines (streaming). */
-            size_t linepos = 0;
-            uint32_t ext_lin = 0;
-            bool eof_rec = false;
-            bool err = false;
-            while(!eof_rec && (rd = storage_file_read(f, chunk, sizeof(chunk))) > 0) {
-                for(size_t i = 0; i < rd; i++) {
-                    char ch = (char)chunk[i];
-                    if(ch == ':') {
-                        linepos = 0; /* start of record */
-                    } else if(ch == '\n' || ch == '\r') {
-                        if(linepos > 0) {
-                            int r = ihex_line(line, linepos, app->flash, flash_size, &ext_lin);
-                            if(r < 0) { err = true; break; }
-                            if(r == 1) { eof_rec = true; break; }
-                            linepos = 0;
-                        }
-                    } else {
-                        if(linepos < sizeof(line) - 1) line[linepos++] = ch;
-                    }
-                }
-                if(err) break;
+            /* .hex -> flat temp .bin on SD, then page from it */
+            app->flash_file = storage_file_alloc(storage);
+            if(!storage_file_open(
+                   app->flash_file, PA_FLASH_TEMP_PATH, FSAM_READ_WRITE, FSOM_CREATE_ALWAYS)) {
+                res = LoadIoError;
+                break;
             }
-            if(err) {
+            app->flash_temp = true;
+            if(!hex_to_flat(in, app->flash_file, flash_size)) {
                 res = LoadBadFormat;
                 break;
             }
+            app->flash_bk_size = flash_size;
         } else {
-            /* plain binary: copy in chunks directly to flash */
-            uint32_t off = 0;
-            while((rd = storage_file_read(f, chunk, sizeof(chunk))) > 0) {
-                for(size_t i = 0; i < rd && off < flash_size; i++, off++)
-                    app->flash[off] = chunk[i];
-                if(off >= flash_size) break;
-            }
+            /* .bin -> page directly (file offset == flash address) */
+            app->flash_file = in;
+            keep_in = true;
+            app->flash_bk_size = (uint32_t)((fsize < flash_size) ? fsize : flash_size);
         }
         res = LoadOk;
     } while(false);
-    storage_file_close(f);
-    storage_file_free(f);
+
+    if(!keep_in) {
+        storage_file_close(in);
+        storage_file_free(in);
+    }
     return res;
 }
 
@@ -1188,7 +1446,7 @@ static void tx_on_si_mode(AppState* app, int new_mode) {
     if(new_mode == 3) { /* TX */
         app->tx_capturing = true;
         app->tx_last_level = (app->gpio_dout[app->prof->data_port] >> app->prof->data_pin) & 1u;
-        app->tx_last_insn = app->ninsn;
+        app->tx_last_insn = app->cpu->cycles;
         app->tx_edges_frame = 0;
         FURI_LOG_I(TAG, "RF: firmware rf_tx_on -> capturing DATA pin (B%u.%u)",
                    app->prof->data_port, app->prof->data_pin);
@@ -1206,7 +1464,7 @@ static void tx_on_si_mode(AppState* app, int new_mode) {
 static void tx_capture_data_edge(AppState* app, bool level) {
     if(!app->tx_capturing) return;
     if(level == app->tx_last_level) return; /* no edge */
-    uint64_t now = app->ninsn;
+    uint64_t now = app->cpu->cycles;
     uint64_t dins = now - app->tx_last_insn;
     app->tx_last_insn = now;
     uint32_t dur_us = (uint32_t)((dins * ARM_INSN_US_NUM) / ARM_INSN_US_DEN);
@@ -1483,6 +1741,50 @@ static void rf_cycle_mode(AppState* app) {
 
 /* ------------------------------------------------------------ overlay help */
 
+/* Count non-empty framebuffer bytes (cheap blank detector). */
+static int screen_lit_bytes(const AppState* app) {
+    int n = 0;
+    for(size_t i = 0; i < FB_SIZE; i++)
+        if(app->screen[i]) n++;
+    return n;
+}
+
+/* Status screen shown when the keyfob OLED stays blank: a locked keyfob is a
+ * normal state, not a crash, so explain it instead of leaving a black screen. */
+static void status_draw(AppState* app) {
+    Canvas* c = app->canvas;
+    canvas_reset(c);
+    canvas_clear(c);
+    canvas_set_font(c, FontPrimary);
+    canvas_draw_str(c, 2, 11, "Pandora ARM");
+    canvas_draw_line(c, 0, 14, 127, 14);
+    canvas_set_font(c, FontSecondary);
+    canvas_draw_str(c, 2, 26, "Booting keyfob firmware");
+
+    /* Indeterminate progress bar (sweeping segment): the emulator is busy
+     * running the firmware while it boots and draws its first screen. */
+    {
+        const int bx = 4, by = 31, bw = 120, bh = 7;
+        canvas_draw_frame(c, bx, by, bw, bh);
+        const int seg = 26;
+        int span = bw - 2 - seg;
+        if(span < 1) span = 1;
+        int pos = (int)((furi_get_tick() / 6u) % (uint32_t)(2 * span));
+        if(pos > span) pos = 2 * span - pos; /* bounce back */
+        canvas_draw_box(c, bx + 1 + pos, by + 1, seg, bh - 2);
+    }
+
+    {
+        char db[40];
+        snprintf(db, sizeof(db), "%s  frames:%lu",
+                 app->unlocked ? "unlocked" : "locked",
+                 (unsigned long)app->oled_frames);
+        canvas_draw_str(c, 2, 50, db);
+    }
+    canvas_draw_str(c, 2, 62, "Hold UP: exit    Back: menu");
+    canvas_commit(c);
+}
+
 /* In-emulator overlay (direct-draw): status + RF bridge control (Left). */
 static void overlay_draw(AppState* app) {
     Canvas* c = app->canvas;
@@ -1564,28 +1866,16 @@ static const char* btn_name(uint8_t b) {
 /* Builds the string of the current knock sequence (profile default if the user
  * did not define any). */
 static void knock_seq_str(AppState* app, char* out, size_t n) {
-    const uint8_t* seq;
-    uint8_t len;
-    bool is_default = (app->knock_user_len == 0);
-    if(is_default) {
-        seq = app->prof ? app->prof->knock : NULL;
-        len = app->prof ? app->prof->knock_len : 0;
-    } else {
-        seq = app->knock_user;
-        len = app->knock_user_len;
-    }
+    const uint8_t* seq = app->knock_user;
+    uint8_t len = app->knock_user_len;
     int off = 0;
-    if(is_default) {
-        int w = snprintf(out, n, "(def) ");
-        off = (w > 0) ? w : 0;
-    }
-    for(uint8_t i = 0; i < len && seq; i++) {
+    for(uint8_t i = 0; i < len; i++) {
         int w = snprintf(out + off, n - (size_t)off, "%s%s", btn_name(seq[i]),
                          (i + 1 < len) ? "," : "");
         if(w < 0 || (size_t)(off + w) >= n) break;
         off += w;
     }
-    if(len == 0) snprintf(out, n, "<empty>");
+    if(len == 0) snprintf(out, n, "<none>");
 }
 
 static void menu_submenu_callback(void* context, uint32_t index);
@@ -1665,8 +1955,8 @@ static void knock_submenu_callback(void* context, uint32_t index) {
         menu_rebuild(app);
         return;
     case KnockItemClear:
-        app->knock_user_len = 0; /* back to the profile default */
-        FURI_LOG_I(TAG, "knock-builder: cleared (uses profile default)");
+        app->knock_user_len = 0; /* no knock -> boots locked */
+        FURI_LOG_I(TAG, "knock-builder: cleared (no knock)");
         knock_rebuild(app);
         return;
     default: return;
@@ -1761,21 +2051,94 @@ static MenuFlow run_menu(AppState* app, Gui* gui) {
     return g_menu_flow;
 }
 
+/* Map a knock-code token (keyfob-logical name) to a B_* index, or -1. */
+static int arm_btn_from_name(const char* s, int n) {
+    static const struct {
+        const char* nm;
+        int b;
+    } t[] = {{"UP", B_UP}, {"DOWN", B_DOWN}, {"OK", B_OK}, {"BACK", B_BACK}, {"B5", B5}, {"B6", B6}};
+    for(unsigned i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        const char* b = t[i].nm;
+        int k = 0;
+        while(k < n && b[k] && ((s[k] | 0x20) == (b[k] | 0x20))) k++;
+        if(k == n && b[k] == 0) return t[i].b;
+    }
+    return -1;
+}
+
+/* Reads <stem>_KNOCK.txt beside the firmware (written by the Pandora cracker) and
+ * fills knock_user[] with the button sequence. Sets knock_user_len (0 = none).
+ * Tokens are keyfob-logical names (UP/DOWN/OK/BACK/B5/B6); unknown tokens (e.g. a
+ * "KNOCK:" label) are skipped. Runs on firmware selection. */
+static void arm_read_knock_txt(AppState* app) {
+    app->knock_user_len = 0;
+    const char* src = furi_string_get_cstr(app->fw_path);
+    int len = (int)strlen(src), slash = -1, dot = -1;
+    for(int i = 0; i < len; i++)
+        if(src[i] == '/') slash = i;
+    for(int i = len - 1; i > slash; i--) {
+        if(src[i] == '.') {
+            dot = i;
+            break;
+        }
+    }
+    int stem_end = (dot > slash) ? dot : len;
+    char path[160];
+    if(stem_end > (int)sizeof(path) - 18) return;
+    memcpy(path, src, (size_t)stem_end);
+    snprintf(path + stem_end, sizeof(path) - (size_t)stem_end, "_KNOCK.txt");
+
+    File* f = storage_file_alloc(app->storage);
+    if(storage_file_open(f, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char buf[128];
+        uint16_t n = storage_file_read(f, buf, sizeof(buf) - 1);
+        buf[n] = 0;
+        int i = 0, cnt = 0;
+        while(i < n && cnt < (int)sizeof(app->knock_user)) {
+            while(i < n) {
+                char c = buf[i];
+                if((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) break;
+                i++;
+            }
+            int st = i;
+            while(i < n) {
+                char c = buf[i];
+                if(!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+                i++;
+            }
+            if(i <= st) break;
+            int b = arm_btn_from_name(buf + st, i - st);
+            if(b >= 0) app->knock_user[cnt++] = (uint8_t)b;
+        }
+        app->knock_user_len = (uint8_t)cnt;
+    }
+    storage_file_close(f);
+    storage_file_free(f);
+}
+
 static void set_fw_name_from_path(AppState* app) {
     const char* p = furi_string_get_cstr(app->fw_path);
     const char* slash = strrchr(p, '/');
     const char* base = slash ? slash + 1 : p;
     strncpy(app->fw_name, base, sizeof(app->fw_name) - 1);
     app->fw_name[sizeof(app->fw_name) - 1] = 0;
+    arm_read_knock_txt(app);
 }
 
 /* ------------------------------------------------------------ boot */
 
 static void emu_reset_and_unlock(AppState* app) {
     /* core reset: SP=*(0), PC=*(4) from flash */
-    uint32_t sp0 = read_u32_le(app->flash + 0);
-    uint32_t rst = read_u32_le(app->flash + 4);
+    uint32_t sp0 = pa_flash_read(app, 0, 4);
+    uint32_t rst = pa_flash_read(app, 4, 4);
     memset(app->ram, 0, PA_RAM_SIZE);
+    /* reset the OLED capture buffers */
+    memset(app->oled_fb, 0, OLED_FB_SIZE);
+    memset(app->oled_work, 0, OLED_FB_SIZE);
+    app->oled_page = 0;
+    app->oled_col = 0;
+    app->oled_work_dirty = 0;
+    app->oled_frames = 0;
     thumb_reset(app->cpu, sp0, rst);
     app->next_pc = rst | 1u;
     app->ninsn = 0;
@@ -1783,6 +2146,12 @@ static void emu_reset_and_unlock(AppState* app) {
     app->irq_rr = 0;
     app->tick_count = 0;
     app->last_tick_insn = 0;
+    for(int ti = 0; ti < 4; ti++) {
+        app->timer_t0[ti] = 0;
+        app->timer_top[ti] = 0xFFFF;
+        app->timer_rate[ti] = (ti == 0) ? 0xC00u : 0x400u;
+        app->timer_cnt[ti] = 0;
+    }
     app->unlocked = 0;
     app->max_step = -1;
     app->knock_active = 0;
@@ -1825,6 +2194,9 @@ static void run_emulator(AppState* app, Gui* gui) {
 
     uint32_t epoch = furi_get_tick();
     uint64_t next_us = 0;
+    app->content_seen = false;
+    app->status_active = false;
+    app->launch_tick = furi_get_tick();
 
     /* --- PHYSICAL KEY MAPPING (6 Flipper keys = 6 keyfob buttons) ---
      *   Flipper UP    -> Button 1 = UP   pin (On/menu/cell+).  Hold >1s = EXIT.
@@ -1915,7 +2287,20 @@ static void run_emulator(AppState* app, Gui* gui) {
 
         /* redraw the screen from the firmware framebuffer */
         render_oled(app);
-        if(!app->menu_active) canvas_commit(canvas);
+
+        /* blank-screen watchdog: never leave a bare black screen up */
+        if(!app->content_seen && screen_lit_bytes(app) >= STATUS_CONTENT_BYTES) {
+            app->content_seen = true;
+        }
+        app->status_active =
+            !app->content_seen && !app->menu_active &&
+            (furi_get_tick() - app->launch_tick > furi_ms_to_ticks(STATUS_GRACE_MS));
+
+        if(app->status_active) {
+            status_draw(app);
+        } else if(!app->menu_active) {
+            canvas_commit(canvas);
+        }
 
         /* pacing + yield */
         next_us += FRAME_US;
@@ -1955,6 +2340,7 @@ int32_t pandora_arm_app(void* p) {
     memset(app, 0, sizeof(AppState));
 
     Storage* storage = (Storage*)furi_record_open(RECORD_STORAGE);
+    app->storage = storage;
     DialogsApp* dialogs = (DialogsApp*)furi_record_open(RECORD_DIALOGS);
     Gui* gui = (Gui*)furi_record_open(RECORD_GUI);
     app->fw_path = furi_string_alloc_set_str("/ext/apps_assets/pandora_arm");
@@ -1972,7 +2358,7 @@ int32_t pandora_arm_app(void* p) {
             break;
         } else if(flow == FlowFileBrowser) {
             DialogsFileBrowserOptions opts;
-            dialog_file_browser_set_basic_options(&opts, "*", NULL);
+            dialog_file_browser_set_basic_options(&opts, ".hex|.bin", NULL);
             opts.base_path = "/ext";
             opts.hide_ext = false;
             if(dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
@@ -1986,7 +2372,7 @@ int32_t pandora_arm_app(void* p) {
             if(app->fw_name[0] == 0) {
                 FURI_LOG_W(TAG, "Launch without firmware; opening file browser");
                 DialogsFileBrowserOptions opts;
-                dialog_file_browser_set_basic_options(&opts, "*", NULL);
+                dialog_file_browser_set_basic_options(&opts, ".hex|.bin", NULL);
                 opts.base_path = "/ext";
                 opts.hide_ext = false;
                 if(!dialog_file_browser_show(dialogs, app->fw_path, app->fw_path, &opts)) {
@@ -2059,12 +2445,12 @@ int32_t pandora_arm_app(void* p) {
             /* connect memory: direct FLASH/RAM regions + MMIO callbacks.
              * flash_size = real allocated size (flash_used of the profile). */
             thumb_set_regions(
-                app->cpu, app->flash, PA_FLASH_BASE, app->prof->flash_used, app->ram,
+                app->cpu, NULL, 0, 0, app->ram,
                 PA_RAM_BASE, PA_RAM_SIZE);
             thumb_set_mem_cb(app->cpu, mmio_read, mmio_write, app);
             thumb_set_hook(app->cpu, code_hook, app);
 
-            app->wfi_pc_hint = find_wfi(app->flash, app->prof->flash_used);
+            app->wfi_pc_hint = find_wfi(app, app->prof->flash_used);
 
             app->fb_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
             if(!app->fb_mutex) {
@@ -2088,7 +2474,17 @@ int32_t pandora_arm_app(void* p) {
 
     /* --- teardown --- */
     if(app->cpu) free(app->cpu);
-    if(app->flash) free(app->flash);
+    if(app->flash_file) {
+        storage_file_close(app->flash_file);
+        storage_file_free(app->flash_file);
+        app->flash_file = NULL;
+    }
+    if(app->flash_temp) {
+        storage_common_remove(storage, PA_FLASH_TEMP_PATH);
+        app->flash_temp = false;
+    }
+    if(app->page_cache) free(app->page_cache);
+    if(app->flash) free(app->flash); /* legacy; NULL with paging */
     if(app->ram) free(app->ram);
     if(app->fb_mutex) furi_mutex_free(app->fb_mutex);
     furi_string_free(app->fw_path);

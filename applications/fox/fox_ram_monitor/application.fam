@@ -5,8 +5,8 @@ App(
     icon="I_fox_generic_14x14",
     entry_point="fox_ram_monitor_app",
     requires=["gui"],
-    stack_size=2 * 1024,
+    stack_size=3 * 1024,
     fap_icon="icon.png",
     fap_category="Fox",
-    fap_description="RAM/heap diagnostic display (same numbers as CLI 'free'); Up saves a heap_map snapshot to SD even while qFlipper is connected.",
+    fap_description="RAM/heap diagnostic (same numbers as CLI 'free'), auto-refreshing. Up: save heap_map snapshot. Down: toggle CLI soft-lock (disconnect/reconnect qFlipper) to watch its heap free and re-seat.",
 )

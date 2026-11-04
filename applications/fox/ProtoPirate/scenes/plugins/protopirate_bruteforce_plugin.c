@@ -11,6 +11,7 @@
 #include <gui/modules/widget.h>
 #include <gui/modules/widget_elements/widget_element.h>
 #include <lib/flipper_application/flipper_application.h>
+#include <notification/notification_messages.h>
 
 #include "pp_bf_icons.h"
 
@@ -36,7 +37,7 @@ static ProtoPirateBruteForceContext g_active_ctx = ProtoPirateBruteForceContextR
 static FlipperFormat* g_ff = NULL;
 static Storage* g_storage = NULL;
 
-static void show_bf_result(void* app, uint8_t status, ButtonCallback callback);
+static void bf_show_result(void* app, uint8_t status, ButtonCallback callback);
 static void bf_finish_and_show_result(void* app, ButtonCallback result_callback);
 
 static void bf_close_files() {
@@ -95,7 +96,7 @@ static void bf_free_states(void) {
     g_bf_kind = ProtoPirateBfKindNone;
 }
 
-static bool bruteforce_needs_bruteforce(FlipperFormat* ff) {
+static bool bf_needs_bruteforce(FlipperFormat* ff) {
     if(!ff) return false;
     FuriString* s = furi_string_alloc();
 
@@ -118,7 +119,7 @@ static bool bruteforce_needs_bruteforce(FlipperFormat* ff) {
     return !has_serial;
 }
 
-static void show_bf_progress(void* app) {
+static void bf_show_progress(void* app) {
     static uint8_t slow_me = 0;
     if((slow_me++ % (g_bf_kind == ProtoPirateBfKindHitag2 ? 25 : 3))) return;
 
@@ -130,9 +131,9 @@ static void show_bf_progress(void* app) {
 
     if(g_bf_kind == ProtoPirateBfKindHitag2) {
         widget_add_string_element(widget, 62, 0, AlignLeft, AlignTop, FontPrimary, "Recover Key");
-        widget_add_string_element(widget, 62, 12, AlignLeft, AlignTop, FontSecondary, "Max ETA:");
+        widget_add_string_element(widget, 62, 14, AlignLeft, AlignTop, FontSecondary, "Max ETA:");
         widget_add_string_element(
-            widget, 62, 22, AlignLeft, AlignTop, FontSecondary, "60 seconds");
+            widget, 62, 24, AlignLeft, AlignTop, FontSecondary, "60 seconds");
     } else {
         widget_add_string_element(
             widget, 62, 0, AlignLeft, AlignTop, FontPrimary, "Bruteforcing...");
@@ -149,14 +150,14 @@ static void show_bf_progress(void* app) {
     widget_add_string_element(
         widget,
         62,
-        (g_bf_kind == ProtoPirateBfKindHitag2) ? 34 : 12,
+        (g_bf_kind == ProtoPirateBfKindHitag2) ? 36 : 12,
         AlignLeft,
         AlignTop,
         FontSecondary,
         furi_string_get_cstr(pct_str));
     furi_string_free(pct_str);
 
-    const uint8_t bar_y = (g_bf_kind == ProtoPirateBfKindHitag2) ? 46 : BRUTEFORCE_PROGRESS_BAR_Y;
+    const uint8_t bar_y = (g_bf_kind == ProtoPirateBfKindHitag2) ? 48 : BRUTEFORCE_PROGRESS_BAR_Y;
     widget_add_rect_element(
         widget,
         BRUTEFORCE_PROGRESS_BAR_X,
@@ -206,25 +207,37 @@ static void bf_result_ok_callback(GuiButtonType result, InputType type, void* co
     }
 }
 
-static void show_bf_result(void* app, uint8_t status, ButtonCallback callback) {
+static void bf_show_result(void* app, uint8_t status, ButtonCallback callback) {
     Widget* widget = g_host_api->get_widget(app);
     if(!widget) return;
-
     widget_reset(widget);
-    const char* title = (status == BRUTEFORCE_STATUS_FOUND)     ? "Found!" :
-                        (status == BRUTEFORCE_STATUS_CANCELLED) ? "Cancelled" :
-                                                                  "Not found";
+
     if(status == BRUTEFORCE_STATUS_FOUND) {
+        //Add theFound Heading and Text, we use different here to the other 2 statuses.
+        g_host_api->notification_success(app);
         widget_add_icon_element(widget, 0, 0, &I_fox_64x64);
-        widget_add_string_element(widget, 82, 32, AlignLeft, AlignCenter, FontPrimary, title);
+        widget_add_string_element(widget, 82, 32, AlignLeft, AlignCenter, FontPrimary, "Found!");
         if(callback) {
             widget_add_button_element(widget, GuiButtonTypeCenter, "OK", callback, app);
         }
+        return;
     } else if(status == BRUTEFORCE_STATUS_CANCELLED) {
-        widget_add_string_element(widget, 64, 0, AlignCenter, AlignTop, FontPrimary, title);
-        widget_add_icon_element(widget, (128 - 32) / 2, 14, &I_fox_32x32);
+        //Add the Cancelled Heading and Text
+        widget_add_string_multiline_element(
+            widget, 60, 26, AlignLeft, AlignTop, FontSecondary, "Try again later.");
+        widget_add_string_element(widget, 64, 0, AlignCenter, AlignTop, FontPrimary, "Canceled");
     } else {
-        widget_add_string_element(widget, 64, 0, AlignCenter, AlignTop, FontPrimary, title);
+        //Add the Not Found Heading and Text
+        g_host_api->notification_error(app);
+        widget_add_string_multiline_element(
+            widget, 60, 15, AlignLeft, AlignTop, FontSecondary, "Could not\nBrute Force\nthe key.");
+        widget_add_string_element(widget, 64, 0, AlignCenter, AlignTop, FontPrimary, "Not found");
+    }
+
+    //Add the Fox icon for C
+    widget_add_icon_element(widget, 6, 14, &I_fox_32x32);
+    if(callback) {
+        widget_add_button_element(widget, GuiButtonTypeCenter, "OK", callback, app);
     }
 }
 
@@ -296,17 +309,13 @@ static void bf_finish_and_show_result(void* app, ButtonCallback result_callback)
         if(g_active_ctx == ProtoPirateBruteForceContextSavedInfo) {
             bf_close_files();
         }
-        if(g_active_ctx == ProtoPirateBruteForceContextSubDecode ||
-           g_active_ctx == ProtoPirateBruteForceContextSavedInfo) {
-            g_host_api->notification_success(app);
-        }
         ButtonCallback ok_cb = result_callback;
         if(!ok_cb && (g_active_ctx == ProtoPirateBruteForceContextReceiverInfo ||
                       g_active_ctx == ProtoPirateBruteForceContextSubDecode ||
                       g_active_ctx == ProtoPirateBruteForceContextSavedInfo)) {
             ok_cb = bf_result_ok_callback;
         }
-        show_bf_result(app, status, ok_cb);
+        bf_show_result(app, status, ok_cb);
     } else {
         if(status == BRUTEFORCE_STATUS_NOT_FOUND && g_bf_kind == ProtoPirateBfKindHitag2) {
             if(g_ff) {
@@ -318,7 +327,7 @@ static void bf_finish_and_show_result(void* app, ButtonCallback result_callback)
             bf_close_files();
         }
 
-        show_bf_result(app, status, NULL);
+        bf_show_result(app, status, bf_result_ok_callback);
     }
     bf_free_states();
 }
@@ -334,7 +343,7 @@ static void bf_cancel_thread(void) {
 }
 
 static bool plugin_needs_bruteforce(FlipperFormat* ff) {
-    return bruteforce_needs_bruteforce(ff) || hitag2_bf_needs_bruteforce(ff);
+    return bf_needs_bruteforce(ff) || hitag2_bf_needs_bruteforce(ff);
 }
 
 static bool plugin_is_running(ProtoPirateApp* app) {
@@ -346,9 +355,9 @@ static void plugin_on_scene_enter(ProtoPirateApp* app, ProtoPirateBruteForceCont
     g_active_ctx = ctx;
     if(g_bf_thread && (g_bf_state || g_hitag2_state)) {
         if(bf_status() == BRUTEFORCE_STATUS_RUNNING) {
-            show_bf_progress(app);
+            bf_show_progress(app);
         } else {
-            show_bf_result(app, bf_status(), NULL);
+            bf_show_result(app, bf_status(), bf_result_ok_callback);
         }
     }
 }
@@ -376,7 +385,7 @@ static bool start_bruteforce(ProtoPirateApp* app) {
         }
     }
 
-    if(bruteforce_needs_bruteforce(g_ff)) {
+    if(bf_needs_bruteforce(g_ff)) {
         BruteForceState* state = malloc(sizeof(BruteForceState));
         if(!state) {
             g_host_api->notification_error(app);
@@ -426,7 +435,7 @@ static bool start_bruteforce(ProtoPirateApp* app) {
         return false;
     }
     furi_thread_start(g_bf_thread);
-    show_bf_progress(app);
+    bf_show_progress(app);
     return true;
 }
 
@@ -453,7 +462,7 @@ static bool plugin_on_scene_event(
         if(g_bf_thread && (g_bf_state || g_hitag2_state)) {
             uint8_t bfst = bf_status();
             if(bfst == BRUTEFORCE_STATUS_IDLE || bfst == BRUTEFORCE_STATUS_RUNNING) {
-                show_bf_progress(app);
+                bf_show_progress(app);
             } else {
                 bf_finish_and_show_result(app, NULL);
             }

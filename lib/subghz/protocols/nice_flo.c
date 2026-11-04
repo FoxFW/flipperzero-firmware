@@ -1,4 +1,7 @@
 #include "nice_flo.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -28,6 +31,9 @@ struct SubGhzProtocolEncoderNiceFlo {
     SubGhzBlockGeneric generic;
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderNiceFlo);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderNiceFlo);
+
 typedef enum {
     NiceFloDecoderStepReset = 0,
     NiceFloDecoderStepFoundStartBit,
@@ -37,25 +43,18 @@ typedef enum {
 
 const SubGhzProtocolDecoder subghz_protocol_nice_flo_decoder = {
     .alloc = subghz_protocol_decoder_nice_flo_alloc,
-    .free = subghz_protocol_decoder_nice_flo_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_nice_flo_feed,
-    .reset = subghz_protocol_decoder_nice_flo_reset,
+    .reset = subghz_protocol_decoder_common_reset,
 
-    .get_hash_data = subghz_protocol_decoder_nice_flo_get_hash_data,
-    .serialize = subghz_protocol_decoder_nice_flo_serialize,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
+    .serialize = subghz_protocol_decoder_common_serialize,
     .deserialize = subghz_protocol_decoder_nice_flo_deserialize,
-    .get_string = subghz_protocol_decoder_nice_flo_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_nice_flo_encoder = {
-    .alloc = subghz_protocol_encoder_nice_flo_alloc,
-    .free = subghz_protocol_encoder_nice_flo_free,
-
-    .deserialize = subghz_protocol_encoder_nice_flo_deserialize,
-    .stop = subghz_protocol_encoder_nice_flo_stop,
-    .yield = subghz_protocol_encoder_nice_flo_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_nice_flo_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_nice_flo");
 
 const SubGhzProtocol subghz_protocol_nice_flo = {
     .name = SUBGHZ_PROTOCOL_NICE_FLO_NAME,
@@ -65,138 +64,13 @@ const SubGhzProtocol subghz_protocol_nice_flo = {
             SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_nice_flo_decoder,
-    .encoder = &subghz_protocol_nice_flo_encoder,
+    .encoder = &subghz_protocol_nice_flo_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_nice_flo_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderNiceFlo* instance = malloc(sizeof(SubGhzProtocolEncoderNiceFlo));
-
-    instance->base.protocol = &subghz_protocol_nice_flo;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 3;
-    instance->encoder.size_upload = 52;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    return instance;
-}
-
-void subghz_protocol_encoder_nice_flo_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolEncoderNiceFlo* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_nice_flo_get_upload(SubGhzProtocolEncoderNiceFlo* instance) {
-    furi_assert(instance);
-    size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
-    if(size_upload > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
-        return false;
-    } else {
-        instance->encoder.size_upload = size_upload;
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_nice_flo_const.te_short * 36);
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_nice_flo_const.te_short);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_nice_flo_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_nice_flo_const.te_short);
-        } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_nice_flo_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_nice_flo_const.te_long);
-        }
-    }
-    return true;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_nice_flo_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_assert(context);
-    SubGhzProtocolEncoderNiceFlo* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) {
-            break;
-        }
-        if((instance->generic.data_count_bit <
-            subghz_protocol_nice_flo_const.min_count_bit_for_found) ||
-           (instance->generic.data_count_bit >
-            2 * subghz_protocol_nice_flo_const.min_count_bit_for_found)) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
-            ret = SubGhzProtocolStatusErrorValueBitCount;
-            break;
-        }
-
-        flipper_format_read_uint32(
-            flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
-
-        if(!subghz_protocol_encoder_nice_flo_get_upload(instance)) {
-            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
-            break;
-        }
-        instance->encoder.is_running = true;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_nice_flo_stop(void* context) {
-    SubGhzProtocolEncoderNiceFlo* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_nice_flo_yield(void* context) {
-    SubGhzProtocolEncoderNiceFlo* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_nice_flo_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderNiceFlo* instance = malloc(sizeof(SubGhzProtocolDecoderNiceFlo));
-    instance->base.protocol = &subghz_protocol_nice_flo;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    return instance;
-}
-
-void subghz_protocol_decoder_nice_flo_free(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderNiceFlo* instance = context;
-    free(instance);
-}
-
-void subghz_protocol_decoder_nice_flo_reset(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderNiceFlo* instance = context;
-    instance->decoder.parser_step = NiceFloDecoderStepReset;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderNiceFlo), &subghz_protocol_nice_flo);
 }
 
 void subghz_protocol_decoder_nice_flo_feed(void* context, bool level, uint32_t duration) {
@@ -271,22 +145,6 @@ void subghz_protocol_decoder_nice_flo_feed(void* context, bool level, uint32_t d
     }
 }
 
-uint8_t subghz_protocol_decoder_nice_flo_get_hash_data(void* context) {
-    furi_assert(context);
-    SubGhzProtocolDecoderNiceFlo* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
-
-SubGhzProtocolStatus subghz_protocol_decoder_nice_flo_serialize(
-    void* context,
-    FlipperFormat* flipper_format,
-    SubGhzRadioPreset* preset) {
-    furi_assert(context);
-    SubGhzProtocolDecoderNiceFlo* instance = context;
-    return subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
-}
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_nice_flo_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -309,22 +167,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_nice_flo_get_string(void* context, FuriString* output) {
-    furi_assert(context);
-    SubGhzProtocolDecoderNiceFlo* instance = context;
-
-    uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
-    uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
-        instance->generic.data, instance->generic.data_count_bit);
-    uint32_t code_found_reverse_lo = code_found_reverse & 0x00000000ffffffff;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%08lX\r\n"
-        "Yek:0x%08lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        code_found_lo,
-        code_found_reverse_lo);
-}

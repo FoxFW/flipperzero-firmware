@@ -2,6 +2,8 @@
 #include <inttypes.h>
 
 #include "../blocks/custom_btn_i.h"
+#include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG                          "MitsubishiProtocolV0"
 #define MITSUBISHI_V0_PREAMBLE_COUNT 100
@@ -27,6 +29,8 @@ struct SubGhzProtocolDecoderMitsubishiV0 {
     uint8_t decode_data[12];
 };
 
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMitsubishiV0);
+
 typedef enum {
     MitsubishiV0DecoderStepReset = 0,
     MitsubishiV0DecoderStepDataSave,
@@ -40,22 +44,8 @@ struct SubGhzProtocolEncoderMitsubishiV0 {
 
     size_t upload_capacity;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderMitsubishiV0);
 
-static void mitsubishi_v0_scramble(uint8_t* payload, uint16_t counter) {
-    uint8_t hi = (counter >> 8) & 0xFF;
-    uint8_t lo = counter & 0xFF;
-    uint8_t mask1 = (hi & 0xAA) | (lo & 0x55);
-    uint8_t mask2 = (lo & 0xAA) | (hi & 0x55);
-    uint8_t mask3 = mask1 ^ mask2;
-
-    for(int i = 0; i < 5; i++) {
-        payload[i] ^= mask3;
-    }
-
-    for(int i = 0; i < 8; i++) {
-        payload[i] = ~payload[i];
-    }
-}
 
 static void mitsubishi_v0_reset_payload(SubGhzProtocolDecoderMitsubishiV0* instance) {
     instance->bit_count = 0;
@@ -128,22 +118,16 @@ static void mitsubishi_v0_publish_frame(SubGhzProtocolDecoderMitsubishiV0* insta
 
 const SubGhzProtocolDecoder subghz_protocol_mitsubishi_v0_decoder = {
     .alloc = subghz_protocol_decoder_mitsubishi_v0_alloc,
-    .free = subghz_protocol_decoder_mitsubishi_v0_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_mitsubishi_v0_feed,
     .reset = subghz_protocol_decoder_mitsubishi_v0_reset,
     .get_hash_data = subghz_protocol_decoder_mitsubishi_v0_get_hash_data,
     .serialize = subghz_protocol_decoder_mitsubishi_v0_serialize,
     .deserialize = subghz_protocol_decoder_mitsubishi_v0_deserialize,
-    .get_string = subghz_protocol_decoder_mitsubishi_v0_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_mitsubishi_v0_encoder = {
-    .alloc = subghz_protocol_encoder_mitsubishi_v0_alloc,
-    .free = subghz_protocol_encoder_mitsubishi_v0_free,
-    .deserialize = subghz_protocol_encoder_mitsubishi_v0_deserialize,
-    .stop = subghz_protocol_encoder_mitsubishi_v0_stop,
-    .yield = subghz_protocol_encoder_mitsubishi_v0_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_mitsubishi_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_mitsubishi_v0");
 
 const SubGhzProtocol subghz_protocol_mitsubishi_v0 = {
     .name = MITSUBISHI_PROTOCOL_V0_NAME,
@@ -152,117 +136,8 @@ const SubGhzProtocol subghz_protocol_mitsubishi_v0 = {
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable |
             SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mitsubishi_v0_decoder,
-    .encoder = &subghz_protocol_mitsubishi_v0_encoder,
+    .encoder = &subghz_protocol_mitsubishi_v0_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_mitsubishi_v0_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderMitsubishiV0* instance = calloc(1, sizeof(SubGhzProtocolEncoderMitsubishiV0));
-    furi_check(instance);
-
-    instance->base.protocol = &subghz_protocol_mitsubishi_v0;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 5;
-    instance->encoder.size_upload = 0;
-
-    instance->upload_capacity = (MITSUBISHI_V0_PREAMBLE_COUNT * 2) + 20 + (MITSUBISHI_V0_BIT_COUNT * 2) + 2;
-    instance->encoder.upload = calloc(instance->upload_capacity, sizeof(LevelDuration));
-
-    return instance;
-}
-
-void subghz_protocol_encoder_mitsubishi_v0_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderMitsubishiV0* instance = context;
-    if(instance->encoder.upload) free(instance->encoder.upload);
-    free(instance);
-}
-
-static void subghz_protocol_encoder_mitsubishi_v0_get_upload(SubGhzProtocolEncoderMitsubishiV0* instance) {
-    size_t index = 0;
-    uint8_t payload[12] = {0};
-
-    payload[0] = (instance->generic.serial >> 24) & 0xFF;
-    payload[1] = (instance->generic.serial >> 16) & 0xFF;
-    payload[2] = (instance->generic.serial >> 8) & 0xFF;
-    payload[3] = instance->generic.serial & 0xFF;
-    payload[4] = (instance->generic.cnt >> 8) & 0xFF;
-    payload[5] = instance->generic.cnt & 0xFF;
-    payload[6] = instance->generic.btn;
-    payload[9] = 0x5A;
-    payload[10] = 0xFF;
-    payload[11] = 0xFF;
-
-    mitsubishi_v0_scramble(payload, (uint16_t)instance->generic.cnt);
-
-    for(int i = 0; i < MITSUBISHI_V0_PREAMBLE_COUNT; i++) {
-        instance->encoder.upload[index++] = level_duration_make(true, MITSUBISHI_V0_BIT_TE);
-        instance->encoder.upload[index++] = level_duration_make(false, MITSUBISHI_V0_BIT_TE);
-    }
-
-    for(int i = 0; i < 95; i++) {
-        instance->encoder.upload[index++] = level_duration_make(true, MITSUBISHI_V0_BIT_TE);
-        instance->encoder.upload[index++] = level_duration_make(false, MITSUBISHI_V0_BIT_TE);
-    }
-
-    for(int i = 0; i < 12; i++) {
-        for(int bit = 7; bit >= 0; bit--) {
-            bool curr = (payload[i] >> bit) & 1;
-            if(curr) {
-                instance->encoder.upload[index++] = level_duration_make(true, MITSUBISHI_V0_BIT_TE);
-                instance->encoder.upload[index++] = level_duration_make(false, MITSUBISHI_V0_BIT_TE_GAP);
-            } else {
-                instance->encoder.upload[index++] = level_duration_make(true, MITSUBISHI_V0_BIT_TE_GAP);
-                instance->encoder.upload[index++] = level_duration_make(false, MITSUBISHI_V0_BIT_TE);
-            }
-        }
-    }
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_mitsubishi_v0_deserialize(void* context, FlipperFormat* flipper_format) {
-    SubGhzProtocolEncoderMitsubishiV0* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-    do {
-        ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
-        if(ret != SubGhzProtocolStatusOk) break;
-        if(!flipper_format_rewind(flipper_format)) break;
-        flipper_format_read_uint32(flipper_format, "Serial", &instance->generic.serial, 1);
-        flipper_format_read_uint32(flipper_format, "Cnt", &instance->generic.cnt, 1);
-        uint32_t btn_temp = 0;
-        flipper_format_read_uint32(flipper_format, "Btn", &btn_temp, 1);
-        instance->generic.btn = (uint8_t)btn_temp;
-
-        if(subghz_custom_btn_get_original() == 0) {
-            subghz_custom_btn_set_original(instance->generic.btn);
-        }
-        subghz_custom_btn_set_max(4);
-
-        subghz_protocol_encoder_mitsubishi_v0_get_upload(instance);
-        instance->encoder.is_running = true;
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-    return ret;
-}
-
-void subghz_protocol_encoder_mitsubishi_v0_stop(void* context) {
-    ((SubGhzProtocolEncoderMitsubishiV0*)context)->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_mitsubishi_v0_yield(void* context) {
-    SubGhzProtocolEncoderMitsubishiV0* instance = context;
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0) return level_duration_reset();
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-    return ret;
-}
 
 void* subghz_protocol_decoder_mitsubishi_v0_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -273,9 +148,7 @@ void* subghz_protocol_decoder_mitsubishi_v0_alloc(SubGhzEnvironment* environment
     return instance;
 }
 
-void subghz_protocol_decoder_mitsubishi_v0_free(void* context) {
-    free(context);
-}
+
 
 void subghz_protocol_decoder_mitsubishi_v0_reset(void* context) {
     furi_check(context);
@@ -358,17 +231,3 @@ SubGhzProtocolStatus subghz_protocol_decoder_mitsubishi_v0_deserialize(void* con
     return subghz_block_generic_deserialize_check_count_bit(&instance->generic, ff, subghz_protocol_mitsubishi_v0_const.min_count_bit_for_found);
 }
 
-void subghz_protocol_decoder_mitsubishi_v0_get_string(void* context, FuriString* output) {
-    SubGhzProtocolDecoderMitsubishiV0* instance = context;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Sn:%08lX Cnt:%04lX\r\n"
-        "Btn:%02X\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->generic.serial,
-        instance->generic.cnt,
-        instance->generic.btn);
-}

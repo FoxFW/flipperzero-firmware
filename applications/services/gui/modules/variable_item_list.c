@@ -14,6 +14,7 @@ struct VariableItem {
     uint8_t values_count;
     VariableItemChangeCallback change_callback;
     bool locked;
+    bool centered;
     FuriString* locked_message;
     void* context;
 };
@@ -106,6 +107,23 @@ static void variable_item_list_draw_callback(Canvas* canvas, void* _model) {
                         item->label);
                 } else {
 
+                    if(item->centered) {
+                        const char* cval = furi_string_get_cstr(item->current_value_text);
+                        canvas_draw_str_aligned(
+                            canvas, item_width / 2, item_mid_y, AlignCenter, AlignCenter, cval);
+                        if(item->locked) {
+                            canvas_draw_icon(
+                                canvas, item_width - 12, item_mid_y - 4, &I_Lock_7x8);
+                        } else {
+                            if(item->current_value_index > 0) {
+                                canvas_draw_icon(canvas, 4, item_mid_y - 3, &I_ButtonLeft_4x7);
+                            }
+                            if(item->current_value_index < (item->values_count - 1)) {
+                                canvas_draw_icon(
+                                    canvas, item_width - 8, item_mid_y - 3, &I_ButtonRight_4x7);
+                            }
+                        }
+                    } else {
                     uint8_t fox_label_y = item_y + item_height - 6;
                     elements_scrollable_text_line_str(
                         canvas, 5, fox_label_y, 58,
@@ -128,6 +146,7 @@ static void variable_item_list_draw_callback(Canvas* canvas, void* _model) {
                             canvas_draw_str_aligned(
                                 canvas, item_width - 2, item_mid_y, AlignRight, AlignCenter, ">");
                         }
+                    }
                     }
                 }
             } else {
@@ -557,6 +576,7 @@ VariableItem* variable_item_list_add(
             item->current_value_index = 0;
             item->current_value_text = furi_string_alloc();
             item->locked = false;
+            item->centered = false;
             item->locked_message = furi_string_alloc();
         },
         true);
@@ -624,6 +644,10 @@ void variable_item_set_locked(VariableItem* item, bool locked, const char* locke
         furi_assert(locked_message);
         furi_string_set(item->locked_message, locked_message);
     }
+}
+
+void variable_item_set_centered(VariableItem* item, bool centered) {
+    item->centered = centered;
 }
 
 uint8_t variable_item_get_current_value_index(VariableItem* item) {

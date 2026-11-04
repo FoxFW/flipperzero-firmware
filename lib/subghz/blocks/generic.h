@@ -25,6 +25,10 @@ struct SubGhzBlockGeneric {
     uint32_t cnt;
     uint8_t cnt_2;
     uint32_t seed;
+    uint8_t status;
+    uint8_t crc;        // FoxFW: computed CRC for display (applab-derived decoders)
+    uint8_t crc_check;   // FoxFW: 1 = CRC/validation passed
+    uint8_t extra_check; // FoxFW: 1 = protocol-specific extra validation passed
 };
 
 typedef struct SubGhzBlockGenericGlobal SubGhzBlockGenericGlobal;
@@ -71,6 +75,15 @@ SubGhzProtocolStatus subghz_block_generic_deserialize_check_count_bit(
     SubGhzBlockGeneric* instance,
     FlipperFormat* flipper_format,
     uint16_t count_bit);
+
+void subghz_block_generic_advance_counter(uint32_t* cnt, uint32_t max);
+void subghz_block_generic_global_publish_cnt(uint32_t cnt, uint8_t length_bit);
+void subghz_block_generic_global_publish_btn(uint8_t btn, uint8_t length_bit);
+
+bool subghz_block_read_hex(FlipperFormat* flipper_format, const char* key, void* data, size_t size);
+bool subghz_block_write_hex(FlipperFormat* flipper_format, const char* key, uint64_t data, size_t size);
+void subghz_block_write_disp(
+    FlipperFormat* flipper_format, const char* protocol_name, const char* button_name);
 
 #ifdef __cplusplus
 }

@@ -69,13 +69,17 @@ static int32_t subghz_worker_thread_callback(void* context) {
 }
 
 SubGhzWorker* subghz_worker_alloc(void) {
+    return subghz_worker_alloc_ex(4096);
+}
+
+SubGhzWorker* subghz_worker_alloc_ex(size_t stream_samples) {
     SubGhzWorker* instance = malloc(sizeof(SubGhzWorker));
 
     instance->thread =
         furi_thread_alloc_ex("SubGhzWorker", 4096, subghz_worker_thread_callback, instance);
 
     instance->stream =
-        furi_stream_buffer_alloc(sizeof(LevelDuration) * 4096, sizeof(LevelDuration));
+        furi_stream_buffer_alloc(sizeof(LevelDuration) * stream_samples, sizeof(LevelDuration));
 
     instance->filter_duration = 30;
 

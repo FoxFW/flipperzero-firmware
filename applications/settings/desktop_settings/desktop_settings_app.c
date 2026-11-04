@@ -1,4 +1,5 @@
 #include <furi.h>
+#include <furi_hal.h>
 #include <gui/modules/popup.h>
 #include <gui/modules/dialog_ex.h>
 #include <gui/scene_manager.h>
@@ -112,20 +113,19 @@ void desktop_settings_app_free(DesktopSettingsApp* app) {
     if(temp_save_name) {
 
         Storage* storage = furi_record_open(RECORD_STORAGE);
-        const char* pending = EXT_PATH("apps_data/fox_setup/name.pending");
         if(strcmp(app->device_name, "") == 0) {
-
-            storage_simply_remove(storage, pending);
 
             storage_simply_remove(storage, NAMECHANGER_PATH);
         } else {
-            storage_simply_mkdir(storage, EXT_PATH("apps_data/fox_setup"));
-            File* f = storage_file_alloc(storage);
-            if(storage_file_open(f, pending, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-                storage_file_write(f, app->device_name, strlen(app->device_name));
-                storage_file_close(f);
+            storage_simply_mkdir(storage, EXT_PATH("System"));
+            FlipperFormat* f = flipper_format_file_alloc(storage);
+            if(flipper_format_file_open_always(f, NAMECHANGER_PATH)) {
+                flipper_format_write_header_cstr(f, NAMECHANGER_HEADER, NAMECHANGER_VERSION);
+                flipper_format_write_string_cstr(f, "Name", app->device_name);
+                flipper_format_file_close(f);
             }
-            storage_file_free(f);
+            flipper_format_free(f);
+            furi_hal_version_set_name(app->device_name);
         }
         furi_record_close(RECORD_STORAGE);
     }
@@ -164,9 +164,7 @@ void desktop_settings_app_free(DesktopSettingsApp* app) {
     furi_record_close(RECORD_GUI);
     free(app);
 
-    if(temp_save_name) {
-        furi_hal_power_reset();
-    }
+    UNUSED(temp_save_name);
 }
 
 int32_t desktop_settings_app(void* p) {

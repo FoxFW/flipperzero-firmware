@@ -1,4 +1,7 @@
 #include "scher_khan.h"
+
+#include "common.h"
+#include "../encode_plugin.h"
 #include "../blocks/custom_btn_i.h"
 #include "../blocks/generic.h"
 
@@ -98,98 +101,6 @@ static void scher_khan_pro_decrypt(
     }
 }
 
-static void scher_khan_pro_encrypt(
-    const uint8_t* plain,
-    uint8_t* encrypted,
-    const uint8_t* key_table) {
-    uint8_t src[7];
-    memcpy(src, plain, 7);
-    memset(encrypted, 0, 7);
-    encrypted[0] = src[0];
-    uint8_t pkt_cnt = src[0] & 0x0F;
-
-    for(int i = 1; i < 6; i++) {
-        src[i] ^= encrypted[i - 1];
-
-        for(int j = 0; j < 4; j++) {
-            uint8_t cr = key_table[(pkt_cnt << 2) + j];
-            uint8_t s = src[i];
-
-            uint8_t bit = 0x80 >> (j << 1);
-            if((s & bit) == bit) encrypted[i] |= 0x80 >> (cr >> 4);
-
-            bit = 0x80 >> ((j << 1) + 1);
-            if((s & bit) == bit) encrypted[i] |= 0x80 >> (cr & 0x0F);
-        }
-        pkt_cnt = (pkt_cnt + 1) & 0x0F;
-    }
-}
-
-static const char* scher_khan_btn_name(uint8_t btn) {
-    switch(btn) {
-    case 0x1: return "Lock";
-    case 0x2: return "Unlock";
-    case 0x3: return "Lock+Unlock";
-    case 0x4: return "Trunk";
-    case 0x5: return "Lock+Trunk";
-    case 0x6: return "Unlock+Trunk";
-    case 0x7: return "Lk+Ul+Tr";
-    case 0x8: return "Start";
-    case 0x9: return "Lock+Start";
-    case 0xA: return "Unlock+Start";
-    case 0xC: return "Trunk+Start";
-    case 0xF: return "All/Panic";
-    default:  return "?";
-    }
-}
-
-static uint8_t scher_khan_btn_to_custom(uint8_t btn) {
-    switch(btn) {
-    case 0x1: return SUBGHZ_CUSTOM_BTN_UP;
-    case 0x2: return SUBGHZ_CUSTOM_BTN_DOWN;
-    case 0x4: return SUBGHZ_CUSTOM_BTN_LEFT;
-    case 0x8: return SUBGHZ_CUSTOM_BTN_RIGHT;
-    default:  return SUBGHZ_CUSTOM_BTN_OK;
-    }
-}
-
-static uint8_t scher_khan_custom_to_btn(uint8_t custom, uint8_t original_btn) {
-    if(custom == SUBGHZ_CUSTOM_BTN_OK) return original_btn;
-
-    uint8_t page = subghz_custom_btn_get_page();
-
-    FURI_LOG_I(TAG, "custom_to_btn: original=0x%02X custom=%u page=%u",
-        original_btn, custom, page);
-
-    if(page == 0) {
-        switch(custom) {
-        case SUBGHZ_CUSTOM_BTN_UP:    return 0x1;
-        case SUBGHZ_CUSTOM_BTN_DOWN:  return 0x2;
-        case SUBGHZ_CUSTOM_BTN_LEFT:  return 0x4;
-        case SUBGHZ_CUSTOM_BTN_RIGHT: return 0x8;
-        }
-    } else if(page == 1) {
-        switch(custom) {
-        case SUBGHZ_CUSTOM_BTN_UP:    return 0x3;
-        case SUBGHZ_CUSTOM_BTN_DOWN:  return 0x5;
-        case SUBGHZ_CUSTOM_BTN_LEFT:  return 0x6;
-        case SUBGHZ_CUSTOM_BTN_RIGHT: return 0x7;
-        }
-    } else {
-        switch(custom) {
-        case SUBGHZ_CUSTOM_BTN_UP:    return 0x9;
-        case SUBGHZ_CUSTOM_BTN_DOWN:  return 0xA;
-        case SUBGHZ_CUSTOM_BTN_LEFT:  return 0xC;
-        case SUBGHZ_CUSTOM_BTN_RIGHT: return 0xF;
-        }
-    }
-    return original_btn;
-}
-
-static uint8_t scher_khan_get_btn_code(uint8_t original_btn) {
-    return scher_khan_custom_to_btn(subghz_custom_btn_get(), original_btn);
-}
-
 static const SubGhzBlockConst subghz_protocol_scher_khan_const = {
     .te_short = 750,
     .te_long = 1100,
@@ -215,6 +126,11 @@ struct SubGhzProtocolEncoderScherKhan {
 
     const char* protocol_name;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderScherKhan);
+
+
+SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderScherKhan);
+SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderScherKhan);
 
 typedef enum {
     ScherKhanDecoderStepReset = 0,
@@ -229,415 +145,46 @@ static void subghz_protocol_scher_khan_check_remote_controller(
 
 const SubGhzProtocolDecoder subghz_protocol_scher_khan_decoder = {
     .alloc = subghz_protocol_decoder_scher_khan_alloc,
-    .free = subghz_protocol_decoder_scher_khan_free,
+    .free = subghz_protocol_decoder_common_free,
 
     .feed = subghz_protocol_decoder_scher_khan_feed,
     .reset = subghz_protocol_decoder_scher_khan_reset,
 
-    .get_hash_data = subghz_protocol_decoder_scher_khan_get_hash_data,
+    .get_hash_data = subghz_protocol_decoder_common_get_hash_data,
     .serialize = subghz_protocol_decoder_scher_khan_serialize,
     .deserialize = subghz_protocol_decoder_scher_khan_deserialize,
-    .get_string = subghz_protocol_decoder_scher_khan_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_scher_khan_encoder = {
-    .alloc = subghz_protocol_encoder_scher_khan_alloc,
-    .free = subghz_protocol_encoder_scher_khan_free,
+static bool scher_khan_raw_replay = false; // #101: TxRaw verbatim replay (freeze counter)
 
-    .deserialize = subghz_protocol_encoder_scher_khan_deserialize,
-    .stop = subghz_protocol_encoder_scher_khan_stop,
-    .yield = subghz_protocol_encoder_scher_khan_yield,
+/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
+typedef struct {
+    void* scher_khan_raw_replay;
+} enc_scher_khan_host_t;
+static const enc_scher_khan_host_t enc_scher_khan_host = {
+    .scher_khan_raw_replay = (void*)&scher_khan_raw_replay,
 };
+static const SubGhzEncoderExternal subghz_protocol_scher_khan_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_scher_khan", &enc_scher_khan_host);
 
 const SubGhzProtocol subghz_protocol_scher_khan = {
     .name = SUBGHZ_PROTOCOL_SCHER_KHAN_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
 
     .decoder = &subghz_protocol_scher_khan_decoder,
-    .encoder = &subghz_protocol_scher_khan_encoder,
+    .encoder = &subghz_protocol_scher_khan_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_scher_khan_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderScherKhan* instance = malloc(sizeof(SubGhzProtocolEncoderScherKhan));
-
-    instance->base.protocol = &subghz_protocol_scher_khan;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    instance->encoder.repeat = 7;
-    instance->encoder.size_upload = 256;
-    instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0;
-
-    return instance;
-}
-
-void subghz_protocol_encoder_scher_khan_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderScherKhan* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-static bool subghz_protocol_encoder_scher_khan_get_upload(
-    SubGhzProtocolEncoderScherKhan* instance,
-    uint8_t btn) {
-    furi_check(instance);
-
-    if(instance->generic.data_count_bit == 51) {
-        uint32_t override_cnt = 0;
-        if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
-            instance->generic.cnt = override_cnt & 0xFFFF;
-        } else {
-            uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-            if((instance->generic.cnt + mult) > 0xFFFF) {
-                instance->generic.cnt = 0;
-            } else {
-                instance->generic.cnt += mult;
-            }
-        }
-
-        uint64_t upper = instance->generic.data & 0x7FFFFFFF0000ULL;
-        upper = (upper & ~(0x0FULL << 24)) | ((uint64_t)(btn & 0x0F) << 24);
-        instance->generic.data = upper | (instance->generic.cnt & 0xFFFF);
-        instance->generic.btn = btn;
-    }
-
-    if(instance->generic.data_count_bit == 57) {
-        uint32_t override_cnt = 0;
-        if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
-            instance->generic.cnt = override_cnt & 0xFFFF;
-        } else {
-            uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-            if((instance->generic.cnt + mult) > 0xFFFF) {
-                instance->generic.cnt = 0;
-            } else {
-                instance->generic.cnt += mult;
-            }
-        }
-
-        uint8_t kb[7];
-        for(int i = 0; i < 7; i++) {
-            kb[i] = (uint8_t)((instance->generic.data >> (48 - i * 8)) & 0xFF);
-        }
-
-        uint8_t crc_polys[2];
-        sk_pi_decode(crc_polys, sk_pro_crc_encoded, 144, 2);
-
-        uint8_t key_table[64];
-        uint8_t poly;
-        uint8_t crc1 = scher_khan_pro_checksum(kb, crc_polys[0]);
-        if(crc1 == kb[6]) {
-            sk_pi_decode(key_table, sk_pro1_encoded, 0, 64);
-            poly = crc_polys[0];
-        } else {
-            sk_pi_decode(key_table, sk_pro2_encoded, 64, 64);
-            poly = crc_polys[1];
-        }
-
-        uint8_t decrypted[7];
-        scher_khan_pro_decrypt(kb, decrypted, key_table);
-
-        decrypted[3] = (decrypted[3] & 0xE0) | (btn & 0x0F);
-        decrypted[4] = (uint8_t)(instance->generic.cnt >> 8);
-        decrypted[5] = (uint8_t)(instance->generic.cnt & 0xFF);
-
-        uint8_t encrypted[7];
-        scher_khan_pro_encrypt(decrypted, encrypted, key_table);
-
-        encrypted[6] = scher_khan_pro_checksum(encrypted, poly);
-
-        instance->generic.data = 0;
-        for(int i = 0; i < 7; i++) {
-            instance->generic.data |= ((uint64_t)encrypted[i] << (48 - i * 8));
-        }
-        instance->generic.data &= 0x01FFFFFFFFFFFFFFULL;
-        instance->generic.btn = btn;
-    }
-
-    size_t index = 0;
-    size_t needed = (6 * 2) + (3 * 2) + (1 * 2) + (instance->generic.data_count_bit * 2) + 1;
-    if(needed > instance->encoder.size_upload) {
-        FURI_LOG_E(TAG, "Upload buffer too small: need %zu, have %zu",
-            needed, instance->encoder.size_upload);
-        return false;
-    }
-
-    for(uint8_t i = 0; i < 6; i++) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-    }
-
-    for(uint8_t i = 0; i < 3; i++) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_short * 2);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_scher_khan_const.te_short * 2);
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-
-    for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
-        if(bit_read(instance->generic.data, i - 1)) {
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_scher_khan_const.te_long);
-        } else {
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_scher_khan_const.te_short);
-        }
-    }
-
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_scher_khan_const.te_short * 2);
-
-    instance->encoder.size_upload = index;
-
-    FURI_LOG_I(TAG, "Upload built: %zu entries, %d bits, btn=0x%02X, cnt=0x%04lX, data=0x%016llX",
-        index, instance->generic.data_count_bit, instance->generic.btn,
-        (unsigned long)instance->generic.cnt, instance->generic.data);
-
-    return true;
-}
-
-static SubGhzProtocolStatus subghz_protocol_encoder_scher_khan_serialize_internal(
-    SubGhzProtocolEncoderScherKhan* instance,
-    FlipperFormat* flipper_format) {
-
-    const char* pname = NULL;
-    subghz_protocol_scher_khan_check_remote_controller(&instance->generic, &pname);
-
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    do {
-        if(!flipper_format_insert_or_update_string_cstr(
-               flipper_format, "Protocol", instance->generic.protocol_name)) {
-            break;
-        }
-
-        uint32_t bits = instance->generic.data_count_bit;
-        if(!flipper_format_insert_or_update_uint32(flipper_format, "Bit", &bits, 1)) {
-            break;
-        }
-
-        char key_str[20];
-        snprintf(key_str, sizeof(key_str), "%016llX", instance->generic.data);
-        if(!flipper_format_insert_or_update_string_cstr(flipper_format, "Key", key_str)) {
-            break;
-        }
-
-        if(!flipper_format_insert_or_update_uint32(
-               flipper_format, "Serial", &instance->generic.serial, 1)) {
-            break;
-        }
-
-        uint32_t temp = instance->generic.btn;
-        if(!flipper_format_insert_or_update_uint32(flipper_format, "Btn", &temp, 1)) {
-            break;
-        }
-
-        if(!flipper_format_insert_or_update_uint32(
-               flipper_format, "Cnt", &instance->generic.cnt, 1)) {
-            break;
-        }
-
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_scher_khan_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    SubGhzProtocolEncoderScherKhan* instance = context;
-    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
-
-    flipper_format_rewind(flipper_format);
-
-    do {
-        FuriString* temp_str = furi_string_alloc();
-        if(!flipper_format_read_string(flipper_format, "Protocol", temp_str)) {
-            FURI_LOG_E(TAG, "Missing Protocol");
-            furi_string_free(temp_str);
-            break;
-        }
-
-        if(!furi_string_equal(temp_str, instance->base.protocol->name)) {
-            FURI_LOG_E(TAG, "Wrong protocol %s != %s",
-                furi_string_get_cstr(temp_str), instance->base.protocol->name);
-            furi_string_free(temp_str);
-            break;
-        }
-        furi_string_free(temp_str);
-
-        uint32_t bit_count_temp;
-        if(!flipper_format_read_uint32(flipper_format, "Bit", &bit_count_temp, 1)) {
-            FURI_LOG_E(TAG, "Missing Bit");
-            break;
-        }
-        instance->generic.data_count_bit = (uint8_t)bit_count_temp;
-
-        temp_str = furi_string_alloc();
-        if(!flipper_format_read_string(flipper_format, "Key", temp_str)) {
-            FURI_LOG_E(TAG, "Missing Key");
-            furi_string_free(temp_str);
-            break;
-        }
-
-        const char* key_str = furi_string_get_cstr(temp_str);
-        uint64_t key = 0;
-        size_t str_len = strlen(key_str);
-        size_t hex_pos = 0;
-        for(size_t i = 0; i < str_len && hex_pos < 16; i++) {
-            char c = key_str[i];
-            if(c == ' ') continue;
-
-            uint8_t nibble;
-            if(c >= '0' && c <= '9') {
-                nibble = c - '0';
-            } else if(c >= 'A' && c <= 'F') {
-                nibble = c - 'A' + 10;
-            } else if(c >= 'a' && c <= 'f') {
-                nibble = c - 'a' + 10;
-            } else {
-                FURI_LOG_E(TAG, "Invalid hex character: %c", c);
-                furi_string_free(temp_str);
-                break;
-            }
-            key = (key << 4) | nibble;
-            hex_pos++;
-        }
-        furi_string_free(temp_str);
-
-        if(hex_pos == 0) {
-            FURI_LOG_E(TAG, "Invalid key length");
-            break;
-        }
-
-        instance->generic.data = key;
-        FURI_LOG_I(TAG, "Parsed key: 0x%016llX", instance->generic.data);
-
-        if(instance->generic.data == 0) {
-            FURI_LOG_E(TAG, "Key is zero after parsing!");
-            break;
-        }
-
-        if(!flipper_format_read_uint32(flipper_format, "Serial", &instance->generic.serial, 1)) {
-            instance->generic.serial = 0;
-            FURI_LOG_I(TAG, "Serial not found, defaulting to 0");
-        } else {
-            FURI_LOG_I(TAG, "Read serial: 0x%08lX", instance->generic.serial);
-        }
-
-        uint32_t btn_temp;
-        if(flipper_format_read_uint32(flipper_format, "Btn", &btn_temp, 1)) {
-            instance->generic.btn = (uint8_t)btn_temp;
-            FURI_LOG_I(TAG, "Read button: 0x%02X", instance->generic.btn);
-        } else {
-            instance->generic.btn = 0;
-            FURI_LOG_I(TAG, "Button not found, defaulting to 0");
-        }
-
-        subghz_custom_btn_set_original(scher_khan_btn_to_custom(instance->generic.btn));
-        subghz_custom_btn_set_max(4);
-        subghz_custom_btn_set_pages(true);
-        subghz_custom_btn_set_max_pages(3);
-
-        uint32_t cnt_temp;
-        if(flipper_format_read_uint32(flipper_format, "Cnt", &cnt_temp, 1)) {
-            instance->generic.cnt = (uint16_t)cnt_temp;
-            FURI_LOG_I(TAG, "Read counter: 0x%04lX", (unsigned long)instance->generic.cnt);
-        } else {
-            instance->generic.cnt = 0;
-        }
-
-        if(!flipper_format_read_uint32(
-               flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1)) {
-            instance->encoder.repeat = 7;
-            FURI_LOG_D(TAG, "Repeat not found, using default 7");
-        }
-
-        const char* pname = NULL;
-        subghz_protocol_scher_khan_check_remote_controller(&instance->generic, &pname);
-        instance->protocol_name = pname;
-
-        uint8_t selected_btn = scher_khan_get_btn_code(instance->generic.btn);
-        subghz_block_generic_global_button_override_get(&selected_btn);
-
-        FURI_LOG_I(TAG,
-            "Building upload: original_btn=0x%02X, selected_btn=0x%02X, bits=%d",
-            instance->generic.btn, selected_btn, instance->generic.data_count_bit);
-
-        if(!subghz_protocol_encoder_scher_khan_get_upload(instance, selected_btn)) {
-            FURI_LOG_E(TAG, "Failed to generate upload");
-            break;
-        }
-
-        subghz_protocol_encoder_scher_khan_serialize_internal(instance, flipper_format);
-
-        instance->encoder.is_running = true;
-        instance->encoder.front = 0;
-
-        FURI_LOG_I(TAG, "Encoder ready: repeat=%u, size_upload=%zu",
-            instance->encoder.repeat, instance->encoder.size_upload);
-
-        ret = SubGhzProtocolStatusOk;
-    } while(false);
-
-    return ret;
-}
-
-void subghz_protocol_encoder_scher_khan_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderScherKhan* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_scher_khan_yield(void* context) {
-    SubGhzProtocolEncoderScherKhan* instance = context;
-
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-
-    return ret;
-}
 
 void* subghz_protocol_decoder_scher_khan_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
-    SubGhzProtocolDecoderScherKhan* instance = malloc(sizeof(SubGhzProtocolDecoderScherKhan));
-    instance->base.protocol = &subghz_protocol_scher_khan;
-    instance->generic.protocol_name = instance->base.protocol->name;
-
-    return instance;
+    return subghz_protocol_decoder_common_alloc(
+        sizeof(SubGhzProtocolDecoderScherKhan), &subghz_protocol_scher_khan);
 }
 
-void subghz_protocol_decoder_scher_khan_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderScherKhan* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_scher_khan_reset(void* context) {
     furi_check(context);
@@ -839,12 +386,7 @@ static void subghz_protocol_scher_khan_check_remote_controller(
     }
 }
 
-uint8_t subghz_protocol_decoder_scher_khan_get_hash_data(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderScherKhan* instance = context;
-    return subghz_protocol_blocks_get_hash_data(
-        &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
-}
+
 
 SubGhzProtocolStatus subghz_protocol_decoder_scher_khan_serialize(
     void* context,
@@ -1007,31 +549,3 @@ SubGhzProtocolStatus
     return ret;
 }
 
-void subghz_protocol_decoder_scher_khan_get_string(void* context, FuriString* output) {
-    furi_check(context);
-    SubGhzProtocolDecoderScherKhan* instance = context;
-
-    subghz_protocol_scher_khan_check_remote_controller(
-        &instance->generic, &instance->protocol_name);
-
-    subghz_custom_btn_set_original(scher_khan_btn_to_custom(instance->generic.btn));
-    subghz_custom_btn_set_max(4);
-    subghz_custom_btn_set_pages(true);
-        subghz_custom_btn_set_max_pages(3);
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:0x%lX%08lX\r\n"
-        "Sn:%07lX Btn:[%s]\r\n"
-        "Cntr:%04lX\r\n"
-        "Pt: %s\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)instance->generic.data,
-        instance->generic.serial,
-        scher_khan_btn_name(scher_khan_get_btn_code(instance->generic.btn)),
-        instance->generic.cnt,
-        instance->protocol_name);
-}

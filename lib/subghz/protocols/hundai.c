@@ -9,6 +9,10 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
+#include "decode_plugin.h"
+#include <lib/subghz/blocks/bitbuf.h>
 
 // ============================================================================
 // Hundai (new Hyundai) SubGHz keyfob protocol (decoder + encoder)
@@ -110,7 +114,7 @@ struct SubGhzProtocolDecoderHundai {
     // Manchester half-cell buffer. Each entry is a captured half-cell level
     // (0/1); merged long pulses are split into two identical half-cells before
     // being pushed. Decoded from the tail at the end-of-frame gap.
-    uint8_t cells[HUNDAI_CELL_CAPACITY];
+    uint8_t cells[SUBGHZ_BITBUF_BYTES(HUNDAI_CELL_CAPACITY)];
     uint16_t cell_count;
 
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
@@ -132,10 +136,12 @@ struct SubGhzProtocolEncoderHundai {
 
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderHundai);
+
 
 const SubGhzProtocolDecoder subghz_protocol_hundai_decoder = {
     .alloc = subghz_protocol_decoder_hundai_alloc,
-    .free = subghz_protocol_decoder_hundai_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_hundai_feed,
     .reset = subghz_protocol_decoder_hundai_reset,
     .get_hash_data = subghz_protocol_decoder_hundai_get_hash_data,
@@ -144,13 +150,7 @@ const SubGhzProtocolDecoder subghz_protocol_hundai_decoder = {
     .get_string = subghz_protocol_decoder_hundai_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_hundai_encoder = {
-    .alloc = subghz_protocol_encoder_hundai_alloc,
-    .free = subghz_protocol_encoder_hundai_free,
-    .deserialize = subghz_protocol_encoder_hundai_deserialize,
-    .stop = subghz_protocol_encoder_hundai_stop,
-    .yield = subghz_protocol_encoder_hundai_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_hundai_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_hundai");
 
 const SubGhzProtocol subghz_protocol_hundai = {
     .name = HUNDAI_PROTOCOL_NAME,
@@ -159,7 +159,7 @@ const SubGhzProtocol subghz_protocol_hundai = {
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
             SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_hundai_decoder,
-    .encoder = &subghz_protocol_hundai_encoder,
+    .encoder = &subghz_protocol_hundai_encoder_ext.vtable,
 };
 
 // ---------------------------------------------------------------------------
@@ -174,27 +174,6 @@ static uint32_t hundai_uid(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
 
 static uint8_t hundai_button(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
     return (uint8_t)(raw[5] & 0x0FU);
-}
-
-static uint8_t hundai_key_index(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
-    return (uint8_t)((raw[7] >> 4U) & 0x0FU);
-}
-
-static uint8_t hundai_channel(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
-    return (uint8_t)(raw[7] & 0x0FU);
-}
-
-static const char* hundai_button_name(uint8_t btn_nibble) {
-    switch(btn_nibble) {
-    case HUNDAI_BTN_0:
-        return "Lock";
-    case HUNDAI_BTN_1:
-        return "Unlock";
-    case HUNDAI_BTN_2:
-        return "Trunk";
-    default:
-        return "Unknown";
-    }
 }
 
 static bool hundai_frame_valid(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
@@ -216,17 +195,6 @@ static void hundai_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[
 // b7 high-nibble key-index rollover: advance when the session counter b6 wraps
 // to 0. new_hi = 1 + old_hi; if that would be 0 (old_hi == 15), reset to 1.
 // Applied together with the b6 increment for a genuine (non-replay) press.
-static void hundai_advance_counter(uint8_t raw[HUNDAI_WIRE_BYTES]) {
-    const uint8_t new_b6 = (uint8_t)(raw[6] + 1U);
-    raw[6] = new_b6;
-    if(new_b6 == 0U) {
-        uint8_t hi = (uint8_t)((raw[7] >> 4U) & 0x0FU);
-        uint8_t new_hi = (uint8_t)((hi + 1U) & 0x0FU);
-        if(new_hi == 0U) new_hi = 1U; // never 0; wrap 15 -> 1
-        raw[7] = (uint8_t)((new_hi << 4U) | (raw[7] & 0x0FU)); // preserve channel nibble
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Decoder: collect Manchester half-cells into a sliding window (mazda_infinity
 // style) and scan byte-aligned offsets for the tail of the 0x55 preamble
@@ -262,8 +230,8 @@ static void hundai_clear_cells(SubGhzProtocolDecoderHundai* instance) {
 static bool
     hundai_cells_to_bytes(const uint8_t* cells, uint16_t cell_off, uint8_t* out, size_t bytes) {
     for(size_t bit = 0U; bit < bytes * 8U; bit++) {
-        const uint8_t first = cells[cell_off + bit * 2U];
-        const uint8_t second = cells[cell_off + bit * 2U + 1U];
+        const uint8_t first = subghz_bitbuf_get(cells, cell_off + bit * 2U);
+        const uint8_t second = subghz_bitbuf_get(cells, cell_off + bit * 2U + 1U);
         if(first == second) return false; // not a valid Manchester cell
         // HIGH,LOW -> 1 ; LOW,HIGH -> 0
         const bool value = (first != 0U) && (second == 0U);
@@ -324,10 +292,10 @@ static void hundai_try_decode(SubGhzProtocolDecoderHundai* instance) {
 
 static void hundai_push_cell(SubGhzProtocolDecoderHundai* instance, bool level) {
     if(instance->cell_count < HUNDAI_CELL_CAPACITY) {
-        instance->cells[instance->cell_count++] = level ? 1U : 0U;
+        subghz_bitbuf_set(instance->cells, instance->cell_count++, level ? 1U : 0U);
     } else {
-        memmove(instance->cells, &instance->cells[1], HUNDAI_CELL_CAPACITY - 1U);
-        instance->cells[HUNDAI_CELL_CAPACITY - 1U] = level ? 1U : 0U;
+        subghz_bitbuf_shift_down1(instance->cells, HUNDAI_CELL_CAPACITY);
+        subghz_bitbuf_set(instance->cells, HUNDAI_CELL_CAPACITY - 1U, level ? 1U : 0U);
     }
 }
 
@@ -341,11 +309,7 @@ void* subghz_protocol_decoder_hundai_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-void subghz_protocol_decoder_hundai_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolDecoderHundai* instance = context;
-    free(instance);
-}
+
 
 void subghz_protocol_decoder_hundai_reset(void* context) {
     furi_check(context);
@@ -462,33 +426,17 @@ SubGhzProtocolStatus
 }
 
 void subghz_protocol_decoder_hundai_get_string(void* context, FuriString* output) {
-    furi_check(context);
     SubGhzProtocolDecoderHundai* instance = context;
-
-    furi_string_cat_printf(
-        output,
-        "%s %ubit\r\n"
-        "SN:%08lX Btn:[%s]\r\n"
-        "Cnt:%02X KeyIdx:%X Ch:%X Dup:%s\r\n"
-        "Data:%02X%02X%02X%02X%02X%02X%02X%02X%02X\r\n",
-        instance->generic.protocol_name,
-        HUNDAI_WIRE_BITS,
-        (unsigned long)instance->generic.serial,
-        hundai_button_name(hundai_button(instance->raw_data)),
-        instance->raw_data[6],
-        hundai_key_index(instance->raw_data),
-        hundai_channel(instance->raw_data),
-        instance->dup_confirmed ? "OK" : "single",
-        instance->raw_data[0],
-        instance->raw_data[1],
-        instance->raw_data[2],
-        instance->raw_data[3],
-        instance->raw_data[4],
-        instance->raw_data[5],
-        instance->raw_data[6],
-        instance->raw_data[7],
-        instance->raw_data[8]);
+    const SubGhzDecodeInput input = {
+        .decoder = context,
+        .generic = &instance->generic,
+        .extra = NULL,
+        .extra_count = 0,
+        .aux = NULL,
+    };
+    subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
+
 
 // ---------------------------------------------------------------------------
 // Encoder: rebuild the exact TX wire and send the frame TWICE.
@@ -503,196 +451,3 @@ void subghz_protocol_decoder_hundai_get_string(void* context, FuriString* output
 // change re-stamps b5's button nibble and advances b6 (+ b7 key-index on wrap).
 // ---------------------------------------------------------------------------
 
-static size_t hundai_emit_byte_msb(LevelDuration* upload, size_t index, uint8_t byte) {
-    const uint32_t te = HUNDAI_TE_SHORT;
-    for(uint8_t bit = 0U; bit < 8U; bit++) {
-        const bool value = ((byte >> (7U - bit)) & 1U) != 0U;
-        if(value) {
-            // bit1 = HIGH then LOW
-            upload[index++] = level_duration_make(true, te);
-            upload[index++] = level_duration_make(false, te);
-        } else {
-            // bit0 = LOW then HIGH
-            upload[index++] = level_duration_make(false, te);
-            upload[index++] = level_duration_make(true, te);
-        }
-    }
-    return index;
-}
-
-static size_t hundai_emit_frame(LevelDuration* upload, size_t index, const uint8_t raw[HUNDAI_WIRE_BYTES], bool first_frame) {
-    // Header: LOW (4500 frame / 2500 inter-frame) -> HIGH 1000 -> LOW 500.
-    upload[index++] =
-        level_duration_make(false, first_frame ? HUNDAI_HDR_LOW : HUNDAI_IFG_LOW);
-    upload[index++] = level_duration_make(true, HUNDAI_HDR_HIGH);
-    upload[index++] = level_duration_make(false, HUNDAI_HDR_LOW2);
-
-    // 32 x 0x55 preamble (MSB-first Manchester).
-    for(uint8_t i = 0U; i < HUNDAI_PREAMBLE_BYTES; i++) {
-        index = hundai_emit_byte_msb(upload, index, HUNDAI_PREAMBLE_BYTE);
-    }
-
-    // 9 body bytes (MSB-first Manchester).
-    for(uint8_t i = 0U; i < HUNDAI_WIRE_BYTES; i++) {
-        index = hundai_emit_byte_msb(upload, index, raw[i]);
-    }
-    return index;
-}
-
-static bool hundai_encoder_build_upload(SubGhzProtocolEncoderHundai* instance) {
-    furi_check(instance);
-    LevelDuration* upload = instance->encoder.upload;
-    if(!upload) return false;
-
-    size_t index = 0U;
-    // Frame sent TWICE per press. The first frame opens with the 4500us header;
-    // the second is preceded by the inter-frame gap (2500us) header sequence.
-    index = hundai_emit_frame(upload, index, instance->raw_data, true);
-    index = hundai_emit_frame(upload, index, instance->raw_data, false);
-
-    // Trailing gap so consecutive repeats are separable.
-    upload[index++] = level_duration_make(false, HUNDAI_IFG_LOW);
-
-    instance->encoder.size_upload = index;
-    instance->encoder.front = 0U;
-    return true;
-}
-
-void* subghz_protocol_encoder_hundai_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-    SubGhzProtocolEncoderHundai* instance = calloc(1, sizeof(SubGhzProtocolEncoderHundai));
-    furi_check(instance);
-    instance->base.protocol = &subghz_protocol_hundai;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = HUNDAI_DEFAULT_REPEAT;
-    instance->encoder.size_upload = 0U;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-    return instance;
-}
-
-void subghz_protocol_encoder_hundai_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderHundai* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_hundai_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderHundai* instance = context;
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-}
-
-LevelDuration subghz_protocol_encoder_hundai_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderHundai* instance = context;
-
-    if(!instance->encoder.is_running || instance->encoder.repeat == 0 ||
-       instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        // Endless/breakless TX: while OK is held do not consume repeats.
-        if(!subghz_block_generic_global.endless_tx) instance->encoder.repeat--;
-        instance->encoder.front = 0U;
-    }
-
-    return ret;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_hundai_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-    furi_check(flipper_format);
-    SubGhzProtocolEncoderHundai* instance = context;
-
-    instance->encoder.is_running = false;
-    instance->encoder.front = 0U;
-
-    flipper_format_rewind(flipper_format);
-    FuriString* protocol_name = furi_string_alloc();
-    bool protocol_ok = flipper_format_read_string(flipper_format, "Protocol", protocol_name) &&
-                       furi_string_equal(protocol_name, instance->base.protocol->name);
-    furi_string_free(protocol_name);
-    if(!protocol_ok) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    uint32_t bit_count = 0U;
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_uint32(flipper_format, "Bit", &bit_count, 1) ||
-       bit_count != HUNDAI_WIRE_BITS) {
-        return SubGhzProtocolStatusErrorValueBitCount;
-    }
-    instance->generic.data_count_bit = (uint16_t)bit_count;
-
-    flipper_format_rewind(flipper_format);
-    if(!flipper_format_read_hex(
-           flipper_format, HUNDAI_DATA_FIELD, instance->raw_data, HUNDAI_WIRE_BYTES) ||
-       !hundai_frame_valid(instance->raw_data)) {
-        return SubGhzProtocolStatusErrorParserOthers;
-    }
-
-    instance->generic.serial = hundai_uid(instance->raw_data);
-    instance->generic.btn = hundai_button(instance->raw_data);
-    instance->generic.cnt = instance->raw_data[6];
-
-    // [PROTOPIRATE_PORT] custom_btn support. Hundai exposes 3 buttons via the b5
-    // low nibble: Lock=0x01, Unlock=0x02, Trunk=0x09. OK replays the captured
-    // frame byte-identically. A D-pad change re-stamps b5's button nibble (high
-    // nibble preserved) and advances the session counter b6 (with b7 key-index
-    // rollover on wrap) so the emitted frame is a valid fresh press.
-    const uint8_t original_btn = hundai_button(instance->raw_data);
-    if(subghz_custom_btn_get_original() == 0) {
-        subghz_custom_btn_set_original(original_btn);
-    }
-    subghz_custom_btn_set_max(3);
-    const uint8_t custom_btn_id = subghz_custom_btn_get();
-    uint8_t new_btn = original_btn;
-    switch(custom_btn_id) {
-    case SUBGHZ_CUSTOM_BTN_UP:   new_btn = HUNDAI_BTN_0; break;
-    case SUBGHZ_CUSTOM_BTN_DOWN: new_btn = HUNDAI_BTN_1; break;
-    case SUBGHZ_CUSTOM_BTN_LEFT: new_btn = HUNDAI_BTN_2; break;
-    case SUBGHZ_CUSTOM_BTN_OK:
-    default:                     new_btn = original_btn; break; // exact replay
-    }
-
-    if(new_btn != original_btn) {
-        // Re-stamp the button nibble (preserve b5 high nibble).
-        instance->raw_data[5] = (uint8_t)((instance->raw_data[5] & 0xF0U) | (new_btn & 0x0FU));
-        // Advance the session counter (honoring an explicit override if set).
-        uint32_t override_cnt = 0U;
-        if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
-            instance->raw_data[6] = (uint8_t)(override_cnt & 0xFFU);
-        } else {
-            hundai_advance_counter(instance->raw_data);
-        }
-        instance->generic.btn = hundai_button(instance->raw_data);
-        instance->generic.cnt = instance->raw_data[6];
-    }
-
-    hundai_decode_fields(&instance->generic, instance->raw_data);
-
-    uint32_t repeat = HUNDAI_DEFAULT_REPEAT;
-    flipper_format_rewind(flipper_format);
-    flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
-    instance->encoder.repeat = (repeat == 0U) ? HUNDAI_DEFAULT_REPEAT : (size_t)repeat;
-
-    if(instance->encoder.upload == NULL) {
-        instance->encoder.upload = malloc(HUNDAI_UPLOAD_CAPACITY * sizeof(LevelDuration));
-        furi_check(instance->encoder.upload);
-    }
-    if(!hundai_encoder_build_upload(instance)) {
-        return SubGhzProtocolStatusErrorEncoderGetUpload;
-    }
-
-    instance->encoder.is_running = true;
-    return SubGhzProtocolStatusOk;
-}

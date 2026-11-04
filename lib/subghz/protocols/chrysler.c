@@ -7,6 +7,8 @@
 #include "../blocks/custom_btn_i.h"
 
 #include <string.h>
+#include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "ChryslerV0"
 
@@ -84,19 +86,13 @@ struct SubGhzProtocolEncoderChrysler {
     uint16_t data_2;
     uint8_t seed;
 };
+SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderChrysler);
+
 
 static void chrysler_v0_u64_to_bytes_be(uint64_t data, uint8_t bytes[8]) {
     for(size_t i = 0; i < 8; i++) {
         bytes[i] = (uint8_t)((data >> ((7U - i) * 8U)) & 0xFFU);
     }
-}
-
-static uint64_t chrysler_v0_bytes_to_u64_be(const uint8_t bytes[8]) {
-    uint64_t data = 0;
-    for(size_t i = 0; i < 8; i++) {
-        data = (data << 8U) | bytes[i];
-    }
-    return data;
 }
 
 static uint8_t chrysler_v0_reverse6(uint32_t value) {
@@ -130,17 +126,6 @@ static bool chrysler_v0_is_short(uint32_t duration) {
 static bool chrysler_v0_is_long_mark(uint32_t duration) {
     return (DURATION_DIFF(duration, CHRYSLER_V0_TE_LONG_A) <= CHRYSLER_V0_TE_LONG_DELTA) ||
            (DURATION_DIFF(duration, CHRYSLER_V0_TE_LONG_B) <= CHRYSLER_V0_TE_LONG_DELTA);
-}
-
-static const char* chrysler_v0_get_button_name(uint8_t button) {
-    switch(button) {
-    case 1:
-        return "Lock";
-    case 2:
-        return "Unlock";
-    default:
-        return "??";
-    }
 }
 
 static uint32_t chrysler_v0_get_sn_b(const SubGhzProtocolDecoderChrysler* instance) {
@@ -236,103 +221,6 @@ static void chrysler_v0_decoder_commit(SubGhzProtocolDecoderChrysler* instance) 
     }
 }
 
-static uint8_t chrysler_v0_payload_get_bit(const uint8_t payload[10], uint8_t index) {
-    const uint8_t byte = payload[index >> 3U];
-    const uint8_t shift = 7U - (index & 7U);
-    return (byte >> shift) & 1U;
-}
-
-static void chrysler_v0_build_payload(
-    const uint8_t plain[9],
-    uint8_t counter,
-    uint8_t button,
-    uint8_t header_low2,
-    uint8_t out[10]) {
-    uint8_t transformed[9];
-    chrysler_v0_transform_block(plain, transformed, counter, button);
-
-    out[0] = (uint8_t)((chrysler_v0_reverse6(counter) << 2U) | (header_low2 & 0x03U));
-    memcpy(&out[1], transformed, sizeof(transformed));
-}
-
-static size_t chrysler_v0_build_upload(
-    SubGhzProtocolEncoderChrysler* instance,
-    const uint8_t payload_a[10],
-    const uint8_t payload_b[10]) {
-    size_t i = 0;
-    LevelDuration* upload = instance->encoder.upload;
-
-    for(size_t preamble = 0; preamble < CHRYSLER_V0_PREAMBLE_PAIRS; preamble++) {
-        upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-        upload[i++] = level_duration_make(false, CHRYSLER_V0_TE_LONG_B);
-    }
-
-    upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-    upload[i++] = level_duration_make(false, CHRYSLER_V0_FRAME_GAP);
-
-    for(uint8_t bit = 0; bit < 80; bit++) {
-        const bool value = chrysler_v0_payload_get_bit(payload_a, bit);
-        upload[i++] = level_duration_make(true, value ? CHRYSLER_V0_TE_ONE_SHORT : CHRYSLER_V0_TE_SHORT);
-        upload[i++] = level_duration_make(false, value ? CHRYSLER_V0_TE_LONG_A : CHRYSLER_V0_TE_LONG_B);
-    }
-
-    upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-    upload[i++] = level_duration_make(false, CHRYSLER_V0_FRAME_GAP);
-
-    for(size_t preamble = 0; preamble < CHRYSLER_V0_PREAMBLE_PAIRS; preamble++) {
-        upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-        upload[i++] = level_duration_make(false, CHRYSLER_V0_TE_LONG_B);
-    }
-
-    upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-    upload[i++] = level_duration_make(false, CHRYSLER_V0_FRAME_GAP);
-
-    for(uint8_t bit = 0; bit < 80; bit++) {
-        const bool value = chrysler_v0_payload_get_bit(payload_b, bit);
-        upload[i++] = level_duration_make(true, value ? CHRYSLER_V0_TE_ONE_SHORT : CHRYSLER_V0_TE_SHORT);
-        upload[i++] = level_duration_make(false, value ? CHRYSLER_V0_TE_LONG_A : CHRYSLER_V0_TE_LONG_B);
-    }
-
-    upload[i++] = level_duration_make(true, CHRYSLER_V0_TE_SHORT);
-    upload[i++] = level_duration_make(false, CHRYSLER_V0_FRAME_GAP);
-
-    instance->encoder.size_upload = i;
-    return i;
-}
-
-void subghz_protocol_decoder_chrysler_free(void* context) {
-    furi_check(context);
-    free(context);
-}
-
-void subghz_protocol_encoder_chrysler_free(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderChrysler* instance = context;
-    free(instance->encoder.upload);
-    free(instance);
-}
-
-void subghz_protocol_encoder_chrysler_stop(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderChrysler* instance = context;
-    instance->encoder.is_running = false;
-}
-
-LevelDuration subghz_protocol_encoder_chrysler_yield(void* context) {
-    furi_check(context);
-    SubGhzProtocolEncoderChrysler* instance = context;
-    if(instance->encoder.repeat == 0 || !instance->encoder.is_running || instance->encoder.size_upload == 0) {
-        instance->encoder.is_running = false;
-        return level_duration_reset();
-    }
-    LevelDuration ret = instance->encoder.upload[instance->encoder.front];
-    if(++instance->encoder.front == instance->encoder.size_upload) {
-        instance->encoder.repeat--;
-        instance->encoder.front = 0;
-    }
-    return ret;
-}
-
 uint8_t subghz_protocol_decoder_chrysler_get_hash_data(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderChrysler* instance = context;
@@ -342,227 +230,26 @@ uint8_t subghz_protocol_decoder_chrysler_get_hash_data(void* context) {
 
 const SubGhzProtocolDecoder subghz_protocol_chrysler_v0_decoder = {
     .alloc = subghz_protocol_decoder_chrysler_alloc,
-    .free = subghz_protocol_decoder_chrysler_free,
+    .free = subghz_protocol_decoder_common_free,
     .feed = subghz_protocol_decoder_chrysler_feed,
     .reset = subghz_protocol_decoder_chrysler_reset,
     .get_hash_data = subghz_protocol_decoder_chrysler_get_hash_data,
     .serialize = subghz_protocol_decoder_chrysler_serialize,
     .deserialize = subghz_protocol_decoder_chrysler_deserialize,
-    .get_string = subghz_protocol_decoder_chrysler_get_string,
+    .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-const SubGhzProtocolEncoder subghz_protocol_chrysler_v0_encoder = {
-    .alloc = subghz_protocol_encoder_chrysler_alloc,
-    .free = subghz_protocol_encoder_chrysler_free,
-    .deserialize = subghz_protocol_encoder_chrysler_deserialize,
-    .stop = subghz_protocol_encoder_chrysler_stop,
-    .yield = subghz_protocol_encoder_chrysler_yield,
-};
+static const SubGhzEncoderExternal subghz_protocol_chrysler_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_chrysler");
 
 const SubGhzProtocol subghz_protocol_chrysler = {
     .name = CHRYSLER_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Send,
+            SubGhzProtocolFlag_Send | SubGhzProtocolFlag_RawReplay,
     .decoder = &subghz_protocol_chrysler_v0_decoder,
-    .encoder = &subghz_protocol_chrysler_v0_encoder,
+    .encoder = &subghz_protocol_chrysler_v0_encoder_ext.vtable,
 };
-
-void* subghz_protocol_encoder_chrysler_alloc(SubGhzEnvironment* environment) {
-    UNUSED(environment);
-
-    SubGhzProtocolEncoderChrysler* instance =
-        calloc(1, sizeof(SubGhzProtocolEncoderChrysler));
-    furi_check(instance);
-
-    instance->base.protocol = &subghz_protocol_chrysler;
-    instance->generic.protocol_name = instance->base.protocol->name;
-    instance->encoder.repeat = 2;
-    instance->encoder.size_upload = 0;
-    instance->encoder.upload = NULL;
-    instance->encoder.is_running = false;
-
-    return instance;
-}
-
-SubGhzProtocolStatus
-    subghz_protocol_encoder_chrysler_deserialize(void* context, FlipperFormat* flipper_format) {
-    furi_check(context);
-
-    SubGhzProtocolEncoderChrysler* instance = context;
-    if(!flipper_format_rewind(flipper_format)) {
-        return SubGhzProtocolStatusError;
-    }
-    FuriString* tmp_str = furi_string_alloc();
-    bool protocol_match = false;
-    if(flipper_format_read_string(flipper_format, "Protocol", tmp_str) &&
-       furi_string_equal(tmp_str, instance->base.protocol->name)) {
-        protocol_match = true;
-    }
-    furi_string_free(tmp_str);
-    if(!protocol_match) {
-        return SubGhzProtocolStatusError;
-    }
-
-    SubGhzProtocolStatus status = subghz_block_generic_deserialize_check_count_bit(
-        &instance->generic, flipper_format, CHRYSLER_V0_DECODE_BIT_COUNT);
-    if(status != SubGhzProtocolStatusOk) {
-        return status;
-    }
-
-    if(!flipper_format_rewind(flipper_format)) {
-        return SubGhzProtocolStatusError;
-    }
-
-    uint16_t key2 = 0U;
-    if(!flipper_format_read_hex(flipper_format, "Key_2", (uint8_t*)&key2, 2)) {
-        return SubGhzProtocolStatusError;
-    }
-
-    key2 = __builtin_bswap16(key2);
-    instance->data_2 = key2;
-
-    uint8_t key[8];
-    chrysler_v0_u64_to_bytes_be(instance->generic.data, key);
-    const uint8_t b0 = key[0];
-
-    instance->seed = chrysler_v0_reverse6(((uint32_t)(instance->generic.data >> 56U)) >> 2U);
-    instance->plain_header = (uint8_t)((instance->generic.data >> 56U) & 0x03U);
-
-    if((b0 & 0x80U) == 0U) {
-        instance->tx_button = (((uint8_t)(key[1] ^ key[6])) == 0x08U) ? 2U : 1U;
-    } else {
-        instance->tx_button = (((uint8_t)(key2 & 0xFFU) ^ key[4]) == 0x10U) ? 2U : 1U;
-    }
-
-    const uint8_t original_button = instance->tx_button;
-
-    uint8_t encoded[9];
-    uint8_t generated[9];
-    encoded[0] = key[1];
-    encoded[1] = key[2];
-    encoded[2] = key[3];
-    encoded[3] = key[4];
-    encoded[4] = key[5];
-    encoded[5] = key[6];
-    encoded[6] = key[7];
-    encoded[7] = (uint8_t)(key2 >> 8U);
-    encoded[8] = (uint8_t)(key2 & 0xFFU);
-    chrysler_v0_transform_block(encoded, generated, instance->seed, instance->tx_button);
-
-    if(flipper_format_rewind(flipper_format) &&
-       flipper_format_read_hex(flipper_format, "Plain_A", instance->plain_a, 9)) {
-        if(!(flipper_format_rewind(flipper_format) &&
-             flipper_format_read_hex(flipper_format, "Plain_B", instance->plain_b, 9))) {
-            memcpy(instance->plain_b, instance->plain_a, sizeof(instance->plain_b));
-        }
-    } else if(
-        flipper_format_rewind(flipper_format) &&
-        flipper_format_read_hex(flipper_format, "Plain_B", instance->plain_b, 9)) {
-        memcpy(instance->plain_a, instance->plain_b, sizeof(instance->plain_a));
-    } else {
-        memcpy(instance->plain_a, generated, sizeof(instance->plain_a));
-        memcpy(instance->plain_b, generated, sizeof(instance->plain_b));
-    }
-
-    uint32_t btn_u32 = 0;
-    uint32_t cnt_u32 = instance->seed & 0x3FU;
-    {
-        uint32_t tmp = 0;
-        flipper_format_rewind(flipper_format);
-        if(flipper_format_read_uint32(flipper_format, "Btn", &tmp, 1)) btn_u32 = tmp;
-        tmp = 0;
-        flipper_format_rewind(flipper_format);
-        if(flipper_format_read_uint32(flipper_format, "Cnt", &tmp, 1)) cnt_u32 = tmp;
-    }
-
-    uint8_t tx_button = original_button;
-    if(btn_u32 == 1U || btn_u32 == 2U) {
-        tx_button = (uint8_t)btn_u32;
-    }
-
-    {
-        if(subghz_custom_btn_get_original() == 0) {
-            subghz_custom_btn_set_original(original_button);
-        }
-        subghz_custom_btn_set_max(2);
-        uint8_t custom_btn_id = subghz_custom_btn_get();
-        switch(custom_btn_id) {
-        case SUBGHZ_CUSTOM_BTN_UP:
-            tx_button = 0x1U;
-            break;
-        case SUBGHZ_CUSTOM_BTN_OK:
-            tx_button = (original_button == 1U || original_button == 2U) ? original_button : 0x2U;
-            break;
-        default:
-            break;
-        }
-    }
-
-    instance->tx_button = tx_button;
-    if(tx_button != original_button) {
-        instance->plain_a[5] ^= 0x0CU;
-        instance->plain_b[3] ^= 0x30U;
-    }
-
-    {
-        flipper_format_rewind(flipper_format);
-        uint32_t repeat_val = 0;
-        instance->encoder.repeat =
-            flipper_format_read_uint32(flipper_format, "Repeat", &repeat_val, 1) ? repeat_val : 2;
-    }
-
-    {
-        uint32_t mult = furi_hal_subghz_get_rolling_counter_mult();
-        if(mult == 0U) mult = 1U;
-        cnt_u32 = (cnt_u32 + (2U * mult)) & 0x3FU;
-    }
-
-    uint32_t counter = cnt_u32 & 0x3FU;
-
-    uint8_t counter_a = (uint8_t)(counter & 0x3FU);
-    if(counter_a & 1U) {
-        counter_a = (uint8_t)((counter_a - 1U) & 0x3FU);
-    }
-    instance->seed = counter_a;
-    const uint8_t counter_b = (counter_a == 0U) ? 0x3FU : (uint8_t)(counter_a - 1U);
-
-    uint8_t payload_a[10];
-    uint8_t payload_b[10];
-    chrysler_v0_build_payload(
-        instance->plain_a, counter_a, instance->tx_button, instance->plain_header, payload_a);
-    chrysler_v0_build_payload(
-        instance->plain_b, counter_b, instance->tx_button, instance->plain_header, payload_b);
-
-    instance->encoder.upload = malloc(CHRYSLER_V0_UPLOAD_CAPACITY * sizeof(LevelDuration));
-    furi_check(instance->encoder.upload);
-    instance->encoder.size_upload = CHRYSLER_V0_UPLOAD_CAPACITY;
-    chrysler_v0_build_upload(instance, payload_a, payload_b);
-
-    instance->generic.data = chrysler_v0_bytes_to_u64_be(payload_a);
-    instance->data_2 = ((uint16_t)payload_a[8] << 8U) | payload_a[9];
-
-    if(!flipper_format_rewind(flipper_format)) {
-        return SubGhzProtocolStatusError;
-    }
-    if(!flipper_format_update_hex(flipper_format, "Key", payload_a, 8)) {
-        return SubGhzProtocolStatusError;
-    }
-
-    if(!flipper_format_rewind(flipper_format)) {
-        return SubGhzProtocolStatusError;
-    }
-
-    uint16_t key2_out = __builtin_bswap16(instance->data_2);
-    if(!flipper_format_update_hex(flipper_format, "Key_2", (uint8_t*)&key2_out, 2)) {
-        return SubGhzProtocolStatusError;
-    }
-
-    instance->encoder.front = 0;
-    instance->encoder.is_running = true;
-    return status;
-}
 
 void* subghz_protocol_decoder_chrysler_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -829,52 +516,3 @@ SubGhzProtocolStatus
     return status;
 }
 
-void subghz_protocol_decoder_chrysler_get_string(void* context, FuriString* output) {
-    furi_check(context);
-
-    SubGhzProtocolDecoderChrysler* instance = context;
-
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n%016llX%04X\r\n",
-        instance->generic.protocol_name,
-        instance->packet_bit_count,
-        instance->generic.data,
-        instance->data_2);
-
-    if(instance->plain_a_present) {
-        if(instance->plain_b_present) {
-            furi_string_cat_printf(
-                output,
-                "SnA:%08lX\r\nSnB:%08lX\r\n",
-                instance->generic.cnt,
-                chrysler_v0_get_sn_b(instance));
-        } else {
-            furi_string_cat_printf(output, "SnA:%08lX\r\n", instance->generic.cnt);
-        }
-    } else if(instance->plain_b_present) {
-        furi_string_cat_printf(output, "SnB:%08lX\r\n", chrysler_v0_get_sn_b(instance));
-    }
-
-    subghz_custom_btn_set_max(2);
-    uint8_t display_btn = instance->decoded_button;
-    switch(subghz_custom_btn_get()) {
-    case SUBGHZ_CUSTOM_BTN_UP:
-        display_btn = 0x1U;
-        break;
-    case SUBGHZ_CUSTOM_BTN_DOWN:
-        display_btn = 0x2U;
-        break;
-    case SUBGHZ_CUSTOM_BTN_OK:
-    default:
-        break;
-    }
-
-    furi_string_cat_printf(
-        output,
-        "Btn:%02X [%s] Cnt:%02X\r\nChk:%s",
-        display_btn,
-        chrysler_v0_get_button_name(display_btn),
-        instance->seed,
-        instance->check_ok ? "OK" : "ERR");
-}
