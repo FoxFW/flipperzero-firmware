@@ -2,7 +2,7 @@ App(
     appid="foxdeflock",
     name="FoxDeFlock (Fox Edition)",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     entry_point="foxdeflock_app",
     requires=[
         "gui",

@@ -13,6 +13,9 @@
 #define SUBGHZ_RF_JAMMER_FAP_PATH     EXT_PATH("apps/Fox/fox_rf_jammer.fap")
 #define SUBGHZ_TPMS_FAP_PATH          EXT_PATH("apps/Fox/fox_tpms.fap")
 #define SUBGHZ_RANDOMATTACK_FAP_PATH  EXT_PATH("apps/Sub-GHz/subghz_randomattack.fap")
+#define SUBGHZ_ADD_MANUALLY_FAP_PATH  EXT_PATH("apps/System/Includes/subghz_add_manually.fap")
+#define SUBGHZ_RAW_DUAL_FAP_PATH      EXT_PATH("apps/System/Includes/subghz_raw_dual.fap")
+#define SUBGHZ_GRABBER_FAP_PATH       EXT_PATH("apps/Fox/fox_subghz_grabber.fap")
 
 void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
@@ -21,9 +24,7 @@ void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx) {
 
 void subghz_scene_start_launch_and_exit(
     SubGhz* subghz, const char* fap_path, const char* args, bool show_blank) {
-    /* Pre-write the grid-focus marker so the return lands on the right button
-     * even for stock apps (e.g. subghz_randomattack) that don't write it
-     * themselves. Strip a leading "core:" to match subghz_app's exact checks. */
+
     if(args && args[0]) {
         const char* focus = args;
         if(strncmp(focus, "core:", 5) == 0) focus += 5;
@@ -42,9 +43,7 @@ void subghz_scene_start_launch_and_exit(
     furi_record_close(RECORD_LOADER);
 
     if(show_blank) {
-        /* Hide the frozen grid during the handoff for apps with NO loader wheel.
-         * Apps that DO show the wheel skip this (the wheel covers the load; the
-         * extra blank otherwise flashes). */
+
         subghz->blank_transition_viewport = view_port_alloc();
         view_port_draw_callback_set(
             subghz->blank_transition_viewport, subghz_blank_transition_draw_cb, NULL);
@@ -85,10 +84,12 @@ void subghz_scene_start_on_enter(void* context) {
     bool has_tpms          = storage_file_exists(storage, SUBGHZ_TPMS_FAP_PATH);
     bool has_subratt       = storage_file_exists(storage, SUBGHZ_RANDOMATTACK_FAP_PATH);
     bool has_keeloq        = storage_file_exists(storage, SUBGHZ_KEELOQ_TOOL_FAP_PATH);
+    bool has_grabber       = storage_file_exists(storage, SUBGHZ_GRABBER_FAP_PATH);
     furi_record_close(RECORD_STORAGE);
 
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_FREQANA, has_freq_analyzer);
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_MODANA,  has_mod_analyzer);
+    subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_SIGNALGRABBER, has_grabber);
 
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_RADIOSETTINGS, true);
     subghz_start_grid_set_visible(subghz->start_grid, SGRID_IDX_JAMMER,  has_jammer);
@@ -120,6 +121,8 @@ void subghz_scene_start_on_enter(void* context) {
         else if(focus == SubmenuIndexKeeloqKeys)           grid_btn = SGRID_IDX_KEELOQ;
         else if(focus == SubmenuIndexKeeloqBf2)            grid_btn = SGRID_IDX_KEELOQBF;
         else if(focus == SubmenuIndexReadDual)             grid_btn = SGRID_IDX_READDUAL;
+        else if(focus == SubmenuIndexRawDual)              grid_btn = SGRID_IDX_RAWDUAL;
+        else if(focus == SubmenuIndexSignalGrabber)        grid_btn = SGRID_IDX_SIGNALGRABBER;
         subghz_start_grid_set_selected(subghz->start_grid, grid_btn);
     }
 
@@ -135,6 +138,8 @@ void subghz_scene_start_on_enter(void* context) {
             subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Read Int/Ext", SubmenuIndexReadDual,
             subghz_scene_start_submenu_callback, subghz);
+        submenu_add_item(subghz->submenu, "RAW Int/Ext", SubmenuIndexRawDual,
+            subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Read RAW", SubmenuIndexReadRAW,
             subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Saved", SubmenuIndexSaved,
@@ -146,6 +151,9 @@ void subghz_scene_start_on_enter(void* context) {
                 subghz_scene_start_submenu_callback, subghz);
         if(has_mod_analyzer)
             submenu_add_item(subghz->submenu, "Mod. Analyzer", SubmenuIndexModulationAnalyzer,
+                subghz_scene_start_submenu_callback, subghz);
+        if(has_grabber)
+            submenu_add_item(subghz->submenu, "Signal Grabber", SubmenuIndexSignalGrabber,
                 subghz_scene_start_submenu_callback, subghz);
         submenu_add_item(subghz->submenu, "Protocols", SubmenuIndexProtocolList,
             subghz_scene_start_submenu_callback, subghz);
@@ -199,15 +207,23 @@ bool subghz_scene_start_on_event(void* context, SceneManagerEvent event) {
             subghz_rx_key_state_set(subghz, SubGhzRxKeyStateIDLE);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiverDual);
             return true;
+        } else if(event.event == SubmenuIndexRawDual) {
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_RAW_DUAL_FAP_PATH, "core:menu:rawdual", true);
+            return true;
+        } else if(event.event == SubmenuIndexSignalGrabber) {
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_GRABBER_FAP_PATH, "core:menu:grabber", true);
+            return true;
         } else if(event.event == SubmenuIndexSaved) {
             scene_manager_set_scene_state(
                 subghz->scene_manager, SubGhzSceneStart, SubmenuIndexSaved);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneSaved);
             return true;
         } else if(event.event == SubmenuIndexAddManuallyAdvanced) {
-            scene_manager_set_scene_state(
-                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexAddManuallyAdvanced);
-            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneSetType);
+
+            subghz_scene_start_launch_and_exit(
+                subghz, SUBGHZ_ADD_MANUALLY_FAP_PATH, "core:menu:addmanual", true);
             return true;
         } else if(event.event == SubmenuIndexFrequencyAnalyzer) {
 

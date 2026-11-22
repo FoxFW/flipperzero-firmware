@@ -1,4 +1,4 @@
-/* decode_smc5326.fal : SD get_string for smc5326 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/smc5326.h>

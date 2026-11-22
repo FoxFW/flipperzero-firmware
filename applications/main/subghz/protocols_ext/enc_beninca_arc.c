@@ -1,5 +1,5 @@
-/* enc_beninca_arc.fal : SD encoder for beninca_arc (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_beninca_arc enc_beninca_arc__subghz_protocol_beninca_arc
 #define subghz_protocol_encoder_beninca_arc_alloc enc_beninca_arc__subghz_protocol_encoder_beninca_arc_alloc
 #define subghz_protocol_encoder_beninca_arc_deserialize enc_beninca_arc__subghz_protocol_encoder_beninca_arc_deserialize
@@ -41,7 +41,6 @@ static const SubGhzBlockConst subghz_protocol_beninca_arc_const = {
     .min_count_bit_for_found = 128,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool beninca_arc_raw_replay__bridge_ty;
 typedef struct {
     void* beninca_arc_raw_replay;
@@ -279,7 +278,7 @@ static void subghz_protocol_beninca_arc_encoder_prepare_packets(
     furi_assert(instance);
 
     if(beninca_arc_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -311,7 +310,6 @@ static void subghz_protocol_beninca_arc_encoder_prepare_packets(
     instance->encoder.size_upload = index;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -319,13 +317,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -365,7 +361,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderBenincaARC* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         beninca_arc_raw_replay = false;
         {
             uint32_t beninca_arc_txraw = 0;
@@ -441,7 +437,6 @@ static const SubGhzProtocolEncoder enc_beninca_arc_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_beninca_arc = {
     .name = SUBGHZ_PROTOCOL_BENINCA_ARC_NAME,
     .type = SubGhzProtocolTypeDynamic,

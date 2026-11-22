@@ -9,7 +9,6 @@ typedef struct SubGhzProtocolEncoderPeugotV0 SubGhzProtocolEncoderPeugotV0;
 
 extern const SubGhzProtocol subghz_protocol_peugot_v0;
 
-/* Decoder */
 void* subghz_protocol_decoder_peugot_v0_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_peugot_v0_free(void* context);
 void subghz_protocol_decoder_peugot_v0_reset(void* context);
@@ -23,7 +22,6 @@ SubGhzProtocolStatus
     subghz_protocol_decoder_peugot_v0_deserialize(void* context, FlipperFormat* flipper_format);
 void subghz_protocol_decoder_peugot_v0_get_string(void* context, FuriString* output);
 
-/* Encoder */
 void* subghz_protocol_encoder_peugot_v0_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_encoder_peugot_v0_free(void* context);
 SubGhzProtocolStatus

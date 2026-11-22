@@ -1,6 +1,6 @@
-/* enc_fiat_v2.fal : SD encoder for fiat_v2 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define fiat_v2_protocol enc_fiat_v2__fiat_v2_protocol
+
+
+#define subghz_protocol_fiat_v2 enc_fiat_v2__fiat_v2_protocol
 #define subghz_protocol_encoder_common_free enc_fiat_v2__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_fiat_v2__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_fiat_v2_alloc enc_fiat_v2__subghz_protocol_encoder_fiat_v2_alloc
@@ -52,7 +52,7 @@ typedef struct SubGhzProtocolEncoderFiatV2 {
     uint8_t hitag2_key[6];
     uint32_t epoch;
     uint8_t iv_combo;
-} 
+}
 SubGhzProtocolEncoderFiatV2;
 
 static const SubGhzBlockConst subghz_protocol_fiat_v2_const = {
@@ -62,7 +62,6 @@ static const SubGhzBlockConst subghz_protocol_fiat_v2_const = {
     .min_count_bit_for_found = FIAT_V2_LOGICAL_BITS,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&subghz_protocol_fiat_v1_compute_auth) subghz_protocol_fiat_v1_compute_auth;
     __typeof__(&subghz_protocol_fiat_v1_get_known_keys) subghz_protocol_fiat_v1_get_known_keys;
@@ -241,7 +240,6 @@ static bool fiat_v2_frame_valid(const uint8_t raw[FIAT_V2_WIRE_BYTES]) {
     return uid != 0U && uid != UINT32_MAX;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -249,7 +247,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -273,7 +270,7 @@ void* subghz_protocol_encoder_fiat_v2_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolEncoderFiatV2* instance = calloc(1, sizeof(SubGhzProtocolEncoderFiatV2));
     furi_check(instance);
 
-    instance->base.protocol = &fiat_v2_protocol;
+    instance->base.protocol = &subghz_protocol_fiat_v2;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = FIAT_V2_ENC_DEFAULT_REPEAT;
     instance->encoder.upload = malloc(FIAT_V2_UPLOAD_CAPACITY * sizeof(LevelDuration));
@@ -454,8 +451,7 @@ static const SubGhzProtocolEncoder enc_fiat_v2_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol fiat_v2_protocol = {
+const SubGhzProtocol subghz_protocol_fiat_v2 = {
     .name = FIAT_V2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |

@@ -1,4 +1,4 @@
-/* decode_hundai.fal : SD get_string for hundai (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -27,20 +27,15 @@ struct SubGhzProtocolDecoderHundai {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    // Manchester half-cell buffer. Each entry is a captured half-cell level
-    // (0/1); merged long pulses are split into two identical half-cells before
-    // being pushed. Decoded from the tail at the end-of-frame gap.
     uint8_t cells[SUBGHZ_BITBUF_BYTES(HUNDAI_CELL_CAPACITY)];
     uint16_t cell_count;
 
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
 
-    // Duplicate/integrity check: the fob sends two identical frames per press.
     uint8_t prev_frame[HUNDAI_WIRE_BYTES];
     bool prev_frame_valid;
-    bool dup_confirmed; // second identical frame was seen
+    bool dup_confirmed;
 
-    // Last reported frame, to suppress endless re-report of the same press.
     uint8_t last_reported[HUNDAI_WIRE_BYTES];
     bool last_reported_valid;
 };
@@ -78,7 +73,6 @@ static const char* hundai_button_name(uint8_t btn_nibble) {
 static void hundai_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderHundai* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

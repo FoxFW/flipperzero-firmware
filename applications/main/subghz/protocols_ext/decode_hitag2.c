@@ -1,4 +1,4 @@
-/* decode_hitag2.fal : SD get_string for hitag2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -19,26 +19,22 @@ struct SubGhzProtocolDecoderHitag2 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    // Raw signed pulse durations of the current burst (+ = high, - = low).
-    // te_short is estimated per burst, so a single decoder handles the whole
-    // Hitag2 bitrate range (te≈90µs Fiat/Alfa .. te≈240µs Ford Ka).
     int16_t durs[HITAG2_MAXDUR];
     uint16_t dur_count;
 
-    // Scratch demodulated bits (filled per polarity in process()).
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(HITAG2_ALL_BITS_MAX)];
 
-    uint32_t uid;   // 32-bit identifier
-    uint8_t  btn;   // 4-bit button id
-    uint16_t lctr;  // 10-bit cleartext counter (low bits)
-    uint32_t ks;    // 32-bit keystream
-    uint8_t  chk;   // 8-bit parity byte
+    uint32_t uid;
+    uint8_t  btn;
+    uint16_t lctr;
+    uint32_t ks;
+    uint8_t  chk;
 };
 
 static const char* hitag2_btn_name(uint8_t btn);
 
 static const char* hitag2_btn_name(uint8_t btn) {
-    // Ford Ka mapping; other manufacturers may differ.
+
     switch(btn) {
     case 0x3: return "Lock";
     case 0x5: return "Unlock";
@@ -50,7 +46,6 @@ static const char* hitag2_btn_name(uint8_t btn) {
 static void hitag2_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderHitag2* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

@@ -1,5 +1,5 @@
-/* enc_bmw_cas4.fal : SD encoder for bmw_cas4 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_bmw_cas4 enc_bmw_cas4__subghz_protocol_bmw_cas4
 #define subghz_protocol_encoder_bmw_cas4_alloc enc_bmw_cas4__subghz_protocol_encoder_bmw_cas4_alloc
 #define subghz_protocol_encoder_bmw_cas4_deserialize enc_bmw_cas4__subghz_protocol_encoder_bmw_cas4_deserialize
@@ -24,7 +24,6 @@ struct SubGhzProtocolEncoderBmwCas4 {
     SubGhzBlockGeneric generic;
 };
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -32,7 +31,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -71,7 +69,6 @@ static const SubGhzProtocolEncoder enc_bmw_cas4_vt = {
     .yield = subghz_protocol_encoder_bmw_cas4_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_bmw_cas4 = {
     .name = BMW_CAS4_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

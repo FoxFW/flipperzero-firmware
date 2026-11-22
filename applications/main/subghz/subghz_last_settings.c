@@ -17,6 +17,7 @@
 #define SUBGHZ_LAST_SETTING_FIELD_HOPPING_ENABLE                    "Hopping"
 #define SUBGHZ_LAST_SETTING_FIELD_PRESET_HOPPING                     "PresetHopping"
 #define SUBGHZ_LAST_SETTING_FIELD_PRESET_HOPPING_THRESHOLD          "PresetHoppingThreshold"
+#define SUBGHZ_LAST_SETTING_FIELD_PRESET_HOPPER_MODE                "PresetHopperMode"
 #define SUBGHZ_LAST_SETTING_FIELD_IGNORE_FILTER                     "IgnoreFilter"
 #define SUBGHZ_LAST_SETTING_FIELD_FILTER                            "Filter"
 #define SUBGHZ_LAST_SETTING_FIELD_RSSI_THRESHOLD                    "RSSI"
@@ -24,6 +25,8 @@
 #define SUBGHZ_LAST_SETTING_FIELD_DELETE_OLD                        "DelOldSignals"
 #define SUBGHZ_LAST_SETTING_FIELD_AUTO_SAVE                         "AutoSave"
 #define SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW              "CaptureUnknownRaw"
+#define SUBGHZ_LAST_SETTING_FIELD_SHOW_PSA_ENCRYPTED             "ShowPsaEncrypted"
+#define SUBGHZ_LAST_SETTING_FIELD_COMBINE_REPEATS               "CombineRepeats"
 #define SUBGHZ_LAST_SETTING_FIELD_HOPPING_THRESHOLD                 "HoppingThreshold"
 #define SUBGHZ_LAST_SETTING_FIELD_LED_AND_POWER_AMP                 "LedAndPowerAmp"
 #define SUBGHZ_LAST_SETTING_FIELD_TX_POWER                          "TXPower"
@@ -38,6 +41,18 @@
 #define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_PRESET      "DualIntPreset"
 #define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_FREQUENCY   "DualExtFrequency"
 #define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_PRESET      "DualExtPreset"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAMMING     "DualIntJamming"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_FREQ    "DualIntJamFreq"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_PRESET  "DualIntJamPreset"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAMMING     "DualExtJamming"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_FREQ    "DualExtJamFreq"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_PRESET  "DualExtJamPreset"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_RSSI        "DualIntRssi"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_RSSI        "DualExtRssi"
+#define SUBGHZ_LAST_SETTING_FIELD_DUAL_RSSI_ADAPTIVE   "DualRssiAdaptive"
+#define SUBGHZ_LAST_SETTING_FIELD_READ_RSSI_ADAPTIVE    "ReadRssiAdaptive"
+#define SUBGHZ_LAST_SETTING_FIELD_READRAW_RSSI_ADAPTIVE "ReadRawRssiAdaptive"
+#define SUBGHZ_LAST_SETTING_DEFAULT_DUAL_RSSI          7
 
 SubGhzLastSettings* subghz_last_settings_alloc(void) {
     SubGhzLastSettings* instance = malloc(sizeof(SubGhzLastSettings));
@@ -63,10 +78,13 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
     instance->rssi = SUBGHZ_RAW_THRESHOLD_DEFAULT;
     instance->predefined_index = 0;
     instance->auto_save = false;
-    instance->capture_unknown_raw = true;
+    instance->capture_unknown_raw = false;
+    instance->show_psa_encrypted = false;
+    instance->combine_repeats = true;
     instance->hopping_threshold = -90.0f;
     instance->enable_preset_hopping = false;
     instance->preset_hopping_threshold = SUBGHZ_LAST_SETTING_DEFAULT_PRESET_HOPPING_THRESHOLD;
+    instance->preset_hopper_mode = 0;
     instance->leds_and_amp = true;
     instance->visualizer_display_mode = SUBGHZ_LAST_SETTING_DEFAULT_VISUALIZER_MODE;
     instance->raw_playback_zoom_level = SUBGHZ_LAST_SETTING_DEFAULT_RAW_ZOOM_LEVEL;
@@ -77,6 +95,17 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
     instance->dual_int_preset_index = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_INT_PRESET;
     instance->dual_ext_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
     instance->dual_ext_preset_index = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_EXT_PRESET;
+    instance->dual_int_jamming = 0;
+    instance->dual_int_jam_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
+    instance->dual_int_jam_preset_index = 0;
+    instance->dual_ext_jamming = 0;
+    instance->dual_ext_jam_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
+    instance->dual_ext_jam_preset_index = 0;
+    instance->dual_int_rssi = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_RSSI;
+    instance->dual_ext_rssi = SUBGHZ_LAST_SETTING_DEFAULT_DUAL_RSSI;
+    instance->dual_rssi_adaptive = 1;
+    instance->read_rssi_adaptive = 1;
+    instance->readraw_rssi_adaptive = 1;
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     FlipperFormat* fff_data_file = flipper_format_file_alloc(storage);
@@ -150,6 +179,14 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
             }
             if(!flipper_format_read_uint32(
                    fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_PRESET_HOPPER_MODE,
+                   &instance->preset_hopper_mode,
+                   1)) {
+                instance->preset_hopper_mode = 0;
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
                    SUBGHZ_LAST_SETTING_FIELD_IGNORE_FILTER,
                    &instance->ignore_filter,
                    1)) {
@@ -191,7 +228,23 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
                    SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW,
                    &instance->capture_unknown_raw,
                    1)) {
-                instance->capture_unknown_raw = true; /* default ON for older settings files */
+                instance->capture_unknown_raw = false;
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_bool(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_SHOW_PSA_ENCRYPTED,
+                   &instance->show_psa_encrypted,
+                   1)) {
+                instance->show_psa_encrypted = false;
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_bool(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_COMBINE_REPEATS,
+                   &instance->combine_repeats,
+                   1)) {
+                instance->combine_repeats = true;
                 flipper_format_rewind(fff_data_file);
             }
             uint32_t tx_power = 0;
@@ -302,6 +355,83 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
                    1)) {
                 flipper_format_rewind(fff_data_file);
             }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAMMING,
+                   &instance->dual_int_jamming,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_FREQ,
+                   &instance->dual_int_jam_frequency,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_PRESET,
+                   &instance->dual_int_jam_preset_index,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAMMING,
+                   &instance->dual_ext_jamming,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_FREQ,
+                   &instance->dual_ext_jam_frequency,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_PRESET,
+                   &instance->dual_ext_jam_preset_index,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_RSSI,
+                   &instance->dual_int_rssi,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_RSSI,
+                   &instance->dual_ext_rssi,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_DUAL_RSSI_ADAPTIVE,
+                   &instance->dual_rssi_adaptive,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_READ_RSSI_ADAPTIVE,
+                   &instance->read_rssi_adaptive,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
+            if(!flipper_format_read_uint32(
+                   fff_data_file,
+                   SUBGHZ_LAST_SETTING_FIELD_READRAW_RSSI_ADAPTIVE,
+                   &instance->readraw_rssi_adaptive,
+                   1)) {
+                flipper_format_rewind(fff_data_file);
+            }
 
         } while(0);
     } else {
@@ -335,11 +465,6 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
         instance->dual_ext_frequency = SUBGHZ_LAST_SETTING_DEFAULT_FREQUENCY;
     }
 
-    /* Every install forces the RSSI threshold back to the sane default. The updater re-deploys
-     * the one-shot marker file to SD on every install (any version, even an identical rebuild);
-     * on boot we consume it (delete) and force -65. So ~90% of users who never touch RSSI don't
-     * sit at -90 decoding noise, and anyone stuck at -90 just reinstalls to fix it. Between
-     * installs users can still adjust it. */
     Storage* marker_storage = furi_record_open(RECORD_STORAGE);
     bool rssi_reset_marker = storage_file_exists(marker_storage, SUBGHZ_RSSI_RESET_MARKER);
     if(rssi_reset_marker) {
@@ -348,6 +473,9 @@ void subghz_last_settings_load(SubGhzLastSettings* instance, size_t preset_count
     furi_record_close(RECORD_STORAGE);
     if(rssi_reset_marker) {
         instance->rssi = SUBGHZ_RAW_THRESHOLD_DEFAULT;
+
+        instance->capture_unknown_raw = false;
+        instance->show_psa_encrypted = false;
         subghz_last_settings_save(instance);
     }
 }
@@ -417,6 +545,13 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
             break;
         }
         if(!flipper_format_write_uint32(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_PRESET_HOPPER_MODE,
+               &instance->preset_hopper_mode,
+               1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
                file, SUBGHZ_LAST_SETTING_FIELD_IGNORE_FILTER, &instance->ignore_filter, 1)) {
             break;
         }
@@ -448,6 +583,20 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
                file,
                SUBGHZ_LAST_SETTING_FIELD_CAPTURE_UNKNOWN_RAW,
                &instance->capture_unknown_raw,
+               1)) {
+            break;
+        }
+        if(!flipper_format_write_bool(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_SHOW_PSA_ENCRYPTED,
+               &instance->show_psa_encrypted,
+               1)) {
+            break;
+        }
+        if(!flipper_format_write_bool(
+               file,
+               SUBGHZ_LAST_SETTING_FIELD_COMBINE_REPEATS,
+               &instance->combine_repeats,
                1)) {
             break;
         }
@@ -531,6 +680,50 @@ bool subghz_last_settings_save(SubGhzLastSettings* instance) {
         }
         if(!flipper_format_write_uint32(
                file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_PRESET, &instance->dual_ext_preset_index, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAMMING, &instance->dual_int_jamming, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_FREQ, &instance->dual_int_jam_frequency, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_JAM_PRESET, &instance->dual_int_jam_preset_index, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAMMING, &instance->dual_ext_jamming, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_FREQ, &instance->dual_ext_jam_frequency, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_JAM_PRESET, &instance->dual_ext_jam_preset_index, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_INT_RSSI, &instance->dual_int_rssi, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_EXT_RSSI, &instance->dual_ext_rssi, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_DUAL_RSSI_ADAPTIVE, &instance->dual_rssi_adaptive, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_READ_RSSI_ADAPTIVE, &instance->read_rssi_adaptive, 1)) {
+            break;
+        }
+        if(!flipper_format_write_uint32(
+               file, SUBGHZ_LAST_SETTING_FIELD_READRAW_RSSI_ADAPTIVE, &instance->readraw_rssi_adaptive, 1)) {
             break;
         }
         saved = true;

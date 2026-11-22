@@ -1,9 +1,13 @@
 #include "../infrared_app_i.h"
+#include <loader/loader.h>
+
+#define IR_RAW_EDIT_FAP_PATH EXT_PATH("apps/Infrared/ir_raw_edit.fap")
 
 enum SubmenuIndex {
     SubmenuIndexUniversalRemotes,
     SubmenuIndexLearnNewRemote,
     SubmenuIndexSavedRemotes,
+    SubmenuIndexIrRawEdit,
     SubmenuIndexGpioSettings,
     SubmenuIndexLearnNewRemoteRaw,
     SubmenuIndexDebug
@@ -12,6 +16,16 @@ enum SubmenuIndex {
 static void infrared_scene_start_submenu_callback(void* context, uint32_t index) {
     InfraredApp* infrared = context;
     view_dispatcher_send_custom_event(infrared->view_dispatcher, index);
+}
+
+static void infrared_scene_start_launch_raw_edit(InfraredApp* infrared) {
+
+    Loader* loader = furi_record_open(RECORD_LOADER);
+    loader_enqueue_launch(
+        loader, IR_RAW_EDIT_FAP_PATH, "fromir", LoaderDeferredLaunchFlagNone);
+    furi_record_close(RECORD_LOADER);
+    scene_manager_stop(infrared->scene_manager);
+    view_dispatcher_stop(infrared->view_dispatcher);
 }
 
 void infrared_scene_start_on_enter(void* context) {
@@ -39,6 +53,12 @@ void infrared_scene_start_on_enter(void* context) {
         infrared);
     submenu_add_item(
         submenu,
+        "IR Raw Edit",
+        SubmenuIndexIrRawEdit,
+        infrared_scene_start_submenu_callback,
+        infrared);
+    submenu_add_item(
+        submenu,
         "GPIO Settings",
         SubmenuIndexGpioSettings,
         infrared_scene_start_submenu_callback,
@@ -59,8 +79,12 @@ void infrared_scene_start_on_enter(void* context) {
             infrared);
     }
 
-    const uint32_t submenu_index =
+    uint32_t submenu_index =
         scene_manager_get_scene_state(scene_manager, InfraredSceneStart);
+    if(infrared->start_focus_raw_edit) {
+        submenu_index = SubmenuIndexIrRawEdit;
+        infrared->start_focus_raw_edit = false;
+    }
     submenu_set_selected_item(submenu, submenu_index);
     scene_manager_set_scene_state(scene_manager, InfraredSceneStart, SubmenuIndexUniversalRemotes);
 
@@ -90,6 +114,8 @@ bool infrared_scene_start_on_event(void* context, SceneManagerEvent event) {
         } else if(submenu_index == SubmenuIndexSavedRemotes) {
             furi_string_set(infrared->file_path, INFRARED_APP_FOLDER);
             scene_manager_next_scene(scene_manager, InfraredSceneRemoteList);
+        } else if(submenu_index == SubmenuIndexIrRawEdit) {
+            infrared_scene_start_launch_raw_edit(infrared);
         } else if(submenu_index == SubmenuIndexGpioSettings) {
             scene_manager_next_scene(scene_manager, InfraredSceneGpioSettings);
         } else if(submenu_index == SubmenuIndexDebug) {

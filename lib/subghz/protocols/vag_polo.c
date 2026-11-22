@@ -5,21 +5,14 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "VagPolo"
-
-// VAG Polo -- ported from firmware vag_polo.c via KeeLoq-RX arke_vag.py (class VagPolo).
-// OOK/ASK, Manchester te_short=300 / te_long=590. The decoder runs the standard
-// Flipper Manchester (manchester_advance) continuously: it waits for a run of >=32
-// cleartext '1' preamble bits, then the 16-bit sync 0x3F91, then collects an 80-bit
-// (10 byte) payload = Button(8) | Serial(32) | rolling(40). The button high nibble
-// is cleartext (0x7 = Unlock, 0xB = Lock); the rolling part is encrypted -> no clone.
-// Decode-only, structural lock (no CRC); .encoder = NULL.
 
 #define VAG_POLO_TE_SHORT    300
 #define VAG_POLO_TE_LONG     590
 #define VAG_POLO_TE_DELTA    130
-#define VAG_POLO_EVENT_TOL   (VAG_POLO_TE_DELTA + 20) // 150, mirrors arke _event tol
+#define VAG_POLO_EVENT_TOL   (VAG_POLO_TE_DELTA + 20)
 #define VAG_POLO_SYNC        0x3F91
 #define VAG_POLO_PRE_ONES    32
 #define VAG_POLO_DATA_BITS   80
@@ -45,12 +38,11 @@ struct SubGhzProtocolDecoderVagPolo {
     uint16_t pbits;
 
     uint32_t serial;
-    uint8_t btn; // 1 = Unlock, 2 = Lock
-    uint8_t button_raw; // raw payload[0]
-    uint16_t hdr16; // top 16 bits of the 80-bit frame (payload[0..1])
+    uint8_t btn;
+    uint8_t button_raw;
+    uint16_t hdr16;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderVagPolo);
-
 
 typedef enum {
     VagPoloStepReset = 0,
@@ -58,8 +50,6 @@ typedef enum {
     VagPoloStepData = 6,
 } VagPoloStep;
 
-// Manchester event classification -- "core" polarity (level -> ShortLow),
-// mirrors arke VagPolo._event().
 static ManchesterEvent vag_polo_event(uint32_t duration, bool level) {
     if(DURATION_DIFF(duration, VAG_POLO_TE_SHORT) < VAG_POLO_EVENT_TOL) {
         return level ? ManchesterEventShortLow : ManchesterEventShortHigh;
@@ -83,14 +73,11 @@ static void vag_polo_commit(SubGhzProtocolDecoderVagPolo* instance) {
     uint8_t* p = instance->payload;
     uint8_t button = p[0];
     uint8_t hi = (button >> 4) & 0x0F;
-    // code = payload[1..9] (9 bytes); serial = code[0..3] = payload[1..4]
+
     uint32_t serial = ((uint32_t)p[1] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) |
                       (uint32_t)p[4];
     uint8_t btn = (hi == 0x7) ? 1 : 2;
 
-    // Full 80-bit frame -> ducato storage convention: top 64 in generic.data,
-    // remaining 16 bits (payload[8..9]) kept in hdr/decode. Here we store the
-    // 64-bit "code" value payload[2..9] that arke reports as `data`.
     uint64_t data = 0;
     for(uint8_t i = 2; i < VAG_POLO_BYTES; i++) data = (data << 8) | p[i];
 
@@ -99,11 +86,11 @@ static void vag_polo_commit(SubGhzProtocolDecoderVagPolo* instance) {
     instance->button_raw = button;
     instance->hdr16 = ((uint16_t)p[0] << 8) | p[1];
 
-    instance->generic.data = data; // payload[2..9], 64 bits
+    instance->generic.data = data;
     instance->generic.data_count_bit = VAG_POLO_DATA_BITS;
     instance->generic.serial = serial;
     instance->generic.btn = btn;
-    instance->generic.cnt = 0; // rolling part encrypted, not a plain counter
+    instance->generic.cnt = 0;
     instance->decoder.decode_data = data;
     instance->decoder.decode_count_bit = VAG_POLO_DATA_BITS;
 
@@ -119,8 +106,6 @@ void* subghz_protocol_decoder_vag_polo_alloc(SubGhzEnvironment* environment) {
     instance->manchester_state = ManchesterStateMid1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_vag_polo_reset(void* context) {
     furi_check(context);
@@ -201,8 +186,6 @@ void subghz_protocol_decoder_vag_polo_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_vag_polo_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -221,6 +204,15 @@ SubGhzProtocolStatus subghz_protocol_decoder_vag_polo_serialize(
        !flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "ButtonRaw", &button_raw, 1) ||
        !flipper_format_write_uint32(flipper_format, "Hdr", &hdr, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[10];
+    fdata[0] = (uint8_t)(instance->hdr16 >> 8);
+    fdata[1] = (uint8_t)(instance->hdr16);
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[2 + b] = (uint8_t)(g >> (56 - b * 8));
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -268,11 +260,15 @@ const SubGhzProtocolDecoder subghz_protocol_vag_polo_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_vag_polo_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_vag_polo = {
     .name = VAG_POLO_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_vag_polo_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_vag_polo_encoder_ext.vtable,
 };

@@ -14,7 +14,7 @@
 
 #define TAG "SubGhzProtocolSomfyTelis"
 
-static bool somfy_telis_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool somfy_telis_raw_replay = false;
 
 static const SubGhzBlockConst subghz_protocol_somfy_telis_const = {
     .te_short = 640,
@@ -64,7 +64,6 @@ const SubGhzProtocolDecoder subghz_protocol_somfy_telis_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* somfy_telis_raw_replay;
 } enc_somfy_telis_host_t;
@@ -108,7 +107,7 @@ static bool subghz_protocol_somfy_telis_gen_data(
         FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", btn);
 
     if(somfy_telis_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {

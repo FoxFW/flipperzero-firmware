@@ -94,21 +94,12 @@ typedef struct {
     Menu* primary_menu;
     Submenu* settings_menu;
 
-    /* The whole apps-menu layout, SD-backed, kept for the menu's lifetime so
-     * every identifier/label pointer handed to the menu stays valid. This is the
-     * only resident copy; change detection uses a cheap fingerprint of the file
-     * rather than a second ~8 KB layout buffer (keeps the largest contiguous
-     * free heap block as big as possible). */
     MainMenuLayout layout;
 
-    /* Fingerprint of the layout file as last loaded, for allocation-free change
-     * detection on the refresh hot path. */
     uint32_t layout_fp_hash;
     uint32_t layout_fp_len;
     bool layout_fp_absent;
 
-    /* Positions of the Fox Settings / Settings items in the built menu, so a
-     * settings sub-app return can restore the cursor. */
     size_t fox_menu_index;
     size_t settings_menu_index;
 
@@ -129,10 +120,6 @@ static bool loader_menu_start(LoaderMenu* menu, const char* name) {
     return status == LoaderStatusOk;
 }
 
-/* Unified launcher for every app entry in the layout. The menu item carries
- * the entry's identifier pointer (an internal/external app name, or a .fap
- * path) as its index; the loader resolves a name or a path the same way. The
- * identifier lives in app->layout for the menu's whole lifetime. */
 static void loader_menu_launch_callback(void* context, uint32_t index) {
     LoaderMenu* menu = context;
     const char* name_or_path = (const char*)index;
@@ -184,7 +171,6 @@ static uint32_t loader_menu_exit(void* context) {
     return VIEW_NONE;
 }
 
-/* Cosmetic icon for a layout entry; launching never depends on it. */
 static const Icon* loader_menu_layout_entry_icon(const MainMenuLayoutEntry* e) {
     switch(e->kind) {
     case MainMenuEntryKindApplications:
@@ -209,9 +195,6 @@ static const Icon* loader_menu_layout_entry_icon(const MainMenuLayoutEntry* e) {
     }
 }
 
-/* Internal/external entries whose app no longer exists in this build (e.g.
- * removed by a firmware update) are dropped so no dead item is shown. User
- * paths and specials are always kept. */
 static bool loader_menu_layout_entry_known(const MainMenuLayoutEntry* e) {
     if(e->kind == MainMenuEntryKindInternal) {
         for(size_t i = 0; i < FLIPPER_APPS_COUNT; i++) {
@@ -233,8 +216,7 @@ static void loader_menu_add_layout_entry(
     LoaderMenu* menu,
     MainMenuLayoutEntry* e,
     size_t* position) {
-    /* label points into app->layout (persistent for the menu's lifetime), or to
-     * a static literal fallback (also persistent) if the stored label is empty. */
+
     const char* label = e->label;
     if(label[0] == '\0') {
         switch(e->kind) {
@@ -310,11 +292,6 @@ static void loader_menu_build_menu(LoaderMenuApp* app, LoaderMenu* menu) {
         loader_menu_add_layout_entry(app, menu, e, &position);
     }
 
-    /* Belt-and-suspenders: "Apps", "Sub-GHz" and "Settings" are the only path to
-     * those apps and MUST always be present, even if the layout file omitted
-     * them. (A line that merely disabled them was force-enabled at parse time, so
-     * this only handles a fully missing line.) String literals are static
-     * storage, so the labels they hand the menu stay valid. */
     if(!has_apps) {
         menu_add_item(
             app->primary_menu,
@@ -369,8 +346,6 @@ static void loader_menu_build_submenu(LoaderMenuApp* app, LoaderMenu* loader_men
     }
 }
 
-/* Record the fingerprint of the layout file as it currently sits on disk, so a
- * later refresh can detect a change without parsing or holding a second copy. */
 static void loader_menu_store_fingerprint(LoaderMenuApp* app) {
     uint32_t h = 0;
     uint32_t l = 0;
@@ -384,19 +359,13 @@ static void loader_menu_store_fingerprint(LoaderMenuApp* app) {
         app->layout_fp_hash = 0;
         app->layout_fp_len = 0;
     } else {
-        /* transient read error: force a recheck on the next refresh */
+
         app->layout_fp_absent = false;
         app->layout_fp_hash = 0;
         app->layout_fp_len = 0;
     }
 }
 
-/* Picks up a layout edit saved by the Fox Settings "Main Menu Apps" page on the
- * next menu show, the same way pins used to refresh. The menu is built once at
- * boot and kept, so on a change we menu_reset + rebuild in place rather than
- * reallocating the menu. Change detection streams a cheap fingerprint of the
- * file (no parse, no allocation); the full layout is only re-read when the
- * fingerprint actually differs. */
 static void loader_menu_refresh_layout_if_changed(LoaderMenuApp* app) {
     uint32_t hash = 0;
     uint32_t len = 0;
@@ -404,8 +373,7 @@ static void loader_menu_refresh_layout_if_changed(LoaderMenuApp* app) {
 
     bool changed;
     if(fp == MainMenuLayoutFpError) {
-        /* Transient read error: keep the current menu and the stored fingerprint
-         * so the next refresh retries. */
+
         return;
     } else if(fp == MainMenuLayoutFpAbsent) {
         changed = !app->layout_fp_absent;
@@ -415,8 +383,6 @@ static void loader_menu_refresh_layout_if_changed(LoaderMenuApp* app) {
     }
     if(!changed) return;
 
-    /* On a transient read failure the load returns false and leaves the file
-     * intact; keep the current menu rather than collapsing it. */
     if(!main_menu_layout_load(&app->layout)) return;
 
     loader_menu_store_fingerprint(app);
@@ -494,7 +460,6 @@ static void loader_menu_app_free(LoaderMenuApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, LoaderMenuViewSettings);
     view_dispatcher_free(app->view_dispatcher);
 
-
     menu_free(app->primary_menu);
     submenu_free(app->settings_menu);
     furi_record_close(RECORD_GUI);
@@ -505,10 +470,8 @@ static int32_t loader_menu_thread(void* p) {
     LoaderMenu* loader_menu = p;
     furi_assert(loader_menu);
 
-
     LoaderMenuApp* app = loader_menu_app_alloc(loader_menu);
     loader_menu->view_dispatcher = app->view_dispatcher;
-
 
     api_lock_unlock(loader_menu->built_lock);
 
@@ -518,7 +481,6 @@ static int32_t loader_menu_thread(void* p) {
         if(flags & LoaderMenuThreadFlagExit) {
             break;
         }
-
 
         loader_menu_refresh_layout_if_changed(app);
         const char* settings_item = loader_menu->settings_item;
@@ -536,12 +498,9 @@ static int32_t loader_menu_thread(void* p) {
         view_dispatcher_attach_to_gui(
             app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
-
         view_dispatcher_run(app->view_dispatcher);
 
-
         view_dispatcher_detach_from_gui(app->view_dispatcher);
-
 
         if(loader_menu->closed_cb) {
             loader_menu->closed_cb(loader_menu->context);
@@ -550,7 +509,6 @@ static int32_t loader_menu_thread(void* p) {
 
     loader_menu->view_dispatcher = NULL;
     loader_menu_app_free(app);
-
 
     return 0;
 }

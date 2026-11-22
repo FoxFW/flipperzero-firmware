@@ -228,8 +228,7 @@ static bool subghz_scene_receiver_info_draw_bar(SubGhz* subghz) {
         (subghz_txrx_get_decoder(subghz->txrx)->protocol->flag & SubGhzProtocolFlag_RawReplay);
     bool from_decode_raw =
         scene_manager_has_previous_scene(subghz->scene_manager, SubGhzSceneDecodeRAW);
-    /* Decode-only protocol (no encoder) reached by decoding a RAW file: let the
-     * user replay the original RAW capture (file-based raw transmit). */
+
     bool info_raw_available =
         (!info_transmittable) && from_decode_raw && !furi_string_empty(subghz->file_path);
 
@@ -252,33 +251,47 @@ static bool subghz_scene_receiver_info_draw_bar(SubGhz* subghz) {
     uint8_t primary = 0;
     bool have_primary = false;
 
-    if(info_raw_capable) {
-        subghz_receiver_info_bar_add_button(
-            subghz->receiver_info_bar, "Raw", false,
-            SubGhzCustomEventSceneReceiverInfoTxFull, 0);
-        idx++;
-    }
-    if(info_needs_decrypt) {
+    if(info_raw_capable && info_needs_decrypt) {
+
         subghz_receiver_info_bar_add_button(
             subghz->receiver_info_bar, subghz_scene_receiver_info_decrypt_label(subghz), false,
             SubGhzCustomEventSceneReceiverInfoDecrypt, 0);
-        primary = idx;
-        have_primary = true;
         idx++;
-    } else if(info_transmittable) {
         subghz_receiver_info_bar_add_button(
-            subghz->receiver_info_bar, "Send", false,
-            SubGhzCustomEventSceneReceiverInfoSend, 0);
+            subghz->receiver_info_bar, "Raw", false,
+            SubGhzCustomEventSceneReceiverInfoTxFull, 0);
         primary = idx;
         have_primary = true;
         idx++;
-    } else if(info_raw_available) {
-        subghz_receiver_info_bar_add_button(
-            subghz->receiver_info_bar, "Send", false,
-            SubGhzCustomEventSceneReceiverInfoSendRaw, 0);
-        primary = idx;
-        have_primary = true;
-        idx++;
+    } else {
+        if(info_raw_capable) {
+            subghz_receiver_info_bar_add_button(
+                subghz->receiver_info_bar, "Raw", false,
+                SubGhzCustomEventSceneReceiverInfoTxFull, 0);
+            idx++;
+        }
+        if(info_needs_decrypt) {
+            subghz_receiver_info_bar_add_button(
+                subghz->receiver_info_bar, subghz_scene_receiver_info_decrypt_label(subghz),
+                false, SubGhzCustomEventSceneReceiverInfoDecrypt, 0);
+            primary = idx;
+            have_primary = true;
+            idx++;
+        } else if(info_transmittable) {
+            subghz_receiver_info_bar_add_button(
+                subghz->receiver_info_bar, "Send", false,
+                SubGhzCustomEventSceneReceiverInfoSend, 0);
+            primary = idx;
+            have_primary = true;
+            idx++;
+        } else if(info_raw_available) {
+            subghz_receiver_info_bar_add_button(
+                subghz->receiver_info_bar, "Send", false,
+                SubGhzCustomEventSceneReceiverInfoSendRaw, 0);
+            primary = idx;
+            have_primary = true;
+            idx++;
+        }
     }
     if(is_serializable) {
         subghz_receiver_info_bar_add_button(
@@ -451,11 +464,6 @@ bool subghz_scene_receiver_info_on_event(void* context, SceneManagerEvent event)
             return true;
         } else if(event.event == SubGhzCustomEventSceneReceiverInfoSendRaw) {
 
-            /* Decode-only protocol (encoder == NULL): the decoded fields cannot be
-             * re-encoded, so replay the original RAW capture through the file-based
-             * raw transmit (Protocol "RAW"), the same path used for RAW .sub files.
-             * subghz->file_path still points at the decoded RAW file (we got here
-             * from the DecodeRAW flow). */
             subghz->state_notifications = SubGhzNotificationStateIDLE;
             subghz_txrx_hopper_set_state(subghz->txrx, SubGhzHopperStateOFF);
             subghz_txrx_stop(subghz->txrx);

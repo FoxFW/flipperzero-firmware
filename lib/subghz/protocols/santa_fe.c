@@ -1,11 +1,5 @@
 #include "santa_fe.h"
 
-/* ==== Self-contained sub-GHz helpers (de-refactored from the ProtoPirate/applab
- * "protocols_common" pp-framework) so this decoder depends only on the core
- * sub-GHz lib and carries no shared helper unit into lib/. All helpers are
- * static inline: unused ones are dropped with no -Wunused-function warning, and
- * the TX scratch buffer is a function-local static (no file-scope unused-var).
- * FoxFW2.0 2026-10-18 internal batch 2. ==== */
 #include <furi.h>
 #include <string.h>
 #include <lib/subghz/types.h>
@@ -20,7 +14,6 @@
 #include "common.h"
 #include "../encode_plugin.h"
 #include "pp_auto_common.h"
-
 
 #ifndef PP_COMPAT_SHIM_DEFINED
 #define PP_COMPAT_SHIM_DEFINED
@@ -50,10 +43,8 @@ typedef struct {
     SubGhzProtocolBlockEncoder encoder;
 } ProtoPirateEncoderHeader;
 
-#endif /* PP_COMPAT_SHIM_DEFINED */
+#endif
 
-
-// Ported from KAT src/protocols/santa_fe.rs
 #define SF_TE_SHORT    125
 #define SF_TE_LONG     375
 #define SF_TE_DELTA    100
@@ -135,7 +126,7 @@ static void sf_process(SubGhzProtocolDecoderSantaFe* instance) {
     uint8_t button = instance->data[8];
 
     instance->rolling = rolling;
-    // 64-bit hash projection: rolling<<32 | serial<<8 | counter (KAT `packed` bytes 0..7)
+
     instance->generic.data = ((uint64_t)rolling << 32) | ((uint64_t)serial << 8) | counter;
     instance->generic.data_count_bit = SF_BIT_COUNT;
     instance->generic.serial = serial;
@@ -151,7 +142,7 @@ void* subghz_protocol_decoder_santa_fe_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolDecoderSantaFe* instance = calloc(1, sizeof(SubGhzProtocolDecoderSantaFe));
     furi_check(instance);
-    instance->base.protocol = &santa_fe_protocol;
+    instance->base.protocol = &subghz_protocol_santa_fe;
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
@@ -291,7 +282,6 @@ const SubGhzProtocolDecoder subghz_protocol_santa_fe_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&ppa_emit) ppa_emit;
     __typeof__(&ppa_encoder_buffer_ensure) ppa_encoder_buffer_ensure;
@@ -314,7 +304,7 @@ static const enc_santa_fe_host_t enc_santa_fe_host = {
 };
 static const SubGhzEncoderExternal subghz_protocol_santa_fe_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_santa_fe", &enc_santa_fe_host);
 
-const SubGhzProtocol santa_fe_protocol = {
+const SubGhzProtocol subghz_protocol_santa_fe = {
     .name = SANTA_FE_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeStatic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |

@@ -57,6 +57,39 @@ void power_cli_3v3(PipeSide* pipe, FuriString* args) {
 }
 #endif
 
+static void power_cli_info(PipeSide* pipe, FuriString* args) {
+    UNUSED(pipe);
+    UNUSED(args);
+    printf("Charge: %u %%\r\n", (unsigned)furi_hal_power_get_pct());
+    printf("Health: %u %%\r\n", (unsigned)furi_hal_power_get_bat_health_pct());
+    printf(
+        "Charging: %s\r\n",
+        furi_hal_power_is_charging() ?
+            (furi_hal_power_is_charging_done() ? "done" : "yes") :
+            "no");
+    printf(
+        "Voltage: %d mV\r\n",
+        (int)(furi_hal_power_get_battery_voltage(FuriHalPowerICFuelGauge) * 1000.0f));
+    printf(
+        "Current: %d mA\r\n",
+        (int)(furi_hal_power_get_battery_current(FuriHalPowerICFuelGauge) * 1000.0f));
+    printf(
+        "Temp: %d C\r\n",
+        (int)furi_hal_power_get_battery_temperature(FuriHalPowerICFuelGauge));
+    printf(
+        "Cap remaining: %lu mAh\r\n",
+        (unsigned long)furi_hal_power_get_battery_remaining_capacity());
+    printf(
+        "Cap full: %lu mAh\r\n",
+        (unsigned long)furi_hal_power_get_battery_full_capacity());
+    printf(
+        "Cap design: %lu mAh\r\n",
+        (unsigned long)furi_hal_power_get_battery_design_capacity());
+    printf(
+        "USB: %d mV\r\n",
+        (int)(furi_hal_power_get_usb_voltage() * 1000.0f));
+}
+
 static void power_cli_command_print_usage(void) {
     printf("Usage:\r\n");
     printf("power <cmd> <args>\r\n");
@@ -66,6 +99,7 @@ static void power_cli_command_print_usage(void) {
     printf("\treboot\t - reboot\r\n");
     printf("\treboot2dfu\t - reboot to dfu bootloader\r\n");
     printf("\t5v <0 or 1>\t - enable or disable 5v ext\r\n");
+    printf("\tinfo\t - print battery / charger info\r\n");
 #ifdef FURI_DEBUG
     if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug)) {
         printf("\t3v3 <0 or 1>\t - enable or disable 3v3 ext\r\n");
@@ -104,6 +138,11 @@ void power_cli(PipeSide* pipe, FuriString* args, void* context) {
             break;
         }
 
+        if(furi_string_cmp_str(cmd, "info") == 0) {
+            power_cli_info(pipe, args);
+            break;
+        }
+
 #ifdef FURI_DEBUG
         if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug)) {
             if(furi_string_cmp_str(cmd, "3v3") == 0) {
@@ -119,12 +158,4 @@ void power_cli(PipeSide* pipe, FuriString* args, void* context) {
     furi_string_free(cmd);
 }
 
-void power_on_system_start(void) {
-#ifdef SRV_CLI
-    CliRegistry* registry = furi_record_open(RECORD_CLI);
-    cli_registry_add_command(registry, "power", CliCommandFlagParallelSafe, power_cli, NULL);
-    furi_record_close(RECORD_CLI);
-#else
-    UNUSED(power_cli);
-#endif
-}
+CLI_COMMAND_INTERFACE(power, power_cli, CliCommandFlagParallelSafe, 2 * 1024, CLI_APPID);

@@ -4,19 +4,10 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
 #define TAG "HondaV10"
-
-// Honda V10 ("V2H4") -- ported from firmware honda_v10.c via KeeLoq-RX arke_honda.py.
-// Native 2-FSK Manchester, te 104/208 us, te_delta 35. Half-bit samples collected into
-// hb[]; a sliding dual-polarity Manchester decode across offsets yields a 96-bit
-// (12-byte) MSB-first frame. Fields:
-//   serial=dec[0..2] (24b), button=dec[3]>>4, flags=dec[3]&0xF,
-//   counter = 0x00FFFFFF ^ dec[4..6] (inverted 24b), status=dec[7], tail=dec[8..11] (32b).
-// NO data CRC: emission gated on flags==0x7 + button in {0xF,0xE} + valid serial.
-// The 32-bit tail is a per-counter encrypted MAC (replay-only; not a clone). crc_ok=false
-// is reported in get_string only to mean "no CRC present". Decode-only; .encoder = NULL.
 
 #define HV10_TS          104
 #define HV10_TL          208
@@ -52,14 +43,12 @@ struct SubGhzProtocolDecoderHondaV10 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV10);
 
-
 static uint8_t honda_v10_classify(uint32_t dur) {
     if(DURATION_DIFF(dur, HV10_TS) <= HV10_TD) return 1;
     if(DURATION_DIFF(dur, HV10_TL) <= HV10_TD) return 2;
     return 0;
 }
 
-// Mirror HondaV10._man_decode(). Returns bit_count (0 on fail) and *consumed.
 static int honda_v10_man_decode(
     const uint8_t* hb,
     int n,
@@ -101,7 +90,6 @@ static int honda_v10_man_decode(
     return 0;
 }
 
-// Mirror HondaV10._try_polarity_at(). *next set like the Python second return value.
 static bool honda_v10_try_polarity_at(
     SubGhzProtocolDecoderHondaV10* instance,
     bool invert,
@@ -154,7 +142,6 @@ static bool honda_v10_try_polarity_at(
     return true;
 }
 
-// Mirror HondaV10._try_decode(): sliding scan over offsets, dual polarity.
 static void honda_v10_try_decode(SubGhzProtocolDecoderHondaV10* instance) {
     int n = instance->hb_len;
     if(n < (HV10_MIN_PRE + 16)) return;
@@ -184,8 +171,6 @@ void* subghz_protocol_decoder_honda_v10_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_honda_v10_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderHondaV10* instance = context;
@@ -212,8 +197,6 @@ void subghz_protocol_decoder_honda_v10_feed(void* context, bool level, uint32_t 
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v10_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -236,6 +219,18 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v10_serialize(
        !flipper_format_write_uint32(flipper_format, "Flags", &flags, 1) ||
        !flipper_format_write_uint32(flipper_format, "Status", &status, 1) ||
        !flipper_format_write_uint32(flipper_format, "Tail", &tail, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[12];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    uint32_t t = instance->tail;
+    fdata[8] = (uint8_t)(t >> 24);
+    fdata[9] = (uint8_t)(t >> 16);
+    fdata[10] = (uint8_t)(t >> 8);
+    fdata[11] = (uint8_t)(t);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -284,12 +279,16 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v10_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v10_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v10 = {
     .name = HONDA_V10_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v10_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v10_encoder_ext.vtable,
 };

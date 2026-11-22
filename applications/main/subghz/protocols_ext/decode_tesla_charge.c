@@ -1,4 +1,4 @@
-/* decode_tesla_charge.fal : SD get_string for tesla_charge (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/tesla_charge.h>
@@ -22,8 +22,6 @@ static void tesla_charge_decode(const SubGhzDecodeInput* input, FuriString* outp
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderTeslaCharge* instance = input->decoder;
 
-
-    // push protocol data to global variable
     subghz_block_generic_global.btn_is_available = false;
 
     furi_string_cat_printf(

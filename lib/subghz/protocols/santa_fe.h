@@ -10,15 +10,12 @@
 #include <lib/subghz/blocks/math.h>
 #include <flipper_format/flipper_format.h>
 
-
-// Ported from KAT (src/protocols/santa_fe.rs). Hyundai Santa Fe 2013-2016:
-// 80-bit PWM, 32-bit rolling + 24-bit serial + 8-bit counter + 8-bit button + CRC8.
 #define SANTA_FE_PROTOCOL_NAME "SantaFe 13-16"
 
 typedef struct SubGhzProtocolDecoderSantaFe SubGhzProtocolDecoderSantaFe;
 typedef struct SubGhzProtocolEncoderSantaFe SubGhzProtocolEncoderSantaFe;
 
-extern const SubGhzProtocol santa_fe_protocol;
+extern const SubGhzProtocol subghz_protocol_santa_fe;
 
 void* subghz_protocol_decoder_santa_fe_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_santa_fe_free(void* context);

@@ -1,4 +1,4 @@
-/* decode_linear_delta3.fal : SD get_string for linear_delta3 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/linear_delta3.h>
@@ -26,7 +26,6 @@ struct SubGhzProtocolDecoderLinearDelta3 {
 static void linear_delta3_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderLinearDelta3* instance = input->decoder;
-
 
     uint32_t data = instance->generic.data & 0xFF;
 

@@ -1,5 +1,5 @@
-/* enc_dooya.fal : SD encoder for dooya (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_dooya enc_dooya__subghz_protocol_dooya
 #define subghz_protocol_encoder_common_alloc enc_dooya__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_deserialize enc_dooya__subghz_protocol_encoder_common_deserialize
@@ -18,6 +18,7 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include <lib/subghz/protocols/common.h>
+#include <lib/subghz/blocks/custom_btn_i.h>
 
 #define TAG "SubGhzProtocolDooya"
 
@@ -37,11 +38,39 @@ static const SubGhzBlockConst subghz_protocol_dooya_const = {
 
 static bool subghz_protocol_encoder_dooya_get_upload(SubGhzProtocolEncoderDooya* instance);
 
+static uint8_t subghz_protocol_dooya_get_btn_code(void) {
+    uint8_t custom_btn_id = subghz_custom_btn_get();
+    uint8_t original_btn_code = subghz_custom_btn_get_original();
+    uint8_t btn = original_btn_code;
+
+    if((custom_btn_id == SUBGHZ_CUSTOM_BTN_OK) && (original_btn_code != 0)) {
+        btn = original_btn_code;
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_UP) {
+        btn = 0x11;
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_DOWN) {
+        btn = 0x33;
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_LEFT) {
+        btn = 0x55;
+    } else if(custom_btn_id == SUBGHZ_CUSTOM_BTN_RIGHT) {
+        btn = 0xCC;
+    }
+    return btn;
+}
+
 static bool subghz_protocol_encoder_dooya_get_upload(SubGhzProtocolEncoderDooya* instance) {
     furi_assert(instance);
 
+    uint8_t dooya_original_btn = (uint8_t)(instance->generic.data & 0xFF);
+    if(subghz_custom_btn_get_original() == 0) {
+        subghz_custom_btn_set_original(dooya_original_btn);
+    }
+    subghz_custom_btn_set_max(4);
+    uint8_t dooya_btn = subghz_protocol_dooya_get_btn_code();
+    instance->generic.data = (instance->generic.data & ~(uint64_t)0xFF) | (uint64_t)dooya_btn;
+
     size_t index = 0;
-    size_t size_upload = (instance->generic.data_count_bit * 2) + 2;
+
+    size_t size_upload = (instance->generic.data_count_bit * 2) + 3;
     if(size_upload > instance->encoder.size_upload) {
         FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
         return false;
@@ -84,7 +113,6 @@ static bool subghz_protocol_encoder_dooya_get_upload(SubGhzProtocolEncoderDooya*
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -92,13 +120,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -117,7 +143,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -133,7 +158,6 @@ void* subghz_protocol_encoder_common_alloc(
     return instance;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 SubGhzProtocolStatus subghz_protocol_encoder_common_deserialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -176,7 +200,6 @@ static const SubGhzProtocolEncoder enc_dooya_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_dooya = {
     .name = SUBGHZ_PROTOCOL_DOOYA_NAME,
     .type = SubGhzProtocolTypeStatic,

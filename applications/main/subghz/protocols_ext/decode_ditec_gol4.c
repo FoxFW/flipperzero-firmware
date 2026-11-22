@@ -1,4 +1,4 @@
-/* decode_ditec_gol4.fal : SD get_string for ditec_gol4 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/ditec_gol4.h>
@@ -145,7 +145,6 @@ static void subghz_protocol_ditec_gol4_decode_key(SubGhzBlockGeneric* instance) 
 static void ditec_gol4_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderDitecGOL4* instance = input->decoder;
-
 
     subghz_protocol_ditec_gol4_decode_key(&instance->generic);
 

@@ -10,7 +10,7 @@
 
 #define TAG "SubGhzProtocoSecPlusV1"
 
-static bool secplus_v1_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool secplus_v1_raw_replay = false;
 
 #define SECPLUS_V1_BIT_ERR -1
 #define SECPLUS_V1_BIT_0   0
@@ -74,7 +74,6 @@ const SubGhzProtocolDecoder subghz_protocol_secplus_v1_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* secplus_v1_raw_replay;
 } enc_secplus_v1_host_t;

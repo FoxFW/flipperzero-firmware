@@ -7,8 +7,141 @@
 #include "helpers/subghz_config_scene_loader.h"
 #include "scenes/subghz_scene_start.h"
 #include <storage/storage.h>
+#include <loader/loader.h>
+#include <furi/core/memmgr.h>
+#include "helpers/subghz_lowram_guard.h"
 
 #define TAG "SubGhzApp"
+
+bool subghz_scene_set_type_generate_protocol_from_infos(SubGhz* subghz);
+
+#define SUBGHZ_ADD_MANUAL_HANDOFF_PATH EXT_PATH("subghz/assets/.add_manual")
+
+typedef struct {
+    uint32_t set_type;
+    uint32_t serial;
+    uint32_t btn;
+    uint32_t cnt;
+    uint32_t seed;
+    uint64_t key;
+    uint32_t bits;
+    uint32_t te;
+    uint32_t frequency;
+} SubGhzAddManualHandoff;
+
+static bool subghz_add_manual_read_handoff(Storage* storage, SubGhzAddManualHandoff* out) {
+
+    if(!storage_file_exists(storage, SUBGHZ_ADD_MANUAL_HANDOFF_PATH)) return false;
+    FlipperFormat* ff = flipper_format_file_alloc(storage);
+    bool ok = false;
+    do {
+        if(!flipper_format_file_open_existing(ff, SUBGHZ_ADD_MANUAL_HANDOFF_PATH)) break;
+        if(!flipper_format_read_uint32(ff, "SetType", &out->set_type, 1)) break;
+        uint32_t tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Serial", &tmp, 1)) out->serial = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Btn", &tmp, 1)) out->btn = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Cnt", &tmp, 1)) out->cnt = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Seed", &tmp, 1)) out->seed = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Bits", &tmp, 1)) out->bits = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "TE", &tmp, 1)) out->te = tmp;
+        flipper_format_rewind(ff);
+        if(flipper_format_read_uint32(ff, "Frequency", &tmp, 1)) out->frequency = tmp;
+        flipper_format_rewind(ff);
+        uint8_t key_bytes[8] = {0};
+        if(flipper_format_read_hex(ff, "Key", key_bytes, 8)) {
+            out->key = 0;
+            for(size_t i = 0; i < 8; i++) {
+                out->key = (out->key << 8) | key_bytes[i];
+            }
+        }
+        ok = true;
+    } while(false);
+    flipper_format_free(ff);
+    return ok;
+}
+
+static void subghz_add_manual_apply(SubGhz* subghz, const SubGhzAddManualHandoff* h) {
+    subghz_gen_info_reset(subghz->gen_info);
+    subghz_scene_set_type_fill_generation_infos(subghz->gen_info, (SetType)h->set_type);
+    GenInfo* g = subghz->gen_info;
+    if(h->frequency) g->freq = h->frequency;
+    switch(g->type) {
+    case GenData:
+        g->data.key = h->key;
+        if(h->bits) g->data.bits = (uint8_t)h->bits;
+        if(h->te) g->data.te = h->te;
+        break;
+    case GenFaacSLH:
+        g->faac_slh.serial = h->serial;
+        g->faac_slh.btn = (uint8_t)h->btn;
+        g->faac_slh.cnt = h->cnt;
+        g->faac_slh.seed = h->seed;
+        break;
+    case GenKeeloq:
+        g->keeloq.serial = h->serial;
+        g->keeloq.btn = (uint8_t)h->btn;
+        g->keeloq.cnt = (uint16_t)h->cnt;
+        break;
+    case GenCameAtomo:
+        g->came_atomo.serial = h->serial;
+        g->came_atomo.cnt = (uint16_t)h->cnt;
+        break;
+    case GenKeeloqBFT:
+        g->keeloq_bft.serial = h->serial;
+        g->keeloq_bft.btn = (uint8_t)h->btn;
+        g->keeloq_bft.cnt = (uint16_t)h->cnt;
+        g->keeloq_bft.seed = h->seed;
+        break;
+    case GenAlutechAt4n:
+        g->alutech_at_4n.serial = h->serial;
+        g->alutech_at_4n.btn = (uint8_t)h->btn;
+        g->alutech_at_4n.cnt = (uint16_t)h->cnt;
+        break;
+    case GenSomfyTelis:
+        g->somfy_telis.serial = h->serial;
+        g->somfy_telis.btn = (uint8_t)h->btn;
+        g->somfy_telis.cnt = (uint16_t)h->cnt;
+        break;
+    case GenKingGatesStylo4k:
+        g->kinggates_stylo_4k.serial = h->serial;
+        g->kinggates_stylo_4k.btn = (uint8_t)h->btn;
+        g->kinggates_stylo_4k.cnt = (uint16_t)h->cnt;
+        break;
+    case GenBenincaARC:
+        g->beninca_arc.serial = h->serial;
+        g->beninca_arc.btn = (uint8_t)h->btn;
+        g->beninca_arc.cnt = h->cnt;
+        break;
+    case GenJarolift:
+        g->jarolift.serial = h->serial;
+        g->jarolift.btn = (uint8_t)h->btn;
+        g->jarolift.cnt = (uint16_t)h->cnt;
+        break;
+    case GenNiceFlorS:
+        g->nice_flor_s.serial = h->serial;
+        g->nice_flor_s.btn = (uint8_t)h->btn;
+        g->nice_flor_s.cnt = (uint16_t)h->cnt;
+        break;
+    case GenSecPlus2:
+        g->sec_plus_2.serial = h->serial;
+        g->sec_plus_2.btn = (uint8_t)h->btn;
+        g->sec_plus_2.cnt = h->cnt;
+        break;
+    case GenPhoenixV2:
+        g->phoenix_v2.serial = h->serial;
+        g->phoenix_v2.cnt = (uint16_t)h->cnt;
+        break;
+    case GenSecPlus1:
+    default:
+        break;
+    }
+}
 
 static bool subghz_protocol_enabled_callback(void* context, size_t registry_index, const char* protocol_name) {
     UNUSED(protocol_name);
@@ -93,6 +226,7 @@ SubGhz* subghz_alloc(bool alloc_for_tx_only) {
     subghz->loaded_file_has_raw = false;
 
     subghz->file_path = furi_string_alloc();
+    subghz->saved_preselect = furi_string_alloc();
     subghz->raw_send_title = furi_string_alloc();
     subghz->decode_raw_source = furi_string_alloc();
     subghz->file_path_tmp = furi_string_alloc();
@@ -385,6 +519,17 @@ void subghz_free(SubGhz* subghz, bool alloc_for_tx_only) {
         subghz->loading_cover_viewport = NULL;
     }
 
+    if(subghz->recheck_cover_timer) {
+        furi_timer_stop(subghz->recheck_cover_timer);
+        furi_timer_free(subghz->recheck_cover_timer);
+        subghz->recheck_cover_timer = NULL;
+    }
+    if(subghz->recheck_cover_viewport) {
+        gui_remove_view_port(subghz->gui, subghz->recheck_cover_viewport);
+        view_port_free(subghz->recheck_cover_viewport);
+        subghz->recheck_cover_viewport = NULL;
+    }
+
     if(subghz->startup_holder) {
         view_holder_set_view(subghz->startup_holder, NULL);
         view_holder_free(subghz->startup_holder);
@@ -421,6 +566,7 @@ void subghz_free(SubGhz* subghz, bool alloc_for_tx_only) {
     subghz->notifications = NULL;
 
     furi_string_free(subghz->file_path);
+    furi_string_free(subghz->saved_preselect);
     furi_string_free(subghz->raw_send_title);
     furi_string_free(subghz->decode_raw_source);
     furi_string_free(subghz->file_path_tmp);
@@ -429,18 +575,31 @@ void subghz_free(SubGhz* subghz, bool alloc_for_tx_only) {
     free(subghz);
 }
 
+static void subghz_ram_recovery_restart(void) {
+    memmgr_defrag_suppress_once();
+    subghz_lowram_softlock_engage();
+    Loader* loader = furi_record_open(RECORD_LOADER);
+    loader_enqueue_launch(loader, "subghz", "ramrecover", LoaderDeferredLaunchFlagNone);
+    furi_record_close(RECORD_LOADER);
+}
+
 int32_t subghz_app(void* p) {
 
     static char focus_file_buf[256];
     uint32_t menu_focus_index = 0;
     bool focus_file_existed = false;
-    char focus_menu_content[16] = {0};
+    char focus_menu_content[32] = {0};
     bool is_keymethod_return = false;
     bool is_inforeturn = false;
+    SubGhzAddManualHandoff add_manual_handoff = {0};
+    bool is_add_manual = false;
 
-    /* An external grid app may relaunch us WITH the focus arg instead of writing
-     * .focus_menu (the stock SubRATT/subghz_randomattack does this), which would
-     * otherwise skip the .focus_menu read below. Honour the arg here. */
+    bool is_ram_recover_pass = (p && strcmp((const char*)p, "ramrecover") == 0);
+    if(is_ram_recover_pass) {
+        subghz_lowram_softlock_release();
+        p = NULL;
+    }
+
     if(p && strlen((const char*)p)) {
         const char* fp = (const char*)p;
         if(strncmp(fp, "core:", 5) == 0) fp += 5;
@@ -452,7 +611,7 @@ int32_t subghz_app(void* p) {
         else if(strcmp(fp, "menu:bruteforcer") == 0) fi = SubmenuIndexSubRATT;
         if(fi != 0) {
             menu_focus_index = fi;
-            p = NULL; /* consumed: fall through to the focused grid */
+            p = NULL;
         }
     }
 
@@ -462,7 +621,7 @@ int32_t subghz_app(void* p) {
         if(storage_file_exists(storage, "/ext/subghz/.focus_menu")) {
             File* f = storage_file_alloc(storage);
             if(storage_file_open(f, "/ext/subghz/.focus_menu", FSAM_READ, FSOM_OPEN_EXISTING)) {
-                char buf[16] = {0};
+                char buf[32] = {0};
                 uint16_t read = storage_file_read(f, buf, sizeof(buf) - 1);
                 buf[read] = '\0';
                 strncpy(focus_menu_content, buf, sizeof(focus_menu_content) - 1);
@@ -480,6 +639,12 @@ int32_t subghz_app(void* p) {
                     menu_focus_index = SubmenuIndexKeeloqKeys;
                 } else if(strcmp(buf, "menu:keeloq_bf") == 0) {
                     menu_focus_index = SubmenuIndexKeeloqBf2;
+                } else if(strcmp(buf, "menu:addmanual") == 0) {
+                    menu_focus_index = SubmenuIndexAddManuallyAdvanced;
+                } else if(strcmp(buf, "menu:rawdual") == 0) {
+                    menu_focus_index = SubmenuIndexRawDual;
+                } else if(strcmp(buf, "menu:grabber") == 0) {
+                    menu_focus_index = SubmenuIndexSignalGrabber;
                 } else if(strcmp(buf, "read") == 0) {
                     static const char read_arg[] = "read";
                     p = (void*)read_arg;
@@ -528,12 +693,18 @@ int32_t subghz_app(void* p) {
             storage_simply_remove(storage, "/ext/subghz/.focus_file");
         }
 
+        if(subghz_add_manual_read_handoff(storage, &add_manual_handoff)) {
+            is_add_manual = true;
+            storage_simply_remove(storage, SUBGHZ_ADD_MANUAL_HANDOFF_PATH);
+        }
+
         furi_record_close(RECORD_STORAGE);
     }
 
     bool open_receiver = (p && strcmp((const char*)p, "read") == 0);
     bool open_readraw  = (p && strcmp((const char*)p, "readraw") == 0);
-    bool open_menu_focused = (menu_focus_index != 0);
+
+    bool open_menu_focused = (menu_focus_index != 0) && !is_add_manual;
 
     bool is_rawreturn = (focus_file_existed &&
                          !is_keymethod_return &&
@@ -551,6 +722,12 @@ int32_t subghz_app(void* p) {
 
     SubGhz* subghz = subghz_alloc(alloc_for_tx);
 
+    if(!is_ram_recover_pass && !subghz_txrx_is_database_loaded(subghz->txrx)) {
+        subghz_ram_recovery_restart();
+        subghz_free(subghz, alloc_for_tx);
+        return 0;
+    }
+
     if(alloc_for_tx) {
         subghz->raw_send_only = true;
     } else {
@@ -560,6 +737,8 @@ int32_t subghz_app(void* p) {
     if(open_menu_focused) {
         view_dispatcher_attach_to_gui(
             subghz->view_dispatcher, subghz->gui, ViewDispatcherTypeFullscreen);
+
+        furi_string_set(subghz->file_path, SUBGHZ_APP_FOLDER);
         scene_manager_set_scene_state(subghz->scene_manager, SubGhzSceneStart, menu_focus_index);
         scene_manager_next_scene(subghz->scene_manager, SubGhzSceneStart);
     } else if(open_receiver) {
@@ -653,6 +832,23 @@ int32_t subghz_app(void* p) {
                 scene_manager_stop(subghz->scene_manager);
                 view_dispatcher_stop(subghz->view_dispatcher);
             }
+        }
+    } else if(is_add_manual) {
+
+        view_dispatcher_attach_to_gui(
+            subghz->view_dispatcher, subghz->gui, ViewDispatcherTypeFullscreen);
+        furi_string_set(subghz->file_path, SUBGHZ_APP_FOLDER);
+        if(subghz_txrx_is_database_loaded(subghz->txrx)) {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneStart, SubmenuIndexAddManuallyAdvanced);
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneStart);
+            subghz_add_manual_apply(subghz, &add_manual_handoff);
+            subghz_scene_set_type_generate_protocol_from_infos(subghz);
+        } else {
+            scene_manager_set_scene_state(
+                subghz->scene_manager, SubGhzSceneShowError, SubGhzCustomEventManagerSet);
+            furi_string_set(subghz->error_str, "No SD card or\ndatabase found.");
+            scene_manager_next_scene(subghz->scene_manager, SubGhzSceneShowError);
         }
     } else {
         view_dispatcher_attach_to_gui(

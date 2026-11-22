@@ -4,15 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "DucatoV0"
-
-// Fiat Ducato V0 -- ported from firmware ducato_v0.c via KeeLoq-RX arke_ducato.py.
-// Magneti Marelli NBC250C body computer, NXP PCF7946A (HITAG2) fob, ATA5742P @
-// 433.92 MHz ASK, Manchester. 71-bit frame = 64-bit key (Hop:32 | Fix:32) + 7-bit
-// CRC. Fix = Serial(24) | Button(8). Hop = encrypted rolling code (counter NOT
-// extractable). CRC is a genuine 1-bit firmware checksum (masked-XOR + nibble parity).
-// Decode-only (encrypted hop -> no clone); .encoder = NULL.
 
 #define DUCATO_V0_PREAMBLE_MIN 120
 #define DUCATO_V0_TE_SYNC      800
@@ -25,7 +19,6 @@ static const SubGhzBlockConst subghz_protocol_ducato_v0_const = {
     .min_count_bit_for_found = DUCATO_V0_DATA_BITS,
 };
 
-// PCF7946A Manchester table + nibble-parity + CRC masks (from firmware).
 static const uint8_t ducato_manchester_table[4] = {0x01, 0x91, 0x9B, 0xFB};
 static const uint8_t ducato_parity_table[16] = {0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0};
 static const uint8_t ducato_crc_masks[5] = {0xB3, 0x80, 0x83, 0x22, 0x73};
@@ -40,8 +33,8 @@ struct SubGhzProtocolDecoderDucatoV0 {
     uint16_t preamble_count;
     uint8_t man_state;
 
-    uint64_t data_lo; // bits 0..63
-    uint32_t data_hi; // bits 64..70 (7 bits)
+    uint64_t data_lo;
+    uint32_t data_hi;
     uint16_t bit_count;
 
     uint32_t fix;
@@ -53,15 +46,12 @@ struct SubGhzProtocolDecoderDucatoV0 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderDucatoV0);
 
-
 typedef enum {
     DucatoV0StepReset = 0,
     DucatoV0StepPreamble = 1,
     DucatoV0StepData = 2,
 } DucatoV0Step;
 
-// Mirror of firmware ducato_v0_check_crc(): masked-XOR over big-endian key bytes
-// + nibble parity; valid when (crc & 1) == parity. (byte[5], NOT byte[4].)
 static bool ducato_v0_check_crc(uint64_t key64, uint8_t crc7) {
     uint8_t b[8];
     for(uint8_t i = 0; i < 8; i++) b[i] = (uint8_t)(key64 >> (8 * (7 - i)));
@@ -73,8 +63,6 @@ static bool ducato_v0_check_crc(uint64_t key64, uint8_t crc7) {
     return (crc7 & 0x01U) == parity;
 }
 
-// Custom Manchester (firmware ducato_manchester_decode): returns true if a bit was
-// produced, writes it to *bit. Does NOT reset when state==new_state (just no bit).
 static bool ducato_man_decode(SubGhzProtocolDecoderDucatoV0* instance, uint8_t timing_type, uint8_t* bit) {
     uint8_t s = instance->man_state;
     if(s >= 4) {
@@ -96,7 +84,7 @@ static bool ducato_man_decode(SubGhzProtocolDecoderDucatoV0* instance, uint8_t t
 }
 
 static void ducato_v0_finish(SubGhzProtocolDecoderDucatoV0* instance) {
-    // 71-bit frame: key = bits[70:7] (64-bit), crc = bits[6:0] (7-bit).
+
     uint64_t key = ((uint64_t)instance->data_hi << 57) | (instance->data_lo >> 7);
     uint8_t crc = (uint8_t)(instance->data_lo & 0x7F);
 
@@ -105,7 +93,6 @@ static void ducato_v0_finish(SubGhzProtocolDecoderDucatoV0* instance) {
     uint32_t serial = (fix >> 8) & 0x00FFFFFFU;
     uint8_t btn = (uint8_t)(fix & 0xFFU);
 
-    // reset accumulator for next frame
     instance->parser_step = DucatoV0StepReset;
     instance->preamble_count = 0;
     instance->man_state = 1;
@@ -113,7 +100,6 @@ static void ducato_v0_finish(SubGhzProtocolDecoderDucatoV0* instance) {
     instance->data_hi = 0;
     instance->bit_count = 0;
 
-    // hardening: reject degenerate serials (no emit)
     if(serial == 0x000000U || serial == 0xFFFFFFU || serial == 0x555555U ||
        serial == 0xAAAAAAU) {
         return;
@@ -130,7 +116,7 @@ static void ducato_v0_finish(SubGhzProtocolDecoderDucatoV0* instance) {
     instance->generic.data_count_bit = DUCATO_V0_DATA_BITS;
     instance->generic.serial = serial;
     instance->generic.btn = btn;
-    instance->generic.cnt = 0; // counter encrypted in hop, not extractable
+    instance->generic.cnt = 0;
     instance->decoder.decode_data = key;
     instance->decoder.decode_count_bit = DUCATO_V0_DATA_BITS;
 
@@ -146,8 +132,6 @@ void* subghz_protocol_decoder_ducato_v0_alloc(SubGhzEnvironment* environment) {
     instance->man_state = 1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_ducato_v0_reset(void* context) {
     furi_check(context);
@@ -217,7 +201,7 @@ void subghz_protocol_decoder_ducato_v0_feed(void* context, bool level, uint32_t 
         } else if(DURATION_DIFF(duration, tl) <= d) {
             timing_type = level ? 4 : 6;
         }
-        // invalid timing: ignore pulse, do not reset (firmware behaviour)
+
         if(timing_type != 0xFF) {
             uint8_t bit = 0;
             if(ducato_man_decode(instance, timing_type, &bit)) {
@@ -237,8 +221,6 @@ void subghz_protocol_decoder_ducato_v0_feed(void* context, bool level, uint32_t 
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_ducato_v0_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -257,6 +239,14 @@ SubGhzProtocolStatus subghz_protocol_decoder_ducato_v0_serialize(
        !flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "Hop", &hop, 1) ||
        !flipper_format_write_uint32(flipper_format, "CRC", &crc, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[9];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    fdata[8] = (uint8_t)((instance->crc & 0x7F) << 1);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -304,11 +294,15 @@ const SubGhzProtocolDecoder subghz_protocol_ducato_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_ducato_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_ducato_v0 = {
     .name = DUCATO_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_ducato_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_ducato_v0_encoder_ext.vtable,
 };

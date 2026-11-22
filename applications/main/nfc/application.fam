@@ -15,13 +15,6 @@ App(
     fap_category="NFC",
 )
 
-# FoxFW NFC externalization: engine-loaded Felica protocol group. The firmware
-# NFC engine (lib/nfc/nfc_group_manager.c) loads this .fal from
-# apps_data/nfc/plugins/ on demand to obtain Felica's poller/listener/device
-# vtables (removed from the static firmware registries). Bundles the full,
-# byte-identical Felica stack so it is self-contained; mbedtls_des3 resolves
-# from the firmware API. NOT fal_embedded - it is a standalone .fal the FIRMWARE
-# loads, like radio_device_cc1101_ext, not an app-embedded plugin.
 App(
     appid="grp_nfc_felica",
     apptype=FlipperAppType.PLUGIN,
@@ -117,8 +110,6 @@ App(
         "nfc_groups/type_4_tag_bundle/*.c*",
     ],
 )
-
-# Protocol support plugins
 
 App(
     appid="nfc_iso14443_3a",
@@ -284,7 +275,6 @@ App(
     fal_embedded=True,
 )
 
-
 App(
     appid="nfc_ntag4xx",
     targets=["f7"],
@@ -337,8 +327,6 @@ App(
     ],
     fal_embedded=True,
 )
-
-# Parser plugins
 
 App(
     appid="all_in_one_parser",

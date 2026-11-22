@@ -1,5 +1,5 @@
-/* enc_alutech_at_4n.fal : SD encoder for alutech_at_4n (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_alutech_at_4n enc_alutech_at_4n__subghz_protocol_alutech_at_4n
 #define subghz_protocol_encoder_alutech_at_4n_alloc enc_alutech_at_4n__subghz_protocol_encoder_alutech_at_4n_alloc
 #define subghz_protocol_encoder_alutech_at_4n_deserialize enc_alutech_at_4n__subghz_protocol_encoder_alutech_at_4n_deserialize
@@ -38,7 +38,6 @@ static const SubGhzBlockConst subghz_protocol_alutech_at_4n_const = {
     .min_count_bit_for_found = 72,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern uint8_t alutech_at4n_counter_mode__bridge_ty;
 extern bool alutech_at_4n_raw_replay__bridge_ty;
 extern bool bypass__bridge_ty;
@@ -225,7 +224,7 @@ static bool subghz_protocol_alutech_at_4n_gen_data(
     if((alutech_at4n_counter_mode == 0) || bypass) {
 
         if(alutech_at_4n_raw_replay) {
-            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+            bypass = false;
         } else if((furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) || bypass) {
             bypass = false;
 
@@ -484,7 +483,6 @@ static uint8_t subghz_protocol_alutech_at_4n_get_btn_code(void) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -492,13 +490,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -547,7 +543,7 @@ SubGhzProtocolStatus subghz_protocol_encoder_alutech_at_4n_deserialize(
     SubGhzProtocolEncoderAlutech_at_4n* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         alutech_at_4n_raw_replay = false;
         {
             uint32_t alutech_at_4n_txraw = 0;
@@ -626,7 +622,6 @@ static const SubGhzProtocolEncoder enc_alutech_at_4n_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_alutech_at_4n = {
     .name = SUBGHZ_PROTOCOL_ALUTECH_AT_4N_NAME,
     .type = SubGhzProtocolTypeDynamic,

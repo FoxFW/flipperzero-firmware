@@ -1,14 +1,4 @@
-/*
- * TagTinker - ESL Flipper Zero application
- *
- * Transmit infrared commands to supported ESL displays
- * using the built-in IR LED at 1.255 MHz carrier.
- *
- * App by I12BP8 - github.com/i12bp8
- * Research by furrtek - github.com/furrtek
- *
- * SPDX-License-Identifier: GPL-3.0-only
- */
+
 
 #include "tagtinker_app.h"
 

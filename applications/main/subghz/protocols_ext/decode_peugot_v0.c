@@ -1,4 +1,4 @@
-/* decode_peugot_v0.fal : SD get_string for peugot_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -25,19 +25,16 @@ struct SubGhzProtocolDecoderPeugotV0 {
     uint16_t bit_count;
     bool half_bit;
 
-    uint16_t data_16;  // Bits 64-79 of the 80-bit frame
+    uint16_t data_16;
 };
 
 static void peugot_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderPeugotV0* instance = input->decoder;
 
-
-    // First 16 bits of data = Serial, remaining 48 bits + Key2 (16 bits) = 64-bit Hop
     uint16_t serial = (uint16_t)(instance->generic.data >> 48);
     uint32_t hop_hi = (uint32_t)((instance->generic.data >> 16) & 0xFFFFFFFF);
     uint16_t hop_lo_part = (uint16_t)(instance->generic.data & 0xFFFF);
-    // Full hop: 48 bits from generic.data (bits 47..0) + 16 bits from data_16 = 64 bits
 
     furi_string_cat_printf(
         output,

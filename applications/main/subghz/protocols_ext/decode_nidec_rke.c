@@ -1,4 +1,4 @@
-/* decode_nidec_rke.fal : SD get_string for nidec_rke (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nidec_rke.h>
@@ -8,29 +8,28 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 
-#define NIDEC_HEAD_BITS    48 /* sequence+id+byte5 always fully captured */
+#define NIDEC_HEAD_BITS    48
 
 struct SubGhzProtocolDecoderNidecRke {
     SubGhzProtocolDecoderBase base;
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint32_t sync_reg; /* rolling 32-bit window of raw (non-inverted) bits */
-    uint64_t payload; /* inverted payload bits, MSB-first */
-    uint16_t payload_bits; /* count collected so far */
+    uint32_t sync_reg;
+    uint64_t payload;
+    uint16_t payload_bits;
 };
 
 static inline uint8_t nidec_byte(uint64_t data, uint8_t index);
 
 static inline uint8_t nidec_byte(uint64_t data, uint8_t index) {
-    /* byte 0 = most significant, matching rtl_433 bytes[0..7] */
+
     return (uint8_t)((data >> (56 - 8 * index)) & 0xFF);
 }
 
 static void nidec_rke_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderNidecRke* instance = input->decoder;
-
 
     uint64_t data = instance->generic.data;
     uint16_t bits = instance->generic.data_count_bit;

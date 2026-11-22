@@ -127,3 +127,4 @@ bool subghz_txrx_gen_secplus_v1_protocol(
 void subghz_txrx_gen_serial_gangqi(uint64_t* result_key);
 
 void subghz_txrx_gen_key_marantec(uint64_t* result_key);
+

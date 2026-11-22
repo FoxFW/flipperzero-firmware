@@ -1,4 +1,4 @@
-/* decode_nord_ice.fal : SD get_string for nord_ice (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nord_ice.h>
@@ -25,7 +25,6 @@ static void subghz_protocol_nord_ice_check_remote_controller(SubGhzBlockGeneric*
 static void nord_ice_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderNordIce* instance = input->decoder;
-
 
     subghz_protocol_nord_ice_check_remote_controller(&instance->generic);
 

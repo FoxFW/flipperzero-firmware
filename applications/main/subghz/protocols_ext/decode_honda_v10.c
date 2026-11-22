@@ -1,4 +1,4 @@
-/* decode_honda_v10.fal : SD get_string for honda_v10 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>

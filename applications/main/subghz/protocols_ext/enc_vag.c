@@ -1,5 +1,5 @@
-/* enc_vag.fal : SD encoder for vag (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_vag_alloc enc_vag__subghz_protocol_encoder_vag_alloc
 #define subghz_protocol_encoder_vag_deserialize enc_vag__subghz_protocol_encoder_vag_deserialize
 #define subghz_protocol_encoder_vag_free enc_vag__subghz_protocol_encoder_vag_free
@@ -85,7 +85,6 @@ static const uint8_t vag_keys_packed[VAG_KEYS_COUNT][AUT64_KEY_STRUCT_PACKED_SIZ
 
 static const uint32_t vag_tea_key_schedule[] = {0x0B46502D, 0x5E253718, 0x2BF93A19, 0x622C1206};
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern struct aut64_key protocol_vag_keys__bridge_ty[VAG_KEYS_COUNT];
 extern int8_t protocol_vag_keys_loaded__bridge_ty;
 typedef struct {
@@ -970,7 +969,6 @@ static const SubGhzProtocolEncoder enc_vag_vt = {
     .yield = subghz_protocol_encoder_vag_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_vag = {
     .name = VAG_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

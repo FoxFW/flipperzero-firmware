@@ -106,14 +106,6 @@ if GetOption("fullenv") or any(
         "-r",
         firmware_env.subst("${RESOURCES_ROOT}"),
     ]
-    dist_splash_arguments = (
-        [
-            "--splash",
-            distenv.subst("assets/slideshow/$UPDATE_SPLASH"),
-        ]
-        if distenv["UPDATE_SPLASH"]
-        else []
-    )
 
     selfupdate_dist = distenv.DistCommand(
         "updater_package",
@@ -122,7 +114,6 @@ if GetOption("fullenv") or any(
             *dist_basic_arguments,
             *dist_radio_arguments,
             *dist_resource_arguments,
-            *dist_splash_arguments,
         ],
     )
 

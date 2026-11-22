@@ -1,4 +1,4 @@
-/* decode_marantec.fal : SD get_string for marantec (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/marantec.h>
@@ -33,7 +33,7 @@ static void marantec_decode(const SubGhzDecodeInput* input, FuriString* output) 
 
     subghz_protocol_marantec_remote_controller(&instance->generic);
 
-    uint8_t crc = (input->extra_count > 0) ? (uint8_t)input->extra[0] : 0; /* CRC computed internally */
+    uint8_t crc = (input->extra_count > 0) ? (uint8_t)input->extra[0] : 0;
     bool crc_ok = (crc == (instance->generic.data & 0xFF));
 
     subghz_block_generic_global.btn_is_available = false;

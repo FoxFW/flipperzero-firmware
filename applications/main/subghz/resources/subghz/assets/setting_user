@@ -47,11 +47,7 @@ Frequency: 433220000
 Frequency: 433420000
 Frequency: 433594000
 Frequency: 433650000
-Frequency: 433653000
-Frequency: 433657000
-Frequency: 433657070
 Frequency: 433880000
-Frequency: 433889000
 Frequency: 433890000
 Frequency: 433900000
 Frequency: 433910000
@@ -77,14 +73,37 @@ Frequency: 462750000
 Frequency: 464000000
 Frequency: 467750000
 Frequency: 779000000
+Frequency: 848934115
+Frequency: 850918412
+Frequency: 868300000
 Frequency: 868350000
 Frequency: 868400000
 Frequency: 868460000
 Frequency: 868800000
 Frequency: 868950000
+Frequency: 869525000
+Frequency: 902000000
+Frequency: 904000000
 Frequency: 906400000
+Frequency: 908000000
+Frequency: 910000000
+Frequency: 912000000
+Frequency: 913000000
+Frequency: 914000000
 Frequency: 915000000
+Frequency: 916000000
+Frequency: 917000000
+Frequency: 918000000
+Frequency: 919000000
+Frequency: 920000000
+Frequency: 921000000
+Frequency: 922000000
+Frequency: 923000000
+Frequency: 924000000
 Frequency: 925000000
+Frequency: 926000000
+Frequency: 926500000
+Frequency: 927000000
 Frequency: 928000000
 
 # Frequencies used for hopping mode (keep this list small or flipper will miss signal)
@@ -98,13 +117,20 @@ Hopping_Preset: AM650
 Hopping_Preset: FM476
 Hopping_Preset: FM95
 
+# Extended preset-hop group (Read config -> "Preset Hop Set": Extended or Both).
+# Specialist car FSK presets, one slot per marque so nobody's favoured. Kept to 5
+# (coprime to the 4 hopper frequencies) so Extended still gets full freq x preset
+# coverage on every sweep. Honda AM + Ford AM are already covered by AM650 above.
+Hopping_Preset2: Honda1
+Hopping_Preset2: FORDv4
+Hopping_Preset2: FORDv6
+Hopping_Preset2: AUDIv3
+Hopping_Preset2: FM15k
+
 # Custom preset
 # format for CC1101 "Custom_preset_data:" XX YY XX YY .. 00 00 ZZ ZZ ZZ ZZ ZZ ZZ ZZ ZZ, where: XX-register, YY - register data, 00 00 - end load register, ZZ - 8 byte Pa table register
 
 
-Custom_preset_name: FM80
-Custom_preset_module: CC1101
-Custom_preset_data: 02 0D 0B 06 08 32 07 04 14 00 13 02 12 04 11 83 10 67 15 55 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00
 
 Custom_preset_name: OOK_LR
 Custom_preset_module: CC1101
@@ -122,9 +148,10 @@ Custom_preset_name: FSK_1
 Custom_preset_module: CC1101
 Custom_preset_data: 02 0D 03 47 08 32 0B 0C 10 C7 11 93 12 00 13 22 14 F8 15 35 18 18 19 1D 1B 04 1C 00 1D 92 20 FB 21 B6 22 17 00 00 12 0E 1D 34 60 84 C8 C0
 
-#Custom_preset_name: FM95
-#Custom_preset_module: CC1101
-#Custom_preset_data: 02 0D 0B 06 08 32 07 04 14 00 13 02 12 04 11 83 10 67 15 24 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00
+Custom_preset_name: FM80
+Custom_preset_module: CC1101
+Custom_preset_data: 02 0D 0B 06 08 32 07 04 14 00 13 02 12 04 11 83 10 67 15 55 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00
+
 
 Custom_preset_name: FM95
 Custom_preset_module: CC1101

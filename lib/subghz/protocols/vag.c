@@ -371,7 +371,6 @@ const SubGhzProtocolDecoder subghz_protocol_vag_decoder = {
     .get_string = subghz_protocol_decoder_vag_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&aut64_decrypt) aut64_decrypt;
     __typeof__(&aut64_encrypt) aut64_encrypt;
@@ -814,8 +813,7 @@ typedef struct SubGhzProtocolEncoderVAG {
 void subghz_protocol_decoder_vag_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderVAG* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): AUT64 decrypt uses the runtime-loaded
-    // key table, so it stays internal; the SD plugin only formats.
+
     if(!instance->decrypted && instance->data_count_bit >= 80) {
         vag_parse_data(instance);
     }
@@ -828,5 +826,4 @@ void subghz_protocol_decoder_vag_get_string(void* context, FuriString* output) {
     };
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
-
 

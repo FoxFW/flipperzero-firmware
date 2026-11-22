@@ -1,4 +1,4 @@
-/* decode_feron.fal : SD get_string for feron (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/feron.h>
@@ -24,7 +24,6 @@ static void subghz_protocol_feron_check_remote_controller(SubGhzBlockGeneric* in
 static void feron_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFeron* instance = input->decoder;
-
 
     subghz_protocol_feron_check_remote_controller(&instance->generic);
 

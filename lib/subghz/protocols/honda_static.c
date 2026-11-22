@@ -50,7 +50,6 @@ struct SubGhzProtocolEncoderHondaStatic {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderHondaStatic);
 
-
 static void honda_static_decoder_commit(
     SubGhzProtocolDecoderHondaStatic* instance,
     const HondaStaticFields* decoded);
@@ -205,9 +204,7 @@ static bool honda_static_validate_reverse_packet(const uint8_t packet[9], HondaS
     for(size_t i = 0; i < 7; i++) {
         checksum ^= reversed[i];
     }
-    // The reverse/fallback path must enforce the stored checksum just like the
-    // forward path does; without this gate it accepted ~256x more false
-    // positives (button+serial only). (Fix 2026-10-03.)
+
     if(checksum != honda_static_get_bits(reversed, 56, 8)) return false;
     if(!honda_static_is_valid_button(button)) return false;
     if(!honda_static_is_valid_serial(serial)) return false;
@@ -341,7 +338,7 @@ const SubGhzProtocolDecoder honda_static_decoder = {
 
 static const SubGhzEncoderExternal honda_static_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_honda_static");
 
-const SubGhzProtocol honda_static_protocol = {
+const SubGhzProtocol subghz_protocol_honda_static = {
     .name = HONDA_STATIC_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 |
@@ -358,13 +355,11 @@ void* subghz_protocol_decoder_honda_static_alloc(SubGhzEnvironment* environment)
     furi_check(instance);
     memset(instance, 0, sizeof(*instance));
 
-    instance->base.protocol = &honda_static_protocol;
+    instance->base.protocol = &subghz_protocol_honda_static;
     instance->generic.protocol_name = instance->base.protocol->name;
 
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_static_reset(void* context) {
     furi_check(context);
@@ -430,7 +425,6 @@ void subghz_protocol_decoder_honda_static_get_string(void* context, FuriString* 
     };
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_honda_static_serialize(
     void* context,

@@ -1,5 +1,5 @@
-/* enc_honeywell.fal : SD encoder for honeywell (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_honeywell_alloc enc_honeywell__subghz_protocol_encoder_honeywell_alloc
 #define subghz_protocol_encoder_honeywell_deserialize enc_honeywell__subghz_protocol_encoder_honeywell_deserialize
 #define subghz_protocol_encoder_honeywell_free enc_honeywell__subghz_protocol_encoder_honeywell_free
@@ -178,7 +178,6 @@ static const SubGhzProtocolEncoder enc_honeywell_vt = {
     .yield = subghz_protocol_encoder_honeywell_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_honeywell = {
     .name = SUBGHZ_PROTOCOL_HONEYWELL_NAME,
     .type = SubGhzProtocolTypeStatic,

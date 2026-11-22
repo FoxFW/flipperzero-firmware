@@ -111,7 +111,6 @@ void fox_settings_update_desktop_settings(uint32_t auto_lock_ms, uint8_t usb_inh
 void fox_settings_sync_int_to_sd(void);
 void fox_settings_sync_sd_to_int(void);
 
-/* Notification-text mode (stored in FoxSettingsData.reserved[0]). */
 #define FOX_NOTIFY_TEXT_ALL      0u
 #define FOX_NOTIFY_TEXT_CRITICAL 1u
 #define FOX_NOTIFY_TEXT_NONE     2u

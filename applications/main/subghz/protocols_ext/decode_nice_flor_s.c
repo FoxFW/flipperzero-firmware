@@ -1,4 +1,4 @@
-/* decode_nice_flor_s.fal : SD get_string for nice_flor_s (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nice_flor_s.h>
@@ -166,7 +166,6 @@ static void nice_flor_s_decode(const SubGhzDecodeInput* input, FuriString* outpu
             instance->generic.btn);
     }
 }
-
 
 static const SubGhzDecodeEntry nice_flor_s_items[] = {{.name = "Nice FloR-S", .get_string = nice_flor_s_decode}};
 static const SubGhzDecodeRegistry nice_flor_s_registry = {.items = nice_flor_s_items, .size = 1};

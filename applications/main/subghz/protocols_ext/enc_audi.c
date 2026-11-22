@@ -1,5 +1,5 @@
-/* enc_audi.fal : SD encoder for audi (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_audi enc_audi__subghz_protocol_audi
 #define subghz_protocol_encoder_audi_alloc enc_audi__subghz_protocol_encoder_audi_alloc
 #define subghz_protocol_encoder_audi_deserialize enc_audi__subghz_protocol_encoder_audi_deserialize
@@ -42,68 +42,40 @@ struct SubGhzProtocolEncoderAudi {
     SubGhzProtocolBlockEncoder encoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t raw_data[AUDI_WIRE_BYTES]; // on-wire (scrambled) 8 bytes
+    uint8_t raw_data[AUDI_WIRE_BYTES];
 };
 
-// ---------------------------------------------------------------------------
-// Scramble / parity engine (@ 0xf8fc). Operates in place on {b3,b4,b5}.
-// ---------------------------------------------------------------------------
-
 static inline uint8_t audi_bit(uint8_t x, uint8_t n);
-// P = bit3(b3) ^ bit4(b4) ^ bit6(b4) ^ bit7(b4) ^ bit4(b5) ^ bit7(b5)
+
 static uint8_t audi_parity(uint8_t b3, uint8_t b4, uint8_t b5);
-// One forward scramble iteration over block[0..2] = {b3,b4,b5}.
+
 static void audi_scramble_iteration(uint8_t block[3]);
-// One inverse scramble iteration. Returns true if the recovered block is
-// self-consistent (recomputed parity matches the injected seed P == o0 bit0).
+
 static bool audi_unscramble_iteration(uint8_t block[3]);
-// Forward: scramble {b3,b4,b5} in place, 4 iterations, then checksum b7.
+
 static void audi_encrypt(uint8_t raw[AUDI_WIRE_BYTES]);
-// Inverse: un-scramble {b3,b4,b5} in place, 4 iterations. Returns parity_ok.
+
 static bool audi_decrypt_block(uint8_t raw[AUDI_WIRE_BYTES]);
-// ---------------------------------------------------------------------------
-// Field helpers. raw_data[] holds the on-wire (scrambled) bytes; the plaintext
-// rolling bytes are obtained on demand via audi_decrypt_block on a copy.
-// ---------------------------------------------------------------------------
 
 static uint32_t audi_uid(const uint8_t raw[AUDI_WIRE_BYTES]);
 static bool audi_frame_valid(const uint8_t raw[AUDI_WIRE_BYTES]);
 static void audi_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[AUDI_WIRE_BYTES]);
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire.
-//   Per repeat (x5):
-//     HIGH 2500 -> LOW 850 (header/sync)
-//     64 PWM bits LSB-first:
-//        bit1 -> HIGH 1100 , LOW 550
-//        bit0 -> HIGH 550  , LOW 1100
-//     LOW 850 inter-repeat gap
-// The stored raw_data are the on-wire (scrambled) bytes, so replay reproduces
-// the wire exactly. A D-pad button change re-derives the whole frame: set b6,
-// advance the plaintext rolling counter (b3/b4), re-scramble, re-checksum.
-// ---------------------------------------------------------------------------
 
 static size_t audi_append_data_pairs(LevelDuration* upload, size_t index, const uint8_t raw[AUDI_WIRE_BYTES]);
 static bool audi_encoder_build_upload(SubGhzProtocolEncoderAudi* instance);
-// Rebuild the on-wire raw from a chosen button + plaintext rolling counter.
-// Keeps UID (b0..b2) and b5 plaintext as captured; only b3/b4 carry the counter.
-static void audi_reencode(SubGhzProtocolEncoderAudi* instance, uint8_t new_btn, uint16_t new_cnt);
 
-// ---------------------------------------------------------------------------
-// Scramble / parity engine (@ 0xf8fc). Operates in place on {b3,b4,b5}.
-// ---------------------------------------------------------------------------
+static void audi_reencode(SubGhzProtocolEncoderAudi* instance, uint8_t new_btn, uint16_t new_cnt);
 
 static inline uint8_t audi_bit(uint8_t x, uint8_t n) {
     return (uint8_t)((x >> n) & 1U);
 }
 
-// P = bit3(b3) ^ bit4(b4) ^ bit6(b4) ^ bit7(b4) ^ bit4(b5) ^ bit7(b5)
 static uint8_t audi_parity(uint8_t b3, uint8_t b4, uint8_t b5) {
     return (uint8_t)(
         audi_bit(b3, 3) ^ audi_bit(b4, 4) ^ audi_bit(b4, 6) ^ audi_bit(b4, 7) ^ audi_bit(b5, 4) ^
         audi_bit(b5, 7));
 }
 
-// One forward scramble iteration over block[0..2] = {b3,b4,b5}.
 static void audi_scramble_iteration(uint8_t block[3]) {
     const uint8_t p = audi_parity(block[0], block[1], block[2]);
     uint8_t carry = p;
@@ -112,31 +84,20 @@ static void audi_scramble_iteration(uint8_t block[3]) {
         block[i] = (uint8_t)(((in << 1) & 0xFEU) | carry);
         carry = (uint8_t)((in >> 7) & 1U);
     }
-    // The final carry (bit7 of the last input, i.e. old bit7(b5)) is dropped;
-    // it is recoverable on decode via the parity relation (see below).
+
 }
 
-// One inverse scramble iteration. Returns true if the recovered block is
-// self-consistent (recomputed parity matches the injected seed P == o0 bit0).
 static bool audi_unscramble_iteration(uint8_t block[3]) {
     const uint8_t o0 = block[0];
     const uint8_t o1 = block[1];
     const uint8_t o2 = block[2];
 
-    // The parity P injected as the first carry equals bit0 of the first output.
     const uint8_t p = (uint8_t)(o0 & 1U);
 
-    // Recover all bits except in2 bit7:
-    //   in0 = (o0 >> 1) | (o1 bit0 << 7)
-    //   in1 = (o1 >> 1) | (o2 bit0 << 7)
-    //   in2 = (o2 >> 1) | (in2_bit7 << 7)
     const uint8_t in0 = (uint8_t)(((o0 >> 1) & 0x7FU) | ((o1 & 1U) << 7));
     const uint8_t in1 = (uint8_t)(((o1 >> 1) & 0x7FU) | ((o2 & 1U) << 7));
     uint8_t in2_low7 = (uint8_t)((o2 >> 1) & 0x7FU);
 
-    // Recover in2 bit7 from the parity relation:
-    //   P = bit3(in0) ^ bit4(in1) ^ bit6(in1) ^ bit7(in1) ^ bit4(in2) ^ bit7(in2)
-    // => bit7(in2) = P ^ bit3(in0) ^ bit4(in1) ^ bit6(in1) ^ bit7(in1) ^ bit4(in2)
     const uint8_t known = (uint8_t)(
         audi_bit(in0, 3) ^ audi_bit(in1, 4) ^ audi_bit(in1, 6) ^ audi_bit(in1, 7) ^
         audi_bit(in2_low7, 4));
@@ -147,13 +108,9 @@ static bool audi_unscramble_iteration(uint8_t block[3]) {
     block[1] = in1;
     block[2] = in2;
 
-    // Self-check: recomputing P on the recovered plaintext must equal the seed.
-    // This is guaranteed by construction (we solved for in2 bit7 to make it so),
-    // but we return it so the decoder can flag corrupt captures.
     return audi_parity(in0, in1, in2) == p;
 }
 
-// Forward: scramble {b3,b4,b5} in place, 4 iterations, then checksum b7.
 static void audi_encrypt(uint8_t raw[AUDI_WIRE_BYTES]) {
     uint8_t block[3] = {raw[3], raw[4], raw[5]};
     for(uint8_t r = 0; r < AUDI_SCRAMBLE_ROUNDS; r++) {
@@ -168,7 +125,6 @@ static void audi_encrypt(uint8_t raw[AUDI_WIRE_BYTES]) {
     raw[7] = (uint8_t)(sum & 0xFFU);
 }
 
-// Inverse: un-scramble {b3,b4,b5} in place, 4 iterations. Returns parity_ok.
 static bool audi_decrypt_block(uint8_t raw[AUDI_WIRE_BYTES]) {
     uint8_t block[3] = {raw[3], raw[4], raw[5]};
     bool ok = true;
@@ -180,11 +136,6 @@ static bool audi_decrypt_block(uint8_t raw[AUDI_WIRE_BYTES]) {
     raw[5] = block[2];
     return ok;
 }
-
-// ---------------------------------------------------------------------------
-// Field helpers. raw_data[] holds the on-wire (scrambled) bytes; the plaintext
-// rolling bytes are obtained on demand via audi_decrypt_block on a copy.
-// ---------------------------------------------------------------------------
 
 static uint32_t audi_uid(const uint8_t raw[AUDI_WIRE_BYTES]) {
     return ((uint32_t)raw[0] << 16U) | ((uint32_t)raw[1] << 8U) | raw[2];
@@ -198,30 +149,17 @@ static bool audi_frame_valid(const uint8_t raw[AUDI_WIRE_BYTES]) {
 static void audi_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[AUDI_WIRE_BYTES]) {
     generic->serial = audi_uid(raw);
     generic->btn = raw[6];
-    // Rolling payload (plaintext) forms the counter view.
+
     uint8_t plain[AUDI_WIRE_BYTES];
     memcpy(plain, raw, AUDI_WIRE_BYTES);
     audi_decrypt_block(plain);
     generic->cnt = (uint16_t)(((uint16_t)plain[3] << 8U) | plain[4]);
     generic->data_count_bit = AUDI_WIRE_BITS;
-    // 64-bit on-wire payload fits generic.data (MSB-first over b0..b7) for hash.
+
     uint64_t data = 0U;
     for(size_t i = 0; i < AUDI_WIRE_BYTES; i++) data = (data << 8U) | raw[i];
     generic->data = data;
 }
-
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire.
-//   Per repeat (x5):
-//     HIGH 2500 -> LOW 850 (header/sync)
-//     64 PWM bits LSB-first:
-//        bit1 -> HIGH 1100 , LOW 550
-//        bit0 -> HIGH 550  , LOW 1100
-//     LOW 850 inter-repeat gap
-// The stored raw_data are the on-wire (scrambled) bytes, so replay reproduces
-// the wire exactly. A D-pad button change re-derives the whole frame: set b6,
-// advance the plaintext rolling counter (b3/b4), re-scramble, re-checksum.
-// ---------------------------------------------------------------------------
 
 static size_t audi_append_data_pairs(LevelDuration* upload, size_t index, const uint8_t raw[AUDI_WIRE_BYTES]) {
     for(uint16_t bit_index = 0U; bit_index < AUDI_WIRE_BITS; bit_index++) {
@@ -244,12 +182,12 @@ static bool audi_encoder_build_upload(SubGhzProtocolEncoderAudi* instance) {
 
     size_t index = 0U;
     for(uint8_t rep = 0U; rep < AUDI_REPEATS; rep++) {
-        // Header / sync.
+
         upload[index++] = level_duration_make(true, AUDI_HEADER_HIGH);
         upload[index++] = level_duration_make(false, AUDI_HEADER_LOW);
-        // 64 PWM data bits LSB-first.
+
         index = audi_append_data_pairs(upload, index, instance->raw_data);
-        // Inter-repeat gap.
+
         upload[index++] = level_duration_make(false, AUDI_GAP_US);
     }
 
@@ -258,22 +196,19 @@ static bool audi_encoder_build_upload(SubGhzProtocolEncoderAudi* instance) {
     return true;
 }
 
-// Rebuild the on-wire raw from a chosen button + plaintext rolling counter.
-// Keeps UID (b0..b2) and b5 plaintext as captured; only b3/b4 carry the counter.
 static void audi_reencode(SubGhzProtocolEncoderAudi* instance, uint8_t new_btn, uint16_t new_cnt) {
     uint8_t plain[AUDI_WIRE_BYTES];
     memcpy(plain, instance->raw_data, AUDI_WIRE_BYTES);
-    audi_decrypt_block(plain); // recover plaintext b3,b4,b5
+    audi_decrypt_block(plain);
 
     plain[3] = (uint8_t)((new_cnt >> 8U) & 0xFFU);
     plain[4] = (uint8_t)(new_cnt & 0xFFU);
     plain[6] = new_btn;
 
-    audi_encrypt(plain); // re-scramble {b3,b4,b5} + checksum b7
+    audi_encrypt(plain);
     memcpy(instance->raw_data, plain, AUDI_WIRE_BYTES);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -281,7 +216,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -363,11 +297,6 @@ SubGhzProtocolStatus
         instance->generic.cnt = (uint16_t)(((uint16_t)plain[3] << 8U) | plain[4]);
     }
 
-    // [PROTOPIRATE_PORT] custom_btn support. Audi has 3 buttons:
-    //   btn0=0x01 (Lock), btn1=0x02 (Unlock), btn2=0x04 (Trunk).
-    // OK replays the captured frame byte-identically. A D-pad change re-derives
-    // the whole frame (b6 + advanced rolling counter, re-scrambled + checksum),
-    // so the emitted frame round-trips through this decoder.
     const uint8_t original_btn = instance->raw_data[6];
     if(subghz_custom_btn_get_original() == 0) {
         subghz_custom_btn_set_original(original_btn);
@@ -380,11 +309,11 @@ SubGhzProtocolStatus
     case SUBGHZ_CUSTOM_BTN_DOWN: new_btn = AUDI_BTN_1; break;
     case SUBGHZ_CUSTOM_BTN_LEFT: new_btn = AUDI_BTN_2; break;
     case SUBGHZ_CUSTOM_BTN_OK:
-    default:                     new_btn = original_btn; break; // exact replay
+    default:                     new_btn = original_btn; break;
     }
 
     if(new_btn != original_btn) {
-        // Advance the plaintext rolling counter for a genuine (non-replay) press.
+
         uint32_t new_counter = instance->generic.cnt;
         uint32_t override_cnt = 0U;
         if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
@@ -407,6 +336,10 @@ SubGhzProtocolStatus
     instance->encoder.repeat = (repeat == 0U) ? AUDI_DEFAULT_REPEAT : (size_t)repeat;
 
     if(instance->encoder.upload == NULL) {
+        if(instance->encoder.upload) {
+            free(instance->encoder.upload);
+            instance->encoder.upload = NULL;
+        }
         instance->encoder.upload = malloc(AUDI_UPLOAD_CAPACITY * sizeof(LevelDuration));
         furi_check(instance->encoder.upload);
     }
@@ -426,7 +359,6 @@ static const SubGhzProtocolEncoder enc_audi_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_audi = {
     .name = AUDI_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -1,5 +1,5 @@
-/* enc_mitsubishi_v0.fal : SD encoder for mitsubishi_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_yield enc_mitsubishi_v0__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_mitsubishi_v0_alloc enc_mitsubishi_v0__subghz_protocol_encoder_mitsubishi_v0_alloc
 #define subghz_protocol_encoder_mitsubishi_v0_deserialize enc_mitsubishi_v0__subghz_protocol_encoder_mitsubishi_v0_deserialize
@@ -90,7 +90,6 @@ static void subghz_protocol_encoder_mitsubishi_v0_get_upload(SubGhzProtocolEncod
     instance->encoder.front = 0;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -171,7 +170,6 @@ static const SubGhzProtocolEncoder enc_mitsubishi_v0_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_mitsubishi_v0 = {
     .name = MITSUBISHI_PROTOCOL_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

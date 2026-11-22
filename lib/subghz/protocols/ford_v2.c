@@ -77,7 +77,7 @@ typedef struct SubGhzProtocolEncoderFordV2 {
     SubGhzBlockGeneric generic;
     uint64_t extra_data;
     uint8_t raw_bytes[FORD_V2_DATA_BYTES];
-} 
+}
 SubGhzProtocolEncoderFordV2;
 
 static void ford_v2_decoder_manchester_feed_event(
@@ -333,13 +333,11 @@ void* subghz_protocol_decoder_ford_v2_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderFordV2* instance = calloc(1, sizeof(SubGhzProtocolDecoderFordV2));
     furi_check(instance);
 
-    instance->base.protocol = &ford_protocol_v2;
+    instance->base.protocol = &subghz_protocol_ford_v2;
     instance->generic.protocol_name = instance->base.protocol->name;
 
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_ford_v2_reset(void* context) {
     furi_check(context);
@@ -513,7 +511,7 @@ const SubGhzProtocolDecoder subghz_protocol_ford_v2_decoder = {
 
 static const SubGhzEncoderExternal subghz_protocol_ford_v2_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_ford_v2");
 
-const SubGhzProtocol ford_protocol_v2 = {
+const SubGhzProtocol subghz_protocol_ford_v2 = {
     .name = FORD_PROTOCOL_V2_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM |
@@ -523,6 +521,4 @@ const SubGhzProtocol ford_protocol_v2 = {
     .encoder = &subghz_protocol_ford_v2_encoder_ext.vtable,
 };
 
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFordV2);

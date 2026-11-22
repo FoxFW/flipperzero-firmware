@@ -49,8 +49,6 @@ static NfcCommand texkom_listener_run(NfcGenericEvent event, void* context) {
     TexkomListener* instance = context;
     const NfcEvent* nfc_event = event.event_data;
 
-    // There is no activation to wait for and no command to answer: a Texkom tag simply repeats
-    // its frame. The HAL ticks at the rate one repetition should go out.
     if(nfc_event->type == NfcEventTypeListenerTick) {
         bit_buffer_copy_bytes(instance->tx_buffer, instance->data->frame, TEXKOM_FRAME_SIZE);
 

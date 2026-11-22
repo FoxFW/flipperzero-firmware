@@ -1,4 +1,4 @@
-/* decode_jarolift.fal : SD get_string for jarolift (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/jarolift.h>
@@ -49,8 +49,6 @@ static const char* subghz_protocol_jarolift_get_button_name(uint8_t btn) {
 static void jarolift_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderJarolift* instance = input->decoder;
-
-    /* KeeLoq decrypt done internally */
 
     subghz_block_generic_global.cnt_is_available = true;
     subghz_block_generic_global.cnt_length_bit = 16;

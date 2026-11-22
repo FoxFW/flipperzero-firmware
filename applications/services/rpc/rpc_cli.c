@@ -39,6 +39,17 @@ static void rpc_cli_session_terminated_callback(void* context) {
     furi_semaphore_release(cli_rpc->terminate_semaphore);
 }
 
+static volatile bool fox_rpc_usb_session_active = false;
+static volatile uint32_t fox_rpc_usb_session_since = 0;
+
+bool fox_rpc_usb_session_is_active(void) {
+    return fox_rpc_usb_session_active;
+}
+
+uint32_t fox_rpc_usb_session_active_since(void) {
+    return fox_rpc_usb_session_since;
+}
+
 void rpc_cli_command_start_session(PipeSide* pipe, FuriString* args, void* context) {
     UNUSED(args);
     furi_assert(pipe);
@@ -60,6 +71,9 @@ void rpc_cli_command_start_session(PipeSide* pipe, FuriString* args, void* conte
         furi_hal_usb_unlock();
         return;
     }
+
+    fox_rpc_usb_session_active = true;
+    fox_rpc_usb_session_since = furi_get_tick();
 
     CliRpc cli_rpc = {.pipe = pipe, .session_close_request = false};
     cli_rpc.terminate_semaphore = furi_semaphore_alloc(1, 0);
@@ -88,6 +102,8 @@ void rpc_cli_command_start_session(PipeSide* pipe, FuriString* args, void* conte
     }
 
     rpc_session_close(rpc_session);
+    fox_rpc_usb_session_active = false;
+    fox_rpc_usb_session_since = 0;
 
     furi_check(
         furi_semaphore_acquire(cli_rpc.terminate_semaphore, FuriWaitForever) == FuriStatusOk);

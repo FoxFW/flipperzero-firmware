@@ -1,24 +1,22 @@
 #include "../subghz_i.h"
 #include "../helpers/subghz_txrx_i.h"
 #include <lib/subghz/protocols/fiat_v1.h>
+#include <storage/storage.h>
 
 #define FIAT_V1_RECOVER_EV_DONE (0xF1)
 #define FIAT_V1_RECOVER_EV_TICK (0xF3)
 
-/* Level model: try the 95 known keys in sets of 8 (last set = 7). Each set is the
- * known-good ~8 min on-device operation; after a set finishes without a key we
- * auto-advance to the next set on a short countdown, so leaving the Flipper alone
- * eventually walks every set (stopping the moment a key is found). This replaces the
- * old single 87-key "L2" sweep that sat at 0% so long it looked like a hang. */
 #define FIAT_V1_KEYS_PER_LEVEL 8U
 #define FIAT_V1_LEVEL_COUNT \
     ((FIAT_V1_KNOWN_KEY_COUNT + FIAT_V1_KEYS_PER_LEVEL - 1U) / FIAT_V1_KEYS_PER_LEVEL)
 #define FIAT_V1_COUNTDOWN_SECS 3U
+#define FIAT_RECOVER_CKPT_DIR EXT_PATH("apps_data/subghz/fiat_recover")
 
 typedef enum {
-    FiatPhaseSweep = 0, // a set's worker thread is running
-    FiatPhaseCountdown, // between sets, counting down to auto-start the next
-    FiatPhaseResult,    // result widget shown
+    FiatPhaseSweep = 0,
+    FiatPhaseCountdown,
+    FiatPhaseResult,
+    FiatPhaseResumePrompt,
 } FiatRecoverPhase;
 
 typedef struct {
@@ -33,7 +31,7 @@ typedef struct {
     uint32_t hop;
 
     uint8_t phase;
-    uint8_t level; // 0-based index of the set running / about to run
+    uint8_t level;
     uint8_t key_start;
     uint8_t key_end;
     uint32_t total;
@@ -44,6 +42,7 @@ typedef struct {
     bool success;
     uint8_t found_key[6];
     uint32_t found_epoch;
+    uint8_t resume_level;
 } FiatV1RecoverCtx;
 
 static uint8_t fiat_level_start(uint8_t level) {
@@ -53,6 +52,62 @@ static uint8_t fiat_level_start(uint8_t level) {
 static uint8_t fiat_level_end(uint8_t level) {
     uint16_t e = (uint16_t)((uint16_t)(level + 1U) * FIAT_V1_KEYS_PER_LEVEL);
     return (e > FIAT_V1_KNOWN_KEY_COUNT) ? (uint8_t)FIAT_V1_KNOWN_KEY_COUNT : (uint8_t)e;
+}
+
+static void fiat_ckpt_path(uint32_t uid, FuriString* out) {
+    furi_string_printf(out, "%s/%08lX.fkp", FIAT_RECOVER_CKPT_DIR, (unsigned long)uid);
+}
+
+static void fiat_ckpt_save(uint32_t uid, uint8_t level) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, EXT_PATH("apps_data/subghz"));
+    storage_simply_mkdir(storage, FIAT_RECOVER_CKPT_DIR);
+    FuriString* path = furi_string_alloc();
+    fiat_ckpt_path(uid, path);
+    FlipperFormat* ff = flipper_format_file_alloc(storage);
+    if(flipper_format_file_open_always(ff, furi_string_get_cstr(path))) {
+        uint32_t u = uid;
+        uint32_t lv = level;
+        flipper_format_write_header_cstr(ff, "Fiat V1 Recover Checkpoint", 1);
+        flipper_format_write_uint32(ff, "UID", &u, 1);
+        flipper_format_write_uint32(ff, "Level", &lv, 1);
+    }
+    flipper_format_free(ff);
+    furi_string_free(path);
+    furi_record_close(RECORD_STORAGE);
+}
+
+static uint8_t fiat_ckpt_load(uint32_t uid) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FuriString* path = furi_string_alloc();
+    fiat_ckpt_path(uid, path);
+    uint8_t level = 0U;
+    FlipperFormat* ff = flipper_format_file_alloc(storage);
+    if(flipper_format_file_open_existing(ff, furi_string_get_cstr(path))) {
+        FuriString* ftype = furi_string_alloc();
+        uint32_t ver = 0U;
+        uint32_t u = 0U;
+        uint32_t lv = 0U;
+        if(flipper_format_read_header(ff, ftype, &ver) &&
+           flipper_format_read_uint32(ff, "UID", &u, 1) &&
+           flipper_format_read_uint32(ff, "Level", &lv, 1)) {
+            if(u == uid && lv > 0U && lv < FIAT_V1_LEVEL_COUNT) level = (uint8_t)lv;
+        }
+        furi_string_free(ftype);
+    }
+    flipper_format_free(ff);
+    furi_string_free(path);
+    furi_record_close(RECORD_STORAGE);
+    return level;
+}
+
+static void fiat_ckpt_delete(uint32_t uid) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FuriString* path = furi_string_alloc();
+    fiat_ckpt_path(uid, path);
+    storage_simply_remove(storage, furi_string_get_cstr(path));
+    furi_string_free(path);
+    furi_record_close(RECORD_STORAGE);
 }
 
 static bool fiat_v1_recover_progress_cb(uint8_t progress, uint32_t combos_tested, void* context) {
@@ -95,6 +150,7 @@ static int32_t fiat_v1_recover_thread(void* context) {
 static void fiat_v1_recover_start_level(FiatV1RecoverCtx* ctx) {
     ctx->key_start = fiat_level_start(ctx->level);
     ctx->key_end = fiat_level_end(ctx->level);
+    fiat_ckpt_save(ctx->uid, ctx->level);
     ctx->total = fiat_v1_hitag2_recovery_total_range(ctx->key_start, ctx->key_end);
     ctx->cancel = false;
     ctx->start_tick = furi_get_tick();
@@ -228,6 +284,23 @@ static void fiat_v1_recover_apply_and_save(SubGhz* subghz, FiatV1RecoverCtx* ctx
     }
 }
 
+static void fiat_v1_recover_draw_resume(SubGhz* subghz, FiatV1RecoverCtx* ctx) {
+    char body[96];
+    snprintf(
+        body,
+        sizeof(body),
+        "\e#Resume?\e#\nSaved: %u/%u key sets done.",
+        (unsigned)ctx->resume_level,
+        (unsigned)FIAT_V1_LEVEL_COUNT);
+    widget_reset(subghz->widget);
+    widget_add_text_box_element(subghz->widget, 0, 0, 128, 40, AlignCenter, AlignTop, body, true);
+    widget_add_button_element(
+        subghz->widget, GuiButtonTypeLeft, "Restart", fiat_v1_recover_widget_callback, subghz);
+    widget_add_button_element(
+        subghz->widget, GuiButtonTypeRight, "Resume", fiat_v1_recover_widget_callback, subghz);
+    view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdWidget);
+}
+
 void subghz_scene_fiat_v1_recover_on_enter(void* context) {
     SubGhz* subghz = context;
 
@@ -258,7 +331,14 @@ void subghz_scene_fiat_v1_recover_on_enter(void* context) {
         subghz->subghz_fiat_v1_recover, fiat_v1_recover_view_callback, subghz);
 
     ctx->level = 0U;
-    fiat_v1_recover_start_level(ctx);
+    uint8_t resume = fiat_ckpt_load(ctx->uid);
+    if(resume > 0U) {
+        ctx->resume_level = resume;
+        ctx->phase = FiatPhaseResumePrompt;
+        fiat_v1_recover_draw_resume(subghz, ctx);
+    } else {
+        fiat_v1_recover_start_level(ctx);
+    }
 }
 
 static void fiat_v1_recover_exit(SubGhz* subghz, FiatV1RecoverCtx* ctx) {
@@ -284,6 +364,7 @@ bool subghz_scene_fiat_v1_recover_on_event(void* context, SceneManagerEvent even
 
             if(ctx->success) {
                 fiat_v1_recover_apply_and_save(subghz, ctx);
+                fiat_ckpt_delete(ctx->uid);
                 ctx->phase = FiatPhaseResult;
                 fiat_v1_recover_draw_result(subghz, ctx);
                 return true;
@@ -291,8 +372,10 @@ bool subghz_scene_fiat_v1_recover_on_event(void* context, SceneManagerEvent even
 
             if((uint8_t)(ctx->level + 1U) < (uint8_t)FIAT_V1_LEVEL_COUNT) {
                 ctx->level = (uint8_t)(ctx->level + 1U);
+                fiat_ckpt_save(ctx->uid, ctx->level);
                 fiat_v1_recover_start_countdown(subghz, ctx);
             } else {
+                fiat_ckpt_delete(ctx->uid);
                 ctx->phase = FiatPhaseResult;
                 fiat_v1_recover_draw_result(subghz, ctx);
             }
@@ -311,6 +394,17 @@ bool subghz_scene_fiat_v1_recover_on_event(void* context, SceneManagerEvent even
 
         } else if(event.event == GuiButtonTypeCenter && ctx->phase == FiatPhaseCountdown) {
             fiat_v1_recover_stop_countdown(ctx);
+            fiat_v1_recover_start_level(ctx);
+            return true;
+
+        } else if(event.event == GuiButtonTypeLeft && ctx->phase == FiatPhaseResumePrompt) {
+            fiat_ckpt_delete(ctx->uid);
+            ctx->level = 0U;
+            fiat_v1_recover_start_level(ctx);
+            return true;
+
+        } else if(event.event == GuiButtonTypeRight && ctx->phase == FiatPhaseResumePrompt) {
+            ctx->level = ctx->resume_level;
             fiat_v1_recover_start_level(ctx);
             return true;
 
@@ -333,9 +427,6 @@ bool subghz_scene_fiat_v1_recover_on_event(void* context, SceneManagerEvent even
             return true;
         }
     } else if(event.type == SceneManagerEventTypeBack) {
-        if(ctx->phase == FiatPhaseSweep) {
-            return true; // block Back while a set is actively sweeping
-        }
         fiat_v1_recover_exit(subghz, ctx);
         scene_manager_previous_scene(subghz->scene_manager);
         return true;

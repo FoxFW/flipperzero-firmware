@@ -66,9 +66,7 @@ static void nfc_scene_emulate_on_enter_texkom(NfcApp* instance) {
 }
 
 const NfcProtocolSupportBase nfc_protocol_support_texkom = {
-    // No NfcProtocolFeatureEditUid: that only adds "Edit UID" to the saved-card menu, where
-    // rewriting a key you just read off a fob has no use. Add Manually's own "Change UID" is
-    // gated on the scene stack instead, so it is unaffected.
+
     .features = NfcProtocolFeatureEmulateFull,
 
     .scene_info =

@@ -396,6 +396,7 @@ static bool loader_applications_select_app(LoaderApplicationsApp* loader_applica
         .item_loader_callback = loader_applications_item_callback,
         .item_loader_context = loader_applications_app,
         .base_path = EXT_PATH("apps"),
+        .sort_by_name = true,
     };
 
     return dialog_file_browser_show(

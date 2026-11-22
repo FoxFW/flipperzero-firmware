@@ -508,7 +508,7 @@ uint8_t fox_settings_get_notification_text(void) {
         mode = s.reserved[0];
     }
     furi_record_close(RECORD_STORAGE);
-    if(mode > FOX_NOTIFY_TEXT_NONE) mode = FOX_NOTIFY_TEXT_ALL; /* garbage -> default */
+    if(mode > FOX_NOTIFY_TEXT_NONE) mode = FOX_NOTIFY_TEXT_ALL;
     return mode;
 }
 

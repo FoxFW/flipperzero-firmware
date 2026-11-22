@@ -15,7 +15,7 @@
 
 #define TAG "SubGhzProtocolNiceFlorS"
 
-static bool nice_flor_s_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool nice_flor_s_raw_replay = false;
 
 #define NICE_ONE_NAME                               "Nice One"
 #define SUBGHZ_NICE_FLOR_S_RAINBOW_TABLE_SIZE_BYTES 32
@@ -93,7 +93,6 @@ const SubGhzProtocolDecoder subghz_protocol_nice_flor_s_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* bypass;
     void* nice_flor_s_raw_replay;
@@ -116,7 +115,6 @@ const SubGhzProtocol subghz_protocol_nice_flor_s = {
     .decoder = &subghz_protocol_nice_flor_s_decoder,
     .encoder = &subghz_protocol_nice_flor_s_encoder_ext.vtable,
 };
-
 
 uint64_t subghz_protocol_nice_flor_s_encrypt(uint64_t data, const char* file_name) {
     if(!file_name) return SUBGHZ_NO_NICE_FLOR_S_RAINBOW_TABLE;
@@ -170,8 +168,7 @@ bool subghz_protocol_nice_flor_s_create_data_ic(
         for(size_t i = 0; i < 7; i++) {
             add_data[i] = (instance->generic.data >> (48 - i * 8)) & 0xFF;
         }
-        /* non-O-Code keeps Fox's original parcel-0 Nice One tail (byte-identical to prior
-         * generation); O-Code uses parcel 3 + the O-Code k-table. */
+
         nice_o_one_get_data(
             add_data, o_code ? NICE_FLOR_S_CREATE_PARCEL : 0, o_code ? 0x4 : 0x0);
         instance->generic.data_2 = 0;
@@ -205,7 +202,6 @@ bool subghz_protocol_nice_flor_s_create_data(
     return subghz_protocol_nice_flor_s_create_data_ic(
         context, flipper_format, serial, btn, cnt, preset, nice_one, false, NICE_FLOR_S_IC_PLAIN);
 }
-
 
 void* subghz_protocol_decoder_nice_flor_s_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderNiceFlorS* instance = malloc(sizeof(SubGhzProtocolDecoderNiceFlorS));
@@ -428,8 +424,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_nice_flor_s_serialize(
             ret = SubGhzProtocolStatusErrorParserOthers;
         }
         if((ret == SubGhzProtocolStatusOk) && !instance->o_code_no_ic) {
-            /* O-Code cert needs the decoded serial; decrypt inline (the shared-header crypto
-             * is available in the detector, so no .fal round-trip is required). */
+
             const char* file_name = instance->nice_flor_s_rainbow_table_file_name;
             uint8_t buf[SUBGHZ_NICE_FLOR_S_RAINBOW_TABLE_SIZE_BYTES] = {0};
             if(file_name &&

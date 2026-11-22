@@ -1,0 +1,9 @@
+# ufbt build output and local IDE state
+dist/
+.vscode/
+*.o
+*.elf
+
+# capture scratch from the verification tools
+tools/*.iq
+tools/*.npy

@@ -24,6 +24,8 @@ static const SubGhzBlockConst subghz_protocol_ansonic_const = {
     .min_count_bit_for_found = 12,
 };
 
+#define ANSONIC_TE_SUM_DELTA (110)
+
 struct SubGhzProtocolDecoderAnsonic {
     SubGhzProtocolDecoderBase base;
 
@@ -130,6 +132,14 @@ void subghz_protocol_decoder_ansonic_feed(void* context, bool level, uint32_t du
         break;
     case AnsonicDecoderStepCheckDuration:
         if(level) {
+
+            if(DURATION_DIFF(
+                   instance->decoder.te_last + duration,
+                   subghz_protocol_ansonic_const.te_short +
+                       subghz_protocol_ansonic_const.te_long) >= ANSONIC_TE_SUM_DELTA) {
+                instance->decoder.parser_step = AnsonicDecoderStepReset;
+                break;
+            }
             if((DURATION_DIFF(instance->decoder.te_last, subghz_protocol_ansonic_const.te_short) <
                 subghz_protocol_ansonic_const.te_delta) &&
                (DURATION_DIFF(duration, subghz_protocol_ansonic_const.te_long) <

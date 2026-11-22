@@ -1,5 +1,5 @@
-/* enc_fiat_marelli.fal : SD encoder for fiat_marelli (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_fiat_marelli__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_fiat_marelli__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_fiat_marelli__subghz_protocol_encoder_common_yield
@@ -159,7 +159,6 @@ static void fiat_marelli_encoder_rebuild_raw_data(SubGhzProtocolEncoderFiatMarel
     }
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -167,13 +166,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -250,7 +247,6 @@ static const SubGhzProtocolEncoder enc_fiat_marelli_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_fiat_marelli = {
     .name = FIAT_MARELLI_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

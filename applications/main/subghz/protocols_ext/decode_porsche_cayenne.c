@@ -1,4 +1,4 @@
-/* decode_porsche_cayenne.fal : SD get_string for porsche_cayenne (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/porsche_cayenne.h>
@@ -29,7 +29,6 @@ static uint8_t porsche_cayenne_btn_to_custom(uint8_t btn) {
 static void porsche_cayenne_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderPorscheCayenne* instance = input->decoder;
-
 
     if(subghz_custom_btn_get_original() == 0) {
         subghz_custom_btn_set_original(porsche_cayenne_btn_to_custom(instance->generic.btn));

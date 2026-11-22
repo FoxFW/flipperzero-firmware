@@ -1,4 +1,4 @@
-/* decode_beninca_arc.fal : SD get_string for beninca_arc (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/beninca_arc.h>
@@ -111,7 +111,6 @@ static uint64_t
 static void beninca_arc_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderBenincaARC* instance = input->decoder;
-
 
     uint64_t middle_bytes_dec =
         subghz_protocol_beninca_arc_decrypt(&instance->generic, instance->keystore);

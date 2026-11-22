@@ -1,4 +1,4 @@
-/* decode_psa2.fal : SD get_string for psa2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/psa2.h>
@@ -82,7 +82,6 @@ static uint8_t psa_get_btn_code(void) {
 static void psa2_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderPSA* inst = input->decoder;
-
 
     uint16_t key2_val = (uint16_t)(inst->key2_low & 0xFFFF);
 

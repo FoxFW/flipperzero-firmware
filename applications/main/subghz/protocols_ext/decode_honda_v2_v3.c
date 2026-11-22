@@ -1,4 +1,4 @@
-/* decode_honda_v2_v3.fal : SD get_string for honda_v2_v3 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/honda_v2_v3.h>
@@ -59,7 +59,7 @@ typedef struct {
 
     union {
         struct {
-            uint32_t serial; // 24-bit serial
+            uint32_t serial;
             uint8_t btn_byte1;
             uint8_t btn_byte2;
             uint16_t padding;
@@ -69,14 +69,14 @@ typedef struct {
             bool has_sync;
         } v2;
         struct {
-            uint8_t sync; // should be 0x6A
+            uint8_t sync;
             uint8_t counter;
-            uint8_t payload[12]; // bytes 2-13
+            uint8_t payload[12];
             uint8_t crc;
-            uint16_t serial; // from Type A frames
+            uint16_t serial;
             uint8_t btn_byte;
             uint8_t flags;
-            bool is_fixed; // Type A vs Type B
+            bool is_fixed;
         } v3;
     } extra;
 } SubGhzProtocolDecoderHondaV2V3;
@@ -202,7 +202,6 @@ static void honda_v2_v3_decode(const SubGhzDecodeInput* input, FuriString* outpu
 
     const HondaVariantParams* params = honda_get_params(dec->variant);
 
-    // Re-extract fields from generic.data
     switch(dec->variant) {
     case HondaVariantV2: {
         uint32_t serial;
@@ -236,7 +235,6 @@ static void honda_v2_v3_decode(const SubGhzDecodeInput* input, FuriString* outpu
     } break;
     }
 
-    // Push UI globals
     subghz_block_generic_global.btn_is_available = true;
     subghz_block_generic_global.btn_length_bit = 8;
     subghz_block_generic_global.current_btn = dec->generic.btn;
@@ -244,7 +242,6 @@ static void honda_v2_v3_decode(const SubGhzDecodeInput* input, FuriString* outpu
     subghz_block_generic_global.cnt_length_bit = params->cnt_length_bit;
     subghz_block_generic_global.current_cnt = dec->generic.cnt;
 
-    // Display with variant-specific format
     switch(dec->variant) {
     case HondaVariantV2:
         furi_string_cat_printf(

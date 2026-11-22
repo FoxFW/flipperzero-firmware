@@ -10,7 +10,7 @@ static TexkomPoller* texkom_poller_alloc(Nfc* nfc) {
     TexkomPoller* instance = malloc(sizeof(TexkomPoller));
     instance->nfc = nfc;
     instance->data = texkom_alloc();
-    // One byte per gap, sized for the longest frame.
+
     instance->rx_buffer = bit_buffer_alloc(TEXKOM_TK13_INTERVALS);
 
     nfc_config(instance->nfc, NfcModePoller, NfcTechTexkom);
@@ -47,7 +47,6 @@ const TexkomData* texkom_poller_get_data(TexkomPoller* instance) {
     return instance->data;
 }
 
-/** Capture one repetition and decode it. */
 static bool texkom_poller_read(TexkomPoller* instance) {
     const NfcError error = nfc_texkom_poller_rx(instance->nfc, instance->rx_buffer);
     if(error != NfcErrorNone) return false;
@@ -57,8 +56,6 @@ static bool texkom_poller_read(TexkomPoller* instance) {
 
     if(texkom_decode_intervals(instance->data, intervals, count)) return true;
 
-    // A plausible length that no decoder accepted: either the timings are too ragged, or the
-    // frame's type byte names a variant that does not use the coding it arrived in.
     FURI_LOG_D(TAG, "Captured %zu gaps, none of the codings fit", count);
 
     return false;
@@ -74,8 +71,6 @@ static NfcCommand texkom_poller_run(NfcGenericEvent event, void* context) {
 
     if(nfc_event->type != NfcEventTypePollerReady) return NfcCommandContinue;
 
-    // A tag that talks unprompted gives no sign of being absent, so a failed attempt is not an
-    // error worth reporting - keep listening until the caller stops us.
     if(!texkom_poller_read(instance)) return NfcCommandContinue;
 
     return instance->callback(instance->general_event, instance->context);

@@ -9,12 +9,6 @@ App(
         "nfc",
         "subghz",
         "rolljam",
-        # subghz_bruteforcer retired - SubBrute was merged into SubRATT
-        # (subghz_randomattack) on 2026-09-15; see COMMIT_LOG_NEXT.md item
-        # 66. The old applications/main/subbrute/ source still exists on
-        # disk (its app.fam wasn't part of this list's discovery mechanism
-        # to begin with) but is no longer bundled or reachable from the
-        # home-screen Apps menu.
         "subghz_randomattack",
         "ibutton",
         "main_apps_on_start",

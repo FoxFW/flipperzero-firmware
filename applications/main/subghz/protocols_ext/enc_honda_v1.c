@@ -1,6 +1,6 @@
-/* enc_honda_v1.fal : SD encoder for honda_v1 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define honda_v1_protocol enc_honda_v1__honda_v1_protocol
+
+
+#define subghz_protocol_honda_v1 enc_honda_v1__honda_v1_protocol
 #define subghz_protocol_encoder_common_free enc_honda_v1__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_honda_v1__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_honda_v1_alloc enc_honda_v1__subghz_protocol_encoder_honda_v1_alloc
@@ -306,7 +306,6 @@ static bool honda_v1_build_upload(SubGhzProtocolEncoderHondaV1* instance) {
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -314,7 +313,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -327,7 +325,7 @@ void* subghz_protocol_encoder_honda_v1_alloc(SubGhzEnvironment* environment) {
     furi_check(instance);
     memset(instance, 0, sizeof(*instance));
 
-    instance->base.protocol = &honda_v1_protocol;
+    instance->base.protocol = &subghz_protocol_honda_v1;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 1U;
     instance->encoder.size_upload = HONDA_V1_UPLOAD_CAPACITY;
@@ -495,8 +493,7 @@ static const SubGhzProtocolEncoder enc_honda_v1_vt = {
     .yield = subghz_protocol_encoder_honda_v1_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol honda_v1_protocol = {
+const SubGhzProtocol subghz_protocol_honda_v1 = {
     .name = HONDA_V1_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |

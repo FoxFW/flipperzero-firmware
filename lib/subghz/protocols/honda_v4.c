@@ -4,15 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "HondaV4"
-
-// Honda V4 -- ported from firmware honda_v4.c via KeeLoq-RX arke_honda.py
-// (class HondaV4). PWM: the bit value is carried by the LOW pulse width
-// (te_short 750 = 0, te_long 1100 = 1); each bit = one LOW + one clocking HIGH.
-// 51-bit frame = serial(19) | button(8) | inv(8) | counter(16). Integrity is an
-// inverse-byte invariant: data[23:16] == (0xFF - data[31:24]) (inv == ~button).
-// Preamble = >=3 cycles of ~1500 us low/high pairs. Decode-only; .encoder = NULL.
 
 #define HONDA_V4_TE_SHORT 750
 #define HONDA_V4_TE_LONG  1100
@@ -47,7 +41,6 @@ struct SubGhzProtocolDecoderHondaV4 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV4);
 
-
 typedef enum {
     HondaV4StepReset = 0,
     HondaV4StepPreambleHigh = 1,
@@ -56,7 +49,6 @@ typedef enum {
     HondaV4StepDataLow = 4,
 } HondaV4Step;
 
-// Mirror HondaV4._validate + _emit integrity check.
 static bool honda_v4_validate(uint64_t data, uint32_t nbits) {
     if(nbits < HONDA_V4_MIN_BITS) return false;
     uint8_t btn = (uint8_t)((data >> 24) & 0xFF);
@@ -90,8 +82,6 @@ void* subghz_protocol_decoder_honda_v4_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_v4_reset(void* context) {
     furi_check(context);
@@ -193,8 +183,6 @@ void subghz_protocol_decoder_honda_v4_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v4_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -249,11 +237,15 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v4_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v4_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_honda_v4");
+
 const SubGhzProtocol subghz_protocol_honda_v4 = {
     .name = HONDA_V4_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v4_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v4_encoder_ext.vtable,
 };

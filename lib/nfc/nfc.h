@@ -136,7 +136,6 @@ void nfc_felica_listener_timer_anticol_start(Nfc* instance, uint8_t target_time_
 
 void nfc_felica_listener_timer_anticol_stop(Nfc* instance);
 
-/* Texkom: capture one impulse train in poller mode (RX-only; tag repeats its frame). */
 NfcError nfc_texkom_poller_rx(Nfc* instance, BitBuffer* rx_buffer);
 
 #ifdef __cplusplus

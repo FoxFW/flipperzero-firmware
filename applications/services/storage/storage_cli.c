@@ -676,38 +676,9 @@ void storage_cli(PipeSide* pipe, FuriString* args, void* context) {
     furi_string_free(cmd);
 }
 
-static void storage_cli_factory_reset(PipeSide* pipe, FuriString* args, void* context) {
-    UNUSED(pipe);
-    UNUSED(args);
-    UNUSED(context);
-    printf("All data will be lost! Are you sure (y/n)?\r\n");
-    char c = getchar();
-    if(c == 'y' || c == 'Y') {
-        printf("Data will be wiped after reboot.\r\n");
-
-        furi_hal_rtc_reset_registers();
-        furi_hal_rtc_set_flag(FuriHalRtcFlagStorageFormatInternal);
-
-        Power* power = furi_record_open(RECORD_POWER);
-        power_reboot(power, PowerBootModeNormal);
-    } else {
-        printf("Safe choice.\r\n");
-    }
-}
-
-void storage_on_system_start(void) {
-#ifdef SRV_CLI
-    CliRegistry* registry = furi_record_open(RECORD_CLI);
-    cli_registry_add_command(
-        registry,
-        "storage",
-        CliCommandFlagParallelSafe | CliCommandFlagUseShellThread,
-        storage_cli,
-        NULL);
-    cli_registry_add_command(
-        registry, "factory_reset", CliCommandFlagParallelSafe, storage_cli_factory_reset, NULL);
-    furi_record_close(RECORD_CLI);
-#else
-    UNUSED(storage_cli_factory_reset);
-#endif
-}
+CLI_COMMAND_INTERFACE(
+    storage,
+    storage_cli,
+    CliCommandFlagParallelSafe | CliCommandFlagUseShellThread,
+    4 * 1024,
+    CLI_APPID);

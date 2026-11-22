@@ -1,5 +1,5 @@
-/* enc_nice_flor_s.fal : SD encoder for nice_flor_s (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_nice_flor_s__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_nice_flor_s__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_nice_flor_s__subghz_protocol_encoder_common_yield
@@ -45,7 +45,6 @@ static const SubGhzBlockConst subghz_protocol_nice_flor_s_const = {
     .min_count_bit_for_found = 52,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool bypass__bridge_ty;
 extern bool nice_flor_s_raw_replay__bridge_ty;
 extern uint8_t nice_flors_counter_mode__bridge_ty;
@@ -103,8 +102,6 @@ static void subghz_protocol_encoder_nice_flor_s_get_upload(
 
     if(subghz_block_generic_global.cnt_need_override) bypass = true;
 
-    /* Only counter-mode 0 counts; the others pin the field to a literal value a receiver
-     * expects, so O-Code runs those on the on-air (swapped) form. */
     const bool cnt_literal =
         instance->o_code &&
         !((nice_flors_counter_mode == 0 || bypass) && !nice_flor_s_raw_replay &&
@@ -113,7 +110,7 @@ static void subghz_protocol_encoder_nice_flor_s_get_upload(
 
     if(nice_flors_counter_mode == 0 || bypass) {
         if(nice_flor_s_raw_replay) {
-            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+            bypass = false;
         } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF || bypass) {
             bypass = false;
             if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -157,7 +154,6 @@ static void subghz_protocol_encoder_nice_flor_s_get_upload(
     uint64_t enc_part = have_tbl ? nice_o_encrypt_buf(decrypt, NICE_FLOR_S_IC_PLAIN, buf) :
                                    (uint64_t)SUBGHZ_NO_NICE_FLOR_S_RAINBOW_TABLE;
 
-    /* A certificate sweep is shorter so its longer parcels still fit the buffer. */
     const uint8_t parcels = instance->cert_on ? NICE_O_CERT_PARCELS : 16;
 
     for(int i = 0; i < parcels; i++) {
@@ -202,8 +198,7 @@ static void subghz_protocol_encoder_nice_flor_s_get_upload(
             for(size_t k = 0; k < 7; k++) {
                 add_data[k] = (instance->generic.data >> (48 - k * 8)) & 0xFF;
             }
-            /* O-Code marks the last two parcels of every press as release; a captured Nice
-             * One instead marks every parcel it sent, so keep that for non-O-Code. */
+
             uint8_t flags = 0;
             if(o_code) {
                 flags = 0x4;
@@ -443,7 +438,6 @@ static uint8_t subghz_protocol_nice_flor_s_get_btn_code(void) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -451,13 +445,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -500,7 +492,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderNiceFlorS* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         nice_flor_s_raw_replay = false;
         {
             uint32_t nice_flor_s_txraw = 0;
@@ -656,7 +648,6 @@ static const SubGhzProtocolEncoder enc_nice_flor_s_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_nice_flor_s = {
     .name = SUBGHZ_PROTOCOL_NICE_FLOR_S_NAME,
     .type = SubGhzProtocolTypeDynamic,

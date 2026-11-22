@@ -1,0 +1,27 @@
+App(
+    appid="saflok",
+    name="Saflok",
+    apptype=FlipperAppType.EXTERNAL,
+    targets=["f7"],
+    entry_point="saflok_app",
+    stack_size=5 * 1024,
+    resources="resources",
+    sources=[
+        "*.c*",
+        "!saflok_cli.c",
+    ],
+    fap_libs=["assets", "mbedtls"],
+    fap_icon="icon.png",
+    fap_icon_assets="icons",
+    fap_category="NFC",
+    flags=["UnloadAssetPacks"],
+)
+
+App(
+    appid="cli_saflok",
+    targets=["f7"],
+    apptype=FlipperAppType.PLUGIN,
+    entry_point="cli_saflok_ep",
+    requires=["cli"],
+    sources=["saflok_cli.c"],
+)

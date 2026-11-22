@@ -16,7 +16,7 @@
 
 #define TAG "SubGhzProtocoKingGatesStylo4k"
 
-static bool kinggates_stylo_4k_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool kinggates_stylo_4k_raw_replay = false;
 
 static const SubGhzBlockConst subghz_protocol_kinggates_stylo_4k_const = {
     .te_short = 400,
@@ -67,7 +67,6 @@ const SubGhzProtocolDecoder subghz_protocol_kinggates_stylo_4k_decoder = {
     .get_string = subghz_protocol_decoder_kinggates_stylo_4k_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* kinggates_stylo_4k_raw_replay;
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
@@ -93,7 +92,6 @@ const SubGhzProtocol subghz_protocol_kinggates_stylo_4k = {
 static void subghz_protocol_kinggates_stylo_4k_remote_controller(
     SubGhzBlockGeneric* instance,
     SubGhzKeystore* keystore);
-
 
 bool subghz_protocol_kinggates_stylo_4k_create_data(
     void* context,
@@ -357,8 +355,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_kinggates_stylo_4k_deserialize(
 void subghz_protocol_decoder_kinggates_stylo_4k_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderKingGates_stylo_4k* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): KeeLoq decrypt needs the live keystore,
-    // so it stays internal; the SD plugin only formats.
+
     subghz_protocol_kinggates_stylo_4k_remote_controller(&instance->generic, instance->keystore);
     const SubGhzDecodeInput input = {
         .decoder = context,

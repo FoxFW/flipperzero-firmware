@@ -2,7 +2,7 @@ App(
     appid="fox_rf_jammer",
     name="Fox RF Jammer",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     entry_point="fox_rf_jammer_app",
     requires=["gui", "subghz", "furi"],
     cdefines=["APP_FOX_RF_JAMMER"],

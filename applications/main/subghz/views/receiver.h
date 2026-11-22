@@ -30,6 +30,9 @@ void subghz_receiver_rssi_ext(SubGhzViewReceiver* instance, float rssi);
 void subghz_view_receiver_set_dual(SubGhzViewReceiver* subghz_receiver, bool dual);
 
 void subghz_view_receiver_set_dual_dashboard(SubGhzViewReceiver* subghz_receiver, bool dashboard);
+void subghz_view_receiver_set_dual_paused(SubGhzViewReceiver* subghz_receiver, bool paused);
+void subghz_view_receiver_flash_history(SubGhzViewReceiver* subghz_receiver, uint16_t added);
+void subghz_view_receiver_dual_refresh_rows(SubGhzViewReceiver* subghz_receiver);
 
 void subghz_view_receiver_set_dual_info(
     SubGhzViewReceiver* subghz_receiver,
@@ -69,6 +72,8 @@ void subghz_view_receiver_set_item_callback(
     void* context);
 
 void subghz_view_receiver_add_item_to_menu(SubGhzViewReceiver* subghz_receiver);
+void subghz_view_receiver_set_history_item_count(
+    SubGhzViewReceiver* subghz_receiver, uint16_t count);
 
 uint16_t subghz_view_receiver_get_idx_menu(SubGhzViewReceiver* subghz_receiver);
 

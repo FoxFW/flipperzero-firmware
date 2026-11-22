@@ -132,9 +132,6 @@ static void txv_btn_box(
     canvas_set_color(canvas, ColorBlack);
 }
 
-/* Same framed button, but with a centered d-pad arrow ICON instead of text -- used for directions
- * that have no custom label (inert). iw/ih are the icon's pixel size (ButtonUp/Down 7x4, Left/Right
- * 4x7) so it centers without pulling in icon_get_width. */
 static void txv_btn_box_icon(
     Canvas* canvas, uint8_t x, uint8_t y, uint8_t w, uint8_t h,
     const Icon* icon, uint8_t iw, uint8_t ih) {
@@ -188,9 +185,7 @@ void subghz_view_transmitter_draw(Canvas* canvas, SubGhzViewTransmitterModel* mo
     canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignTop, line3);
 
     {
-        /* Always draw the full d-pad: centre SEND (or the protocol's custom centre
-         * label), and all four directions as inert arrow ICONS -- replaced by a
-         * text label only where the protocol defines one (Lock/Unlock/Trunk...). */
+
         const uint8_t bw=34, bh=9;
         const uint8_t cx=47, lx=4, rx=90;
         const uint8_t row1=31, row2=42, row3=53;

@@ -1,5 +1,5 @@
-/* enc_toyota_v0.fal : SD encoder for toyota_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_toyota_v0__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_toyota_v0__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_toyota_v0__subghz_protocol_encoder_common_yield
@@ -21,8 +21,8 @@
 #include <furi_hal.h>
 #include <lib/subghz/protocols/common.h>
 
-#define TOYOTA_V0_DATA_BITS       88    // 11 bytes actual data
-#define TOYOTA_V0_FRAME_BITS      184   // 88 data + 8 zero-gap + 88 complement
+#define TOYOTA_V0_DATA_BITS       88
+#define TOYOTA_V0_FRAME_BITS      184
 #define TOYOTA_V0_TOTAL_BURSTS    5
 #define TOYOTA_V0_PREAMBLE_PAIRS  20
 
@@ -41,43 +41,20 @@ static const SubGhzBlockConst subghz_protocol_toyota_v0_const = {
     .min_count_bit_for_found = TOYOTA_V0_DATA_BITS,
 };
 
-// ============================================================================
-// DISPLAY
-// ============================================================================
-
-// ============================================================================
-// ENCODER
-// ============================================================================
-
 static bool toyota_v0_get_data_bit(SubGhzProtocolEncoderToyotaV0* instance, uint8_t idx);
-/**
- * Build one complete frame:
- * [PREAMBLE: 20x SHORT pairs] [96 Manchester data bits] [96 Manchester complement bits] [END GAP]
- */
+
 static void toyota_v0_build_upload(SubGhzProtocolEncoderToyotaV0* instance);
 
-// ============================================================================
-// DISPLAY
-// ============================================================================
-
-// ============================================================================
-// ENCODER
-// ============================================================================
-
 static bool toyota_v0_get_data_bit(SubGhzProtocolEncoderToyotaV0* instance, uint8_t idx) {
-    // 88-bit data: 64 bits in generic.data + 24 bits in data_32 (left-aligned)
+
     if(idx < 64) {
         return (instance->generic.data >> (63 - idx)) & 1;
     } else {
-        // data_32 is left-aligned, so bit 64 is bit 31 of data_32
+
         return (instance->data_32 >> (31 - (idx - 64))) & 1;
     }
 }
 
-/**
- * Build one complete frame:
- * [PREAMBLE: 20x SHORT pairs] [96 Manchester data bits] [96 Manchester complement bits] [END GAP]
- */
 static void toyota_v0_build_upload(SubGhzProtocolEncoderToyotaV0* instance) {
     furi_assert(instance);
     size_t index = 0;
@@ -85,13 +62,11 @@ static void toyota_v0_build_upload(SubGhzProtocolEncoderToyotaV0* instance) {
     uint32_t te_s = subghz_protocol_toyota_v0_const.te_short;
     uint32_t te_l = subghz_protocol_toyota_v0_const.te_long;
 
-    // PREAMBLE: alternating SHORT pairs
     for(int p = 0; p < TOYOTA_V0_PREAMBLE_PAIRS; p++) {
         instance->encoder.upload[index++] = level_duration_make(true, te_s);
         instance->encoder.upload[index++] = level_duration_make(false, te_s);
     }
 
-    // Manchester-encode 192 bits: 96 data bits + 96 complement bits
     uint8_t manchester_state = ManchesterStateMid1;
 
     for(int i = 0; i < TOYOTA_V0_FRAME_BITS; i++) {
@@ -99,7 +74,7 @@ static void toyota_v0_build_upload(SubGhzProtocolEncoderToyotaV0* instance) {
         if(i < TOYOTA_V0_DATA_BITS) {
             b = toyota_v0_get_data_bit(instance, i);
         } else {
-            // Complement: invert the corresponding data bit
+
             b = !toyota_v0_get_data_bit(instance, i - TOYOTA_V0_DATA_BITS);
         }
 
@@ -130,14 +105,12 @@ static void toyota_v0_build_upload(SubGhzProtocolEncoderToyotaV0* instance) {
         }
     }
 
-    // END GAP
     bool end_level = (manchester_state == ManchesterStateMid1);
     instance->encoder.upload[index++] = level_duration_make(end_level, 6000);
 
     instance->encoder.size_upload = index;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -145,13 +118,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -218,7 +189,6 @@ static const SubGhzProtocolEncoder enc_toyota_v0_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_toyota_v0 = {
     .name = SUBGHZ_PROTOCOL_TOYOTA_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

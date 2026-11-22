@@ -1,0 +1,13 @@
+App(
+    appid="nfc_checker",
+    name="NFC Checker",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="nfc_checker_app",
+    targets=["f7"],
+    stack_size=6 * 1024,
+    fap_category="NFC",
+    fap_icon="icon.png",
+    fap_version=(1, 0),
+    fap_description="Compare a reference NFC tag with an emulated clone and score how likely a reader is to accept it.",
+    requires=["nfc"],
+)

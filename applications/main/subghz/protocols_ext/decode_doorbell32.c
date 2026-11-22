@@ -1,4 +1,4 @@
-/* decode_doorbell32.fal : SD get_string for doorbell32 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/doorbell32.h>
@@ -23,7 +23,6 @@ struct SubGhzProtocolDecoderDoorbell32 {
 static void doorbell32_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderDoorbell32* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

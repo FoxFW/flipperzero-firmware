@@ -1,4 +1,4 @@
-/* decode_mazda_v1.fal : SD get_string for mazda_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -21,10 +21,10 @@ struct SubGhzProtocolDecoderMazdaV1 {
     int32_t last_pos;
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(MAZDA_V1_CAP)];
 
-    uint8_t serial; // 6-bit
-    uint8_t btn; // 8-bit
-    uint8_t cnt; // 5-bit
-    uint8_t tail; // frame bits 64..70 (7-bit remainder)
+    uint8_t serial;
+    uint8_t btn;
+    uint8_t cnt;
+    uint8_t tail;
 };
 
 static const char* mazda_v1_button_name(uint8_t btn);

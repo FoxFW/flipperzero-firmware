@@ -44,9 +44,7 @@ typedef enum {
 } FiatV0DecoderStep;
 
 static void fiat_v0_finish_packet(struct SubGhzProtocolDecoderFiatV0* instance) {
-    // Fiat V0 has no CRC (structural lock only), so reject degenerate serials
-    // (all-zero / all-ones) that would otherwise surface as false decodes.
-    // (Fix 2026-10-03.)
+
     if(instance->fix == 0U || instance->fix == 0xFFFFFFFFU) {
         instance->data_low = 0;
         instance->data_high = 0;
@@ -79,11 +77,8 @@ struct SubGhzProtocolEncoderFiatV0 {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFiatV0);
 
-
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderFiatV0);
 SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderFiatV0);
-
-
 
 const SubGhzProtocolDecoder subghz_protocol_fiat_v0_decoder = {
     .alloc = subghz_protocol_decoder_fiat_v0_alloc,
@@ -98,7 +93,7 @@ const SubGhzProtocolDecoder subghz_protocol_fiat_v0_decoder = {
 
 static const SubGhzEncoderExternal subghz_protocol_fiat_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_fiat_v0");
 
-const SubGhzProtocol fiat_protocol_v0 = {
+const SubGhzProtocol subghz_protocol_fiat_v0 = {
     .name = FIAT_PROTOCOL_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
@@ -112,7 +107,7 @@ void* subghz_protocol_decoder_fiat_v0_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolDecoderFiatV0* instance = calloc(1, sizeof(SubGhzProtocolDecoderFiatV0));
     furi_check(instance);
-    instance->base.protocol = &fiat_protocol_v0;
+    instance->base.protocol = &subghz_protocol_fiat_v0;
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
@@ -298,8 +293,6 @@ void subghz_protocol_decoder_fiat_v0_feed(void* context, bool level, uint32_t du
         break;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_fiat_v0_serialize(
     void* context,

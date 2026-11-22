@@ -4,16 +4,12 @@ App(
     entry_point="cli_on_system_start",
     cdefines=["SRV_CLI"],
     sources=[
-        "cli_command_gpio.c",
         "cli_main_commands.c",
         "cli_main_shell.c",
         "cli_settings.c",
     ],
     sdk_headers=["cli_settings.h"],
-    # This STARTUP has to be processed before those that depend on the "cli" record.
-    # "cli" used to be a SERVICE, but it's been converted into a STARTUP in order to
-    # reduce RAM usage. The "block until record has been created" mechanism
-    # unfortunately leads to a deadlock if the STARTUPs are processed sequentially.
+
     order=0,
 )
 
@@ -58,4 +54,12 @@ App(
     entry_point="cli_buzzer_ep",
     requires=["cli"],
     sources=["commands/buzzer.c"],
+)
+
+App(
+    appid="cli_gpio",
+    apptype=FlipperAppType.PLUGIN,
+    entry_point="cli_gpio_ep",
+    requires=["cli"],
+    sources=["cli_command_gpio.c"],
 )

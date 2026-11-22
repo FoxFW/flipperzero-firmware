@@ -1,5 +1,5 @@
-/* enc_kia_v0.fal : SD encoder for kia_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_kia_v0__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_kia_v0__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_kia_v0__subghz_protocol_encoder_common_yield
@@ -177,7 +177,6 @@ static void subghz_protocol_kia_check_remote_controller(SubGhzBlockGeneric* inst
     subghz_custom_btn_set_max(4);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -185,13 +184,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -280,7 +277,6 @@ static const SubGhzProtocolEncoder enc_kia_v0_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_kia_v0 = {
     .name = SUBGHZ_PROTOCOL_KIA_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -1,4 +1,4 @@
-/* decode_toyota.fal : SD get_string for toyota (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/toyota.h>
@@ -78,7 +78,6 @@ static const char* toyota_model_name(uint8_t variant) {
 static void toyota_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderToyota* inst = input->decoder;
-
 
     uint32_t hop    = (uint32_t)(inst->generic.data >> 32);
     uint32_t serial = (uint32_t)((inst->generic.data >> 4) & 0x0FFFFFFF);

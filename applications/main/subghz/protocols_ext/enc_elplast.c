@@ -1,5 +1,5 @@
-/* enc_elplast.fal : SD encoder for elplast (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_elplast enc_elplast__subghz_protocol_elplast
 #define subghz_protocol_encoder_common_alloc enc_elplast__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_elplast__subghz_protocol_encoder_common_free
@@ -70,7 +70,6 @@ static void subghz_protocol_encoder_elplast_get_upload(SubGhzProtocolEncoderElpl
     return;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -78,13 +77,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -103,7 +100,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -157,7 +153,6 @@ static const SubGhzProtocolEncoder enc_elplast_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_elplast = {
     .name = SUBGHZ_PROTOCOL_ELPLAST_NAME,
     .type = SubGhzProtocolTypeStatic,

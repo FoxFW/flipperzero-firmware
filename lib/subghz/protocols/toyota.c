@@ -113,12 +113,6 @@ const SubGhzProtocolDecoder subghz_protocol_toyota_decoder = {
     .get_string    = subghz_protocol_decoder_toyota_get_string,
 };
 
-// TX encoder (v2.0.12): replay of a captured frame via the captured variant's line
-// coding. Variant B (Tundra, NRZ 200/390) and variant C (Prius / Corolla Verso, PWM
-// on the high pulse) are implemented and host-verified to round-trip through this
-// file's own decoder. Variant A (Corolla, Manchester 400/800) is unreachable from
-// the decoder's reset state (see subghz_protocol_decoder_toyota_feed) so no real
-// capture carries it; a cnt==0 file is emitted with the B coding.
 static const SubGhzEncoderExternal subghz_protocol_toyota_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_toyota");
 
 const SubGhzProtocol subghz_protocol_toyota = {
@@ -207,9 +201,7 @@ static void toyota_decode_and_fire(SubGhzProtocolDecoderToyota* inst) {
         ((uint64_t)inst->hop    << 32) |
         ((uint64_t)inst->serial <<  4) |
         ((uint64_t)inst->button & 0x0F);
-    // Frames are 67/68 bits but generic.data holds the 64 extracted bits only; keep
-    // the trailing (bit_count-64) bits in data_2 so a saved capture can be replayed
-    // bit-for-bit by the encoder (v2.0.12 TX support).
+
     inst->generic.data_2 = (inst->bit_count > 64) ?
         toyota_extract(inst, 64, (uint8_t)(inst->bit_count - 64)) : 0;
 
@@ -239,8 +231,6 @@ void* subghz_protocol_decoder_toyota_alloc(SubGhzEnvironment* environment) {
     inst->generic.protocol_name = inst->base.protocol->name;
     return inst;
 }
-
-
 
 void subghz_protocol_decoder_toyota_reset(void* context) {
     furi_assert(context);
@@ -460,7 +450,7 @@ static void toyota_decode_and_fire_c(SubGhzProtocolDecoderToyota* inst) {
         ((uint64_t)inst->hop    << 32) |
         ((uint64_t)inst->serial <<  4) |
         ((uint64_t)inst->button & 0x0F);
-    // Keep the trailing (bit_count-64) bits for bit-for-bit replay (see variant A/B).
+
     inst->generic.data_2 = (inst->bit_count > 64) ?
         toyota_extract(inst, 64, (uint8_t)(inst->bit_count - 64)) : 0;
 
@@ -616,9 +606,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_toyota_serialize(
     inst->generic.cnt = inst->variant;
     SubGhzProtocolStatus ret =
         subghz_block_generic_serialize(&inst->generic, flipper_format, preset);
-    // Persist the trailing frame bits (data_2) so the encoder can replay the full
-    // 67/68-bit frame. Optional on load for backward compatibility with older
-    // captures (which then replay without their trailing bits).
+
     if(ret == SubGhzProtocolStatusOk) {
         uint32_t tail = (uint32_t)inst->generic.data_2;
         if(!flipper_format_write_uint32(flipper_format, "Tail", &tail, 1)) {
@@ -656,7 +644,6 @@ SubGhzProtocolStatus subghz_protocol_decoder_toyota_deserialize(
                                ((inst->generic.cnt != 0) ? 1 : 0);
         inst->generic.cnt    = inst->variant;
 
-        // Optional trailing frame bits (absent in captures saved before v2.0.12).
         uint32_t tail = 0;
         if(!flipper_format_rewind(flipper_format) ||
            !flipper_format_read_uint32(flipper_format, "Tail", &tail, 1)) {
@@ -681,21 +668,8 @@ void subghz_protocol_decoder_toyota_get_string(void* context, FuriString* output
     subghz_decode_plugin_get_string(inst->generic.protocol_name, &input, output);
 }
 
-
-/* ========================================================================== */
-/* Encoder (v2.0.12) - replay of a captured frame                              */
-/*                                                                            */
-/* Reconstructs the on-air frame from generic.data (the 64 extracted bits,    */
-/* MSB first = frame bits 0..63) followed by generic.data_2 (the trailing     */
-/* bit_count-64 bits, MSB first), and emits it with the captured variant's    */
-/* line coding. Both codings were host-verified to round-trip through this    */
-/* file's decoder. RF acceptance by a vehicle still requires a bench test.    */
-/* ========================================================================== */
-
 #define TOYOTA_ENC_UPLOAD_SIZE 256
 
-/* Variant C (Prius / Corolla Verso): PWM on the HIGH pulse, low separators.   */
-/* Values sit mid-window of the decoder's accept ranges (see TOYOTA_C_*).      */
 #define TOYOTA_C_TX_PRE_HIGH  375u
 #define TOYOTA_C_TX_PRE_LOW   425u
 #define TOYOTA_C_TX_SEP_LOW   425u
@@ -708,5 +682,3 @@ typedef struct {
     SubGhzBlockGeneric         generic;
 } SubGhzProtocolEncoderToyota;
 
-/* Frame bit j (0 = first on air). Bits 0..63 come from data (MSB first), the
- * remainder from data_2 (MSB first over its bit_count-64 bits). */

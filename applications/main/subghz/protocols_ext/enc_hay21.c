@@ -1,5 +1,5 @@
-/* enc_hay21.fal : SD encoder for hay21 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_hay21__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_hay21__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_hay21__subghz_protocol_encoder_common_stop
@@ -35,7 +35,6 @@ static const SubGhzBlockConst subghz_protocol_hay21_const = {
     .min_count_bit_for_found = 21,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool hay21_raw_replay__bridge_ty;
 typedef struct {
     void* hay21_raw_replay;
@@ -100,7 +99,7 @@ static void subghz_protocol_encoder_hay21_get_upload(SubGhzProtocolEncoderHay21*
         FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", instance->generic.btn);
 
     if(hay21_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -173,7 +172,6 @@ static void subghz_protocol_hay21_remote_controller(SubGhzBlockGeneric* instance
 
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -181,13 +179,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -206,7 +202,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -234,7 +229,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderHay21* instance = context;
     SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         hay21_raw_replay = false;
         {
             uint32_t hay21_txraw = 0;
@@ -286,7 +281,6 @@ static const SubGhzProtocolEncoder enc_hay21_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_hay21 = {
     .name = SUBGHZ_PROTOCOL_HAY21_NAME,
     .type = SubGhzProtocolTypeDynamic,

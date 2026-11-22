@@ -30,6 +30,9 @@ void file_browser_configure(
     const Icon* file_icon,
     bool hide_ext);
 
+void file_browser_set_sort_by_name(FileBrowser* browser, bool sort_by_name);
+void file_browser_set_sort_mode(FileBrowser* browser, uint8_t sort_mode, bool sort_desc);
+
 void file_browser_start(FileBrowser* browser, FuriString* path);
 
 void file_browser_stop(FileBrowser* browser);

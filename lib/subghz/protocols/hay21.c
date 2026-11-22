@@ -12,7 +12,7 @@
 
 #define TAG "SubGhzProtocolHay21"
 
-static bool hay21_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool hay21_raw_replay = false;
 
 static const SubGhzBlockConst subghz_protocol_hay21_const = {
     .te_short = 300,
@@ -57,7 +57,6 @@ const SubGhzProtocolDecoder subghz_protocol_hay21_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* hay21_raw_replay;
 } enc_hay21_host_t;

@@ -12,10 +12,7 @@ bool main_menu_layout_entry_is_protected(const MainMenuLayoutEntry* entry) {
     if(entry->kind == MainMenuEntryKindInternal &&
        strcmp(entry->identifier, MAIN_MENU_SUBGHZ_NAME) == 0)
         return true;
-    /* "Settings" is protected too: the main menu is the only path to it, so
-     * hiding it would strand the user (Fox Settings can still be reached via the
-     * Apps list, but plain Settings cannot). "Apps", "Sub-GHz" and "Settings"
-     * are the three unhideable entries. */
+
     if(entry->kind == MainMenuEntryKindSettings) return true;
     return false;
 }
@@ -190,8 +187,6 @@ static bool main_menu_layout_read_file(MainMenuLayout* layout, bool* existed) {
 void main_menu_layout_build_default(MainMenuLayout* layout) {
     layout->count = 0;
 
-    /* Legacy internal-flash pins first (migration): they were user-pinned
-     * external apps rendered at the top of the menu. Preserve that order. */
     MainMenuPins* pins = malloc(sizeof(MainMenuPins));
     if(pins) {
         main_menu_pins_load(pins);
@@ -209,7 +204,6 @@ void main_menu_layout_build_default(MainMenuLayout* layout) {
         free(pins);
     }
 
-    /* "Apps" (the Applications list) — protected. */
     main_menu_layout_append(
         layout,
         MainMenuEntryKindApplications,
@@ -217,13 +211,11 @@ void main_menu_layout_build_default(MainMenuLayout* layout) {
         MAIN_MENU_APPLICATIONS_NAME,
         MAIN_MENU_APPLICATIONS_NAME);
 
-    /* Internal apps. */
     for(size_t i = 0; i < FLIPPER_APPS_COUNT; i++) {
         main_menu_layout_append(
             layout, MainMenuEntryKindInternal, true, FLIPPER_APPS[i].name, FLIPPER_APPS[i].name);
     }
 
-    /* External (built-in) apps. */
     for(size_t i = 0; i < FLIPPER_EXTERNAL_APPS_COUNT; i++) {
         main_menu_layout_append(
             layout,
@@ -233,7 +225,6 @@ void main_menu_layout_build_default(MainMenuLayout* layout) {
             FLIPPER_EXTERNAL_APPS[i].name);
     }
 
-    /* Fox Settings and Settings. */
     main_menu_layout_append(layout, MainMenuEntryKindFoxSettings, true, "", "Fox Settings");
     main_menu_layout_append(layout, MainMenuEntryKindSettings, true, "", "Settings");
 }
@@ -270,19 +261,15 @@ void main_menu_layout_save(const MainMenuLayout* layout) {
 bool main_menu_layout_load(MainMenuLayout* layout) {
     bool existed = false;
     if(main_menu_layout_read_file(layout, &existed)) {
-        return true; /* parsed at least one entry */
+        return true;
     }
     if(!existed) {
-        /* Genuinely absent (first boot after update, or "Reset to Defaults"):
-         * generate the current build's defaults, migrate legacy pins and persist
-         * to the SD card. */
+
         main_menu_layout_build_default(layout);
         main_menu_layout_save(layout);
         return true;
     }
-    /* The file exists but could not be read/parsed right now (a transient SD
-     * error, or a corrupt/empty file). Do NOT overwrite it with defaults; report
-     * failure so the caller keeps whatever menu it already has. */
+
     return false;
 }
 
@@ -296,14 +283,14 @@ MainMenuLayoutFpStatus main_menu_layout_fingerprint(uint32_t* hash, uint32_t* le
         File* file = storage_file_alloc(storage);
         if(storage_file_open(
                file, MAIN_MENU_LAYOUT_FILE_NAME, FSAM_READ, FSOM_OPEN_EXISTING)) {
-            uint32_t h = 2166136261u; /* FNV-1a 32-bit offset basis */
+            uint32_t h = 2166136261u;
             uint32_t l = 0;
             uint8_t buf[64];
             size_t n;
             while((n = storage_file_read(file, buf, sizeof(buf))) > 0) {
                 for(size_t i = 0; i < n; i++) {
                     h ^= buf[i];
-                    h *= 16777619u; /* FNV-1a 32-bit prime */
+                    h *= 16777619u;
                 }
                 l += (uint32_t)n;
             }

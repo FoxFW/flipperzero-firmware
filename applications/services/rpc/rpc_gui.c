@@ -8,7 +8,6 @@
 #include <flipper.pb.h>
 #include <gui.pb.h>
 
-// Contract assertion
 _Static_assert(InputKeyMAX == 6, "InputKeyMAX");
 _Static_assert(InputTypeMAX == 5, "InputTypeMAX");
 
@@ -60,24 +59,18 @@ typedef struct {
     const Icon* icon;
     FuriPubSub* input_events;
 
-    // VGM Options: screen stream foreground/background colors
     NotificationApp* notification;
     ScreenColorSettings screen_color;
 
-    // Receive part
     ViewPort* virtual_display_view_port;
     uint8_t* virtual_display_buffer;
 
-    // Transmit
     PB_Main* transmit_frame;
     FuriThread* transmit_thread;
 
     bool virtual_display_not_empty;
     bool is_streaming;
-    /* Latches once suppressed (see rpc_gui_screen_suppress.h) so at most
-     * one placeholder frame goes out per suppression cycle - reset the
-     * moment suppression lifts, so the very next real redraw resumes live
-     * frames immediately rather than waiting for anything else. */
+
     bool suppressed_frame_sent;
 
     uint32_t input_key_counter[InputKeyMAX];
@@ -93,9 +86,6 @@ static const PB_Gui_ScreenOrientation rpc_system_gui_screen_orientation_map[] = 
     [CanvasOrientationVerticalFlip] = PB_Gui_ScreenOrientation_VERTICAL_FLIP,
 };
 
-/* VGM Options: pack the configured foreground/background screen-stream
- * color for the wire. RgbMod mode mirrors this device's live RGB backlight
- * color (or hands rendering to the client if a rainbow effect is active). */
 static uint32_t rpc_system_gui_get_screen_color(RpcGuiSystem* rpc_gui, bool foreground) {
     uint8_t mode = foreground ? rpc_gui->screen_color.fg_mode : rpc_gui->screen_color.bg_mode;
     uint8_t r = foreground ? rpc_gui->screen_color.fg_r : rpc_gui->screen_color.bg_r;
@@ -132,11 +122,7 @@ static void rpc_system_gui_screen_stream_frame_callback(
     furi_assert(size == rpc_gui->transmit_frame->content.gui_screen_frame.data->size);
 
     if(rpc_gui_screen_stream_is_suppressed()) {
-        /* Send exactly one placeholder frame per suppression cycle, then
-         * go completely quiet - no further transmit-thread wakeup, no
-         * RPC/CLI traffic - until un-suppressed. See rpc_gui_screen_
-         * suppress.h for why (qFlipper's screen-stream RAM/CPU cost while
-         * on a RAM-sensitive screen like SubGhz Read). */
+
         if(rpc_gui->suppressed_frame_sent) return;
         if(!rpc_gui_screen_stream_get_placeholder_frame(buffer, size)) return;
         rpc_gui->suppressed_frame_sent = true;
@@ -171,7 +157,6 @@ static int32_t rpc_system_gui_screen_stream_frame_transmit_thread(void* context)
             rpc_send(rpc_gui->session, rpc_gui->transmit_frame);
             transmit_time = furi_get_tick() - transmit_time;
 
-            // Guaranteed bandwidth reserve
             uint32_t extra_delay = transmit_time / 20;
             if(extra_delay > 500) extra_delay = 500;
             if(extra_delay) furi_delay_tick(extra_delay);
@@ -205,18 +190,18 @@ static void rpc_system_gui_start_screen_stream_process(const PB_Main* request, v
         rpc_gui->suppressed_frame_sent = false;
         rpc_gui_screen_stream_mark_active(true);
         size_t framebuffer_size = gui_get_framebuffer_size(rpc_gui->gui);
-        // Reusable Frame
+
         rpc_gui->transmit_frame = malloc(sizeof(PB_Main));
         rpc_gui->transmit_frame->which_content = PB_Main_gui_screen_frame_tag;
         rpc_gui->transmit_frame->command_status = PB_CommandStatus_OK;
         rpc_gui->transmit_frame->content.gui_screen_frame.data =
             malloc(PB_BYTES_ARRAY_T_ALLOCSIZE(framebuffer_size));
         rpc_gui->transmit_frame->content.gui_screen_frame.data->size = framebuffer_size;
-        // Transmission thread for async TX
+
         rpc_gui->transmit_thread = furi_thread_alloc_ex(
             "GuiRpcWorker", 1024, rpc_system_gui_screen_stream_frame_transmit_thread, rpc_gui);
         furi_thread_start(rpc_gui->transmit_thread);
-        // GUI framebuffer callback
+
         gui_add_framebuffer_callback(
             rpc_gui->gui, rpc_system_gui_screen_stream_frame_callback, context);
     }
@@ -235,14 +220,14 @@ static void rpc_system_gui_stop_screen_stream_process(const PB_Main* request, vo
     if(rpc_gui->is_streaming) {
         rpc_gui->is_streaming = false;
         rpc_gui_screen_stream_mark_active(false);
-        // Remove GUI framebuffer callback
+
         gui_remove_framebuffer_callback(
             rpc_gui->gui, rpc_system_gui_screen_stream_frame_callback, context);
-        // Stop and release worker thread
+
         furi_thread_flags_set(furi_thread_get_id(rpc_gui->transmit_thread), RpcGuiWorkerFlagExit);
         furi_thread_join(rpc_gui->transmit_thread);
         furi_thread_free(rpc_gui->transmit_thread);
-        // Release frame
+
         pb_release(&PB_Main_msg, rpc_gui->transmit_frame);
         free(rpc_gui->transmit_frame);
         rpc_gui->transmit_frame = NULL;
@@ -277,7 +262,6 @@ static void
         .type = (int32_t)request->content.gui_send_input_event_request.type,
     };
 
-    // Event sequence shenanigans
     event.sequence_source = INPUT_SEQUENCE_SOURCE_SOFTWARE;
     if(event.type == InputTypePress) {
         rpc_gui->input_counter++;
@@ -292,7 +276,6 @@ static void
         rpc_gui->input_key_counter[event.key] = RPC_GUI_INPUT_RESET;
     }
 
-    // Submit event
     furi_pubsub_publish(rpc_gui->input_events, &event);
     rpc_send_and_release_empty(session, request->command_id, PB_CommandStatus_OK);
 }
@@ -352,9 +335,6 @@ static void rpc_system_gui_start_virtual_display_process(const PB_Main* request,
         return;
     }
 
-    // TODO FL-3511: consider refactoring
-    // Using display framebuffer size as an XBM buffer size is like comparing apples and oranges
-    // Glad they both are 1024 for now
     size_t buffer_size = canvas_get_buffer_size(rpc_gui->gui->canvas);
     rpc_gui->virtual_display_buffer = malloc(buffer_size);
 
@@ -463,7 +443,6 @@ void* rpc_system_gui_alloc(RpcSession* session) {
     rpc_gui->notification = furi_record_open(RECORD_NOTIFICATION);
     screen_color_settings_load(&rpc_gui->screen_color);
 
-    // Active session icon
     const RpcOwner owner = rpc_session_get_owner(rpc_gui->session);
     if(owner != RpcOwnerBle) {
         rpc_gui->icon = rpc_system_gui_get_owner_icon(owner);
@@ -507,7 +486,6 @@ void rpc_system_gui_free(void* context) {
     RpcGuiSystem* rpc_gui = context;
     furi_assert(rpc_gui->gui);
 
-    // Release ongoing inputs to avoid lockup
     for(InputKey key = 0; key < InputKeyMAX; key++) {
         if(rpc_gui->input_key_counter[key] != RPC_GUI_INPUT_RESET) {
             InputEvent event = {
@@ -536,14 +514,14 @@ void rpc_system_gui_free(void* context) {
     if(rpc_gui->is_streaming) {
         rpc_gui->is_streaming = false;
         rpc_gui_screen_stream_mark_active(false);
-        // Remove GUI framebuffer callback
+
         gui_remove_framebuffer_callback(
             rpc_gui->gui, rpc_system_gui_screen_stream_frame_callback, context);
-        // Stop and release worker thread
+
         furi_thread_flags_set(furi_thread_get_id(rpc_gui->transmit_thread), RpcGuiWorkerFlagExit);
         furi_thread_join(rpc_gui->transmit_thread);
         furi_thread_free(rpc_gui->transmit_thread);
-        // Release frame
+
         pb_release(&PB_Main_msg, rpc_gui->transmit_frame);
         free(rpc_gui->transmit_frame);
         rpc_gui->transmit_frame = NULL;

@@ -1,4 +1,6 @@
 #include "hormann_bisecur.h"
+#include "decode_plugin.h"
+#include "../encode_plugin.h"
 
 #include <lib/flipper_format/flipper_format_i.h>
 #include <lib/toolbox/manchester_decoder.h>
@@ -60,14 +62,17 @@ const SubGhzProtocolEncoder subghz_protocol_hormann_bisecur_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_hormann_bisecur_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_hormann_bisecur = {
     .name = SUBGHZ_PROTOCOL_HORMANN_BISECUR_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_868 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_hormann_bisecur_decoder,
-    .encoder = &subghz_protocol_hormann_bisecur_encoder,
+    .encoder = &subghz_protocol_hormann_bisecur_encoder_ext.vtable,
 };
 
 static const ManchesterState manchester_reset_state = ManchesterStateMid1;
@@ -366,6 +371,12 @@ SubGhzProtocolStatus subghz_protocol_decoder_hormann_bisecur_serialize(
             res = SubGhzProtocolStatusErrorParserKey;
             break;
         }
+
+        if(!flipper_format_write_hex(flipper_format, "Data", instance->data, key_length)) {
+            FURI_LOG_E(TAG, "Unable to write Data");
+            res = SubGhzProtocolStatusErrorParserOthers;
+            break;
+        }
     } while(false);
 
     return res;
@@ -413,19 +424,11 @@ void subghz_protocol_decoder_hormann_bisecur_get_string(void* context, FuriStrin
     SubGhzProtocolDecoderHormannBiSecur* instance = context;
     bool valid_crc = subghz_protocol_decoder_hormann_bisecur_check_crc(instance);
 
-    furi_string_cat_printf(
-        output,
-        "%s\r\n"
-        "%dbit CRC:0x%02X %s\r\n"
-        "Type:0x%02X Sn:0x%08lX\r\n"
-        "Key:%016llX\r\n"
-        "Key:%016llX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->crc,
-        valid_crc ? "OK" : "WRONG",
-        instance->type,
-        instance->generic.serial,
-        instance->generic.data,
-        instance->generic.data_2);
+        uint64_t extra[] = {instance->crc, instance->type, (uint64_t)valid_crc};
+    const SubGhzDecodeInput input = {
+        .generic = &instance->generic,
+        .extra = extra,
+        .extra_count = 3,
+    };
+    subghz_decode_plugin_get_string("Hormann BiSecur", &input, output);
 }

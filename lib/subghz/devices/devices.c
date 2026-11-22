@@ -89,7 +89,8 @@ const char* subghz_devices_get_name(const SubGhzDevice* device) {
 
 bool subghz_devices_begin(const SubGhzDevice* device) {
     furi_check(device);
-    bool ret = false;
+
+    bool ret = true;
     if(device->interconnect->begin) {
         SubGhzDeviceConf conf = {
             .ver = 1,

@@ -119,6 +119,70 @@ and 868 MHz bands commonly used in automotive applications.
 > own or have explicit authorisation to test. Always comply with your local
 > radio and telecommunications regulations.
 
+### Transmit Coverage — every decoded protocol has a Send button
+
+FoxFW decodes **165 Sub-GHz protocols**, and as of the **v2.1.1** update
+**every single one is transmittable** — there are no decode-only protocols
+left. Open any saved `.sub` and it will always offer to Send/Emulate. What the
+Send does falls into three kinds:
+
+| Coverage | Count | What the Send button does |
+|---|:---:|---|
+| **Clone / encoder** | 124 | The firmware rebuilds the signal from its own native encoder — a full, functional reproduction. For fixed-code protocols, a working copy of the remote. |
+| **Reconstruction replay** | 39 | No native encoder exists, so FoxFW re-emits the decoded frame in the protocol's **own modulation**. The saved `.sub` re-transmits and **re-decodes as the same protocol** — a re-detectable round-trip. It is *not* a functional clone: any rolling counter is frozen at the captured value, so it will not operate a rolling-code vehicle. |
+| **Raw pulses** | 2 | Generic RAW capture — exact timing replayed with no protocol decode. Always transmittable. |
+
+> The full searchable, per-protocol breakdown (what every Send button does,
+> grouped by make) is the **[Protocol Send Matrix](https://foxfw.github.io/fox-web/FoxFW%20Protocol%20Matrix.html)**.
+
+#### Reconstruction-replay protocols
+
+These are decode-only protocols (no native encoder) that FoxFW now re-emits in
+their own modulation via the shared `enc_recon_manchester` reconstruction
+encoder, so a saved capture re-transmits and re-detects as the same protocol:
+
+| Protocol | Make | Reconstruction method |
+|---|---|---|
+| Alps RKE | — | toolbox Manchester |
+| Astrostart | — | gap-width PWM |
+| Audi V2 | Audi/VW | short-preamble Manchester |
+| Audi V3 | Audi/VW | inverted Manchester |
+| Audiovox | Audi/VW | mark-width PWM + sync mark |
+| BMW CAS4 | BMW/Mini | toolbox Manchester |
+| BMW V2 | BMW/Mini | Manchester 56-bit |
+| BMW V3 | BMW/Mini | Manchester 95-bit |
+| Cardin S508 | — | Manchester 868 FM |
+| Chevrolet V0 | GM (Chevrolet) | IEEE Manchester |
+| Code Alarm | — | manchester_advance |
+| Compustar | — | mark-width PWM |
+| Continental RKE | — | Manchester (zero-bit slicer) |
+| Ducato V0 | Fiat (Ducato) | Manchester + sync |
+| GM RKE | GM | PPM mark + gap |
+| Hitag2 | — | Manchester (both-polarity) |
+| Honda V5 | Honda | custom-LUT Manchester (honda_fsm) |
+| Honda V6 | Honda | 3-variant: stock45 Manchester / pandora / 313 trit (hv6_fsm) |
+| Honda V7 | Honda | matched-pair PWM |
+| Honda V8 | Honda | inverted PWM (KeeLoq) |
+| Honda V9 | Honda | half-bit Manchester |
+| Honda V10 | Honda | sliding half-bit Manchester |
+| Hörmann BiSecur | — | Manchester 868 FM |
+| Jeep V0 | Jeep | audi-family Manchester |
+| LDV V0 | LDV/Maxus | Manchester 128-bit |
+| Lexus V0 | Toyota/Lexus | audi-family Manchester |
+| Mazda V1 | Mazda | KeeLoq Manchester |
+| Mic6Sc2 | — | manchester_advance |
+| Mitsubishi V1 | Mitsubishi | Manchester |
+| Nidec RKE | — | mark-width PWM + sync |
+| Nissan V0 | Nissan | differential Manchester |
+| Opel Mokka | Opel/Vauxhall | 268-bit FSK Manchester (structural rebuild) |
+| Opel V0 | Opel/Vauxhall | burst-width PWM |
+| Opel V1 | Opel/Vauxhall | toolbox Manchester (XTEA) |
+| Renault V2 | Renault | half-bit Manchester |
+| Renault V3 | Renault | NRZ run-length |
+| Renault V4 | Renault | Manchester + long sync |
+| Siemens VDO | — | manchester_advance |
+| VAG Polo | Audi/VW | Manchester + sync |
+
 ### Automotive Protocols
 
 | Manufacturer | Protocol | Frequency | Mod | Encoder | Decoder | CRC |
@@ -215,9 +279,15 @@ and 868 MHz bands commonly used in automotive applications.
 | Column | Meaning |
 |---|---|
 | **Mod** | Radio modulation — AM = OOK/ASK, FM = FSK |
-| **Encoder** | FoxFW can transmit / replay signals in this protocol |
+| **Encoder** | FoxFW has a **native clone encoder** for this protocol (full functional reproduction) |
 | **Decoder** | FoxFW can receive and decode signals in this protocol |
 | **CRC** | Protocol includes a checksum — decoded frames are validated |
+
+A **—** in the Encoder column does **not** mean the protocol can't transmit.
+Every decoded protocol has a Send button: those without a native clone encoder
+are covered by **reconstruction replay** (see the table above) or raw-pulse
+replay. See the [Protocol Send Matrix](https://foxfw.github.io/fox-web/FoxFW%20Protocol%20Matrix.html)
+for the exact Send behaviour of every protocol.
 
 </details>
 

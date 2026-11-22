@@ -1,34 +1,4 @@
-/**
- * Hitag2 RKE — NXP PCF7946/7947 Rolling-Code Remote Keyless Entry
- *
- * Reference: Garcia, Oswald, Kasper, Pavlidès,
- *   "Lock It and Still Lose It — On the (In)Security of Automotive RKE Systems",
- *   USENIX Security 2016, Figure 11.
- *
- * Used by many manufacturers (Alfa Romeo, Citroën, Dacia, Fiat, Ford, Lancia,
- * Mitsubishi, Nissan, Opel/Vauxhall, Peugeot, Renault, …). Cipher = Hitag2
- * (48-bit LFSR + nonlinear filter). The rolling code can be recovered with the
- * fast correlation attack in tools/hitag2/hitag2_crack.{c,py} from ≥4 traces.
- *
- * Physical (verified on Ford Ka 2016, 433.92 MHz OOK):
- *   Manchester, te_short≈240us / te_long≈480us (G.E. Thomas).
- *   Preamble: run of 1-bits (carrier sync).
- *
- * Packet (103 bits, Figure 11):
- *   [marker 16b][UID 32b][btn 4b][lctr 10b][ks 32b][0 1b][chk 8b]
- *   - UID  : 32-bit identifier, constant per remote
- *   - btn  : 4-bit button id (Ford Ka: 0x3=Lock, 0x5=Unlock, 0x9=Trunk)
- *   - lctr : low 10 bits of the 28-bit rolling counter (cleartext, increments)
- *   - ks   : 32-bit Hitag2 keystream (the encrypted rolling part)
- *   - chk  : XOR-parity over the 10 bytes preceding it (bits 15..94)
- *
- * Sync is self-validating via the checksum: a frame is accepted only where the
- * XOR of 10 consecutive bytes equals the following byte. This removes the
- * ±1-bit preamble-length ambiguity inherent to a variable-length carrier run.
- *
- * Decode-only (dev): the rolling code is encrypted with a per-remote key, so
- * there is no roundtrip encoder.
- */
+
 
 #include "hitag2.h"
 
@@ -42,22 +12,22 @@
 #include <furi_hal.h>
 #include "common.h"
 #include <lib/subghz/blocks/bitbuf.h>
+#include "../encode_plugin.h"
 
 #define TAG "SubGhzProtocolHitag2"
 
 #define HITAG2_DATA_BITS     103
 #define HITAG2_ALL_BITS_MAX  400
-/* checksum spans 10 bytes; smallest acceptable frame = checksum window + chk */
+
 #define HITAG2_MIN_BITS      88
-/* carrier-preamble 1-bits required immediately before the frame (anti-alias) */
+
 #define HITAG2_PREAMBLE_MIN  14
-/* raw-pulse buffer per burst (Manchester ≈ 1.5 pulses/bit + preamble) */
+
 #define HITAG2_MAXDUR        700
-/* a space longer than this ends a burst (longer than any te_long across the
- * 90..260µs bitrate range we support) */
+
 #define HITAG2_GAP           1500
 #define HITAG2_MIN_PULSE     30
-/* te_short search window for the per-burst histogram (µs) */
+
 #define HITAG2_TE_MIN        70
 #define HITAG2_TE_MAX        320
 
@@ -68,32 +38,23 @@ static const SubGhzBlockConst subghz_protocol_hitag2_const = {
     .min_count_bit_for_found = HITAG2_MIN_BITS,
 };
 
-// ============================================================================
-// DATA STRUCTURES
-// ============================================================================
-
 struct SubGhzProtocolDecoderHitag2 {
     SubGhzProtocolDecoderBase base;
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    // Raw signed pulse durations of the current burst (+ = high, - = low).
-    // te_short is estimated per burst, so a single decoder handles the whole
-    // Hitag2 bitrate range (te≈90µs Fiat/Alfa .. te≈240µs Ford Ka).
     int16_t durs[HITAG2_MAXDUR];
     uint16_t dur_count;
 
-    // Scratch demodulated bits (filled per polarity in process()).
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(HITAG2_ALL_BITS_MAX)];
 
-    uint32_t uid;   // 32-bit identifier
-    uint8_t  btn;   // 4-bit button id
-    uint16_t lctr;  // 10-bit cleartext counter (low bits)
-    uint32_t ks;    // 32-bit keystream
-    uint8_t  chk;   // 8-bit parity byte
+    uint32_t uid;
+    uint8_t  btn;
+    uint16_t lctr;
+    uint32_t ks;
+    uint8_t  chk;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHitag2);
-
 
 struct SubGhzProtocolEncoderHitag2 {
     SubGhzProtocolEncoderBase base;
@@ -101,28 +62,11 @@ struct SubGhzProtocolEncoderHitag2 {
     SubGhzBlockGeneric generic;
 };
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-
 static uint32_t hitag2_bits_to_int(const uint8_t* bits, int lo, int len) {
     uint32_t v = 0;
     for(int i = 0; i < len; i++) v = (v << 1) | (subghz_bitbuf_get(bits, lo + i) & 1);
     return v;
 }
-
-// ============================================================================
-// FRAME PROCESSING — checksum-validated sync
-//
-// For a candidate start position 'cs' (= bit 15 of the packet, one bit before
-// the UID), the byte-XOR parity over bytes [cs .. cs+80) must equal the byte at
-// [cs+80 .. cs+88). When it matches, the fields are extracted relative to cs:
-//   UID  = bits[cs+1  .. cs+33]
-//   btn  = bits[cs+33 .. cs+37]
-//   lctr = bits[cs+37 .. cs+47]
-//   ks   = bits[cs+47 .. cs+79]
-//   chk  = bits[cs+80 .. cs+88]
-// ============================================================================
 
 static bool subghz_protocol_decoder_hitag2_find_and_emit(
     SubGhzProtocolDecoderHitag2* instance, int n) {
@@ -130,21 +74,13 @@ static bool subghz_protocol_decoder_hitag2_find_and_emit(
     if(n < HITAG2_MIN_BITS) return false;
 
     for(int cs = 0; cs + 88 <= n; cs++) {
-        // (1) require the fixed '0' bit between ks and chk (Figure 11)
+
         if(subghz_bitbuf_get(b, cs + 79) != 0) continue;
 
-        // (2) verify the actual 16-bit marker WORD = 0x0001 (Figure 11) ending at
-        //     cs (bits[cs-15..cs]), not merely a 14-equal-bit run. cs is the last
-        //     pre-UID bit; UID starts at cs+1. The carrier preamble demods to the
-        //     marker's leading zeros, and the frame is checksum-valid in exactly
-        //     one polarity — the same polarity in which the marker reads 0x0001
-        //     (the inverted polarity yields 0xFFFE). Pins polarity and removes the
-        //     ±1-bit XOR-parity aliases the value-agnostic run check let through.
         if(cs < 15) continue;
         uint16_t marker = (uint16_t)hitag2_bits_to_int(b, cs - 15, 16);
         if(marker != 0x0001) continue;
 
-        // (3) XOR-parity checksum over the 10 bytes preceding chk
         uint8_t x = 0;
         for(int i = cs; i < cs + 80; i += 8) {
             x ^= (uint8_t)hitag2_bits_to_int(b, i, 8);
@@ -152,27 +88,20 @@ static bool subghz_protocol_decoder_hitag2_find_and_emit(
         uint8_t chk = (uint8_t)hitag2_bits_to_int(b, cs + 80, 8);
         if(x != chk) continue;
 
-        // (4) reject the all-zero / all-one UID — a real remote never has it,
-        //     and an empty bit run trivially satisfies the XOR-parity.
         uint32_t uid = hitag2_bits_to_int(b, cs + 1, 32);
         if(uid == 0 || uid == 0xFFFFFFFF) continue;
 
-        // Valid Hitag2 frame at cs
         instance->uid = uid;
         instance->btn = (uint8_t)hitag2_bits_to_int(b, cs + 33, 4);
         instance->lctr = (uint16_t)hitag2_bits_to_int(b, cs + 37, 10);
         instance->ks = hitag2_bits_to_int(b, cs + 47, 32);
         instance->chk = chk;
 
-        // (5) lctr/keystream plausibility bound: a genuine rolling frame never
-        //     carries an all-zero or all-one counter+keystream (a demod artefact,
-        //     not a real remote). Keep scanning for a valid frame if it fails.
         if((instance->lctr == 0 && instance->ks == 0) ||
            (instance->lctr == 0x3FF && instance->ks == 0xFFFFFFFF)) {
             continue;
         }
 
-        // generic.data = first 64 bits from UID (UID:32 | btn:4 | lctr:10 | ks_hi:18)
         instance->generic.data = ((uint64_t)instance->uid << 32) |
                                  ((uint64_t)(instance->btn & 0xF) << 28) |
                                  ((uint64_t)(instance->lctr & 0x3FF) << 18) |
@@ -202,19 +131,8 @@ static bool subghz_protocol_decoder_hitag2_find_and_emit(
     return false;
 }
 
-// ============================================================================
-// Per-burst te_short estimation + Manchester demodulation.
-//
-// Hitag2 RKE bitrate varies a lot by manufacturer (te≈90µs Fiat/Alfa ..
-// te≈240µs Ford Ka). Instead of a fixed timing we estimate te_short from a
-// histogram of the burst's pulse widths (the half-bit is the most common
-// pulse), then run a stateless G.E.-Thomas Manchester decode. Both polarities
-// are tried; the first that yields a checksum-valid frame wins.
-// ============================================================================
-
 static uint32_t hitag2_estimate_te(const int16_t* durs, int count) {
-    // 10µs-bin histogram over the plausible te_short window; return the
-    // most populated bin center.
+
     enum { BINS = (HITAG2_TE_MAX - HITAG2_TE_MIN) / 10 + 1 };
     uint16_t hist[BINS];
     for(int i = 0; i < BINS; i++) hist[i] = 0;
@@ -253,7 +171,7 @@ static int hitag2_demod(
                 half = true;
             }
         } else {
-            half = false; // noise/invalid: drop, keep scanning (checksum re-syncs)
+            half = false;
         }
     }
     return n;
@@ -270,22 +188,18 @@ static void subghz_protocol_decoder_hitag2_process_burst(SubGhzProtocolDecoderHi
         instance->dur_count, (unsigned long)te);
 }
 
-// ============================================================================
-// DECODER: feed — collect raw burst pulses, decode on the trailing gap.
-// ============================================================================
-
 void subghz_protocol_decoder_hitag2_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderHitag2* instance = context;
 
     if(duration >= HITAG2_GAP) {
-        // burst boundary
+
         subghz_protocol_decoder_hitag2_process_burst(instance);
         instance->dur_count = 0;
         return;
     }
     if(duration < HITAG2_MIN_PULSE) {
-        return; // ignore glitches without breaking the burst
+        return;
     }
     if(instance->dur_count >= HITAG2_MAXDUR) {
         subghz_protocol_decoder_hitag2_process_burst(instance);
@@ -295,11 +209,6 @@ void subghz_protocol_decoder_hitag2_feed(void* context, bool level, uint32_t dur
     if(v > 32000) v = 32000;
     instance->durs[instance->dur_count++] = (int16_t)(level ? v : -v);
 }
-
-// ============================================================================
-// PROTOCOL VTABLES
-// ============================================================================
-
 
 const SubGhzProtocolDecoder subghz_protocol_hitag2_decoder = {
     .alloc = subghz_protocol_decoder_hitag2_alloc,
@@ -320,19 +229,18 @@ const SubGhzProtocolEncoder subghz_protocol_hitag2_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_hitag2_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_hitag2 = {
     .name = SUBGHZ_PROTOCOL_HITAG2_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_hitag2_decoder,
-    .encoder = &subghz_protocol_hitag2_encoder,
+    .encoder = &subghz_protocol_hitag2_encoder_ext.vtable,
 };
-
-// ============================================================================
-// DECODER: alloc / free / reset
-// ============================================================================
 
 void* subghz_protocol_decoder_hitag2_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -341,8 +249,6 @@ void* subghz_protocol_decoder_hitag2_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_hitag2_reset(void* context) {
     furi_assert(context);
@@ -355,12 +261,6 @@ void subghz_protocol_decoder_hitag2_reset(void* context) {
     instance->generic.data_count_bit = 0;
 }
 
-// ============================================================================
-// DECODER: hash / serialize / deserialize
-// ============================================================================
-
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_hitag2_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -372,6 +272,19 @@ SubGhzProtocolStatus subghz_protocol_decoder_hitag2_serialize(
     if(ret == SubGhzProtocolStatusOk) {
         uint32_t ks = instance->ks;
         flipper_format_write_uint32(flipper_format, "Ks", &ks, 1);
+
+        uint8_t fr[13];
+        memset(fr, 0, sizeof(fr));
+        for(int k = 0; k < 16; k++) subghz_bitbuf_set(fr, k, (0x0001 >> (15 - k)) & 1);
+        for(int k = 0; k < 32; k++) subghz_bitbuf_set(fr, 16 + k, (instance->uid >> (31 - k)) & 1);
+        for(int k = 0; k < 4; k++) subghz_bitbuf_set(fr, 48 + k, (instance->btn >> (3 - k)) & 1);
+        for(int k = 0; k < 10; k++) subghz_bitbuf_set(fr, 52 + k, (instance->lctr >> (9 - k)) & 1);
+        for(int k = 0; k < 32; k++) subghz_bitbuf_set(fr, 62 + k, (instance->ks >> (31 - k)) & 1);
+        subghz_bitbuf_set(fr, 94, 0);
+        uint8_t x = 0;
+        for(int i = 15; i < 95; i += 8) x ^= (uint8_t)hitag2_bits_to_int(fr, i, 8);
+        for(int k = 0; k < 8; k++) subghz_bitbuf_set(fr, 95 + k, (x >> (7 - k)) & 1);
+        flipper_format_write_hex(flipper_format, "Data", fr, sizeof(fr));
     }
     return ret;
 }
@@ -394,8 +307,4 @@ SubGhzProtocolStatus
     }
     return ret;
 }
-
-// ============================================================================
-// DECODER: get_string
-// ============================================================================
 

@@ -1,4 +1,4 @@
-/* decode_kia_v3_v4.fal : SD get_string for kia_v3_v4 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/kia_v3_v4.h>
@@ -76,7 +76,6 @@ static uint8_t kia_v3_v4_ui_button(uint8_t custom, uint8_t original_btn) {
 static void kia_v3_v4_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderKiaV3V4* instance = input->decoder;
-
 
     uint64_t yek = compute_yek(instance->generic.data);
     uint32_t key_hi = (uint32_t)(instance->generic.data >> 32);

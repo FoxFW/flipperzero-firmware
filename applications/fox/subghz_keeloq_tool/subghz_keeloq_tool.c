@@ -95,9 +95,7 @@ static void keeloq_tool_free(KeeloqTool* app) {
 int32_t subghz_keeloq_tool_app(void* p) {
     KeeloqTool* app = keeloq_tool_alloc();
 
-    /* arg: "core:<section>" or "core:<section>|<signal_path>"; no prefix => standalone.
-       section in {keys, bf2}. A '|path' means a signal-coupled launch from subGHz. */
-    char section[16] = {0};
+    char section[32] = {0};
     const char* arg = (p && ((const char*)p)[0]) ? (const char*)p : NULL;
     if(arg) {
         if(strncmp(arg, "core:", 5) == 0) {
@@ -137,8 +135,7 @@ int32_t subghz_keeloq_tool_app(void* p) {
 
     if(app->from_subghz) {
         if(!furi_string_empty(app->signal_path)) {
-            /* Signal-coupled launch (from a signal's info/saved menu): reopen that
-             * signal so BACK returns to its menu, not the subGHz start grid. */
+
             FuriString* marker = furi_string_alloc_printf(
                 "inforeturn:%s", furi_string_get_cstr(app->signal_path));
             File* f = storage_file_alloc(app->storage);

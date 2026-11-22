@@ -1,4 +1,4 @@
-/* decode_honda_v5.fal : SD get_string for honda_v5 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -21,9 +21,9 @@ struct SubGhzProtocolDecoderHondaV5 {
     uint8_t bits[SUBGHZ_BITBUF_BYTES(HONDA_V5_MAX_BITS)];
     uint16_t bit_count;
 
-    uint16_t variant; // 135 or 168
-    uint64_t data_mid; // frame bytes 8..15
-    uint32_t data_ext; // frame bytes 16..19 (alt only)
+    uint16_t variant;
+    uint64_t data_mid;
+    uint32_t data_ext;
     uint32_t serial;
     uint8_t btn;
     uint16_t cnt;

@@ -1,6 +1,53 @@
 #include "lfrfid_i.h"
 #include <lfrfid_icons.h>
 
+bool lfrfid_check_duplicate(LfRfid* app) {
+    furi_string_reset(app->duplicate_name);
+    size_t cur_size = protocol_dict_get_data_size(app->dict, app->protocol_id);
+    if(cur_size == 0) return false;
+    uint8_t* cur = malloc(cur_size);
+    protocol_dict_get_data(app->dict, app->protocol_id, cur, cur_size);
+
+    bool found = false;
+    ProtocolDict* tmp = protocol_dict_alloc(lfrfid_protocols, LFRFIDProtocolMax);
+    File* dir = storage_file_alloc(app->storage);
+    FuriString* path = furi_string_alloc();
+    FuriString* name = furi_string_alloc();
+    char fname[128];
+    FileInfo info;
+    if(storage_dir_open(dir, LFRFID_APP_FOLDER)) {
+        while(storage_dir_read(dir, &info, fname, sizeof(fname))) {
+            if(file_info_is_dir(&info)) continue;
+            furi_string_set(name, fname);
+            if(!furi_string_end_with_str(name, LFRFID_APP_FILENAME_EXTENSION)) continue;
+            furi_string_printf(path, "%s/%s", LFRFID_APP_FOLDER, fname);
+            ProtocolId id = lfrfid_dict_file_load(tmp, furi_string_get_cstr(path));
+            if(id == PROTOCOL_NO) continue;
+            if(id != app->protocol_id) continue;
+            size_t sz = protocol_dict_get_data_size(tmp, id);
+            if(sz != cur_size) continue;
+            uint8_t* cand = malloc(sz);
+            protocol_dict_get_data(tmp, id, cand, sz);
+            bool eq = (memcmp(cur, cand, sz) == 0);
+            free(cand);
+            if(eq) {
+                furi_string_left(
+                    name, furi_string_size(name) - strlen(LFRFID_APP_FILENAME_EXTENSION));
+                furi_string_set(app->duplicate_name, name);
+                found = true;
+                break;
+            }
+        }
+    }
+    storage_dir_close(dir);
+    storage_file_free(dir);
+    furi_string_free(path);
+    furi_string_free(name);
+    protocol_dict_free(tmp);
+    free(cur);
+    return found;
+}
+
 const uint32_t default_passwords[] = {
     0x00000000, 0x00000001, 0x00000002, 0x0000000A, 0x0000000B, 0x00012323, 0x000D8787, 0x00434343,
     0x01010101, 0x01020304, 0x01234567, 0x02030405, 0x03040506, 0x04050607, 0x05060708, 0x05D73B9F,
@@ -64,6 +111,7 @@ static LfRfid* lfrfid_alloc(void) {
 
     lfrfid->file_name = furi_string_alloc();
     lfrfid->raw_file_name = furi_string_alloc();
+    lfrfid->duplicate_name = furi_string_alloc();
     lfrfid->file_path = furi_string_alloc_set(LFRFID_APP_FOLDER);
 
     lfrfid->dict = protocol_dict_alloc(lfrfid_protocols, LFRFIDProtocolMax);
@@ -122,6 +170,7 @@ static void lfrfid_free(LfRfid* lfrfid) {
 
     furi_string_free(lfrfid->raw_file_name);
     furi_string_free(lfrfid->file_name);
+    furi_string_free(lfrfid->duplicate_name);
     furi_string_free(lfrfid->file_path);
     protocol_dict_free(lfrfid->dict);
 

@@ -14,41 +14,6 @@
 #include "decode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
-// ============================================================================
-// Hundai (new Hyundai) SubGHz keyfob protocol (decoder + encoder)
-//
-// Reverse-engineered from the PANDORA_MAX firmware:
-//   - button/session dispatcher handler @ 0xf236
-//   - Manchester RF bit-banger (TX engine) @ 0x8290
-//
-// This is the NEW Hyundai keyfob, distinct from our kia_v0..v7 family.
-//
-// Wire (verified against the RF engine @ 0x8290):
-//   - modulation: OOK/ASK (AM650 preset), bands 315 / 433 MHz.
-//   - Manchester, Te = 500 us (te_delta ~125).
-//       bit1 = HIGH 500 -> LOW 500 (falling edge mid-bit)
-//       bit0 = LOW 500  -> HIGH 500 (rising edge mid-bit)
-//   - Frame on the air (per press, sent TWICE):
-//       header/sync : LOW 4500 -> HIGH 1000 -> LOW 500
-//       preamble    : 32 bytes of 0x55 (= 256 alternating Manchester bits), MSB-first
-//       body        : 9 payload bytes, MSB-first Manchester
-//     inter-frame gap between the two frames: LOW 2500 -> HIGH 1000 -> LOW 500
-//
-// Logical 9-byte payload:
-//   b0..b4, b8 = UID / serial (+ possible check byte b8; display, never rejected)
-//   b5 low nibble = button: btn0 -> |=0x01, btn1 -> |=0x02, btn2 -> |=0x09
-//                   (bits 0 and 3). b5 high nibble preserved.
-//   b6 = session / frame counter (++ per press)
-//   b7 high nibble = rolling KEY INDEX 1..15 (advances when b6 wraps to 0:
-//                    new_hi = 1 + old_hi; if it would be 0, reset to 1 i.e. 0x10).
-//   b7 low nibble  = channel / DIP nibble (device state; stored/replayed as captured).
-//
-// 9 bytes = 72 bits > 64, so the raw 9 bytes live in raw_data[] and are
-// serialized as a "Data" hex field (mirrors fiat_v2.c "Raw" / mercedes.c "Data").
-// Rolling code with no known key -> emulation is a byte-identical REPLAY (the
-// D-pad can re-stamp b5 button nibble and advance b6/b7 for a fresh press).
-// ============================================================================
-
 #define HUNDAI_TE_SHORT       500U
 #define HUNDAI_TE_DELTA       125U
 #define HUNDAI_HDR_LOW        4500U
@@ -62,33 +27,22 @@
 #define HUNDAI_WIRE_BYTES     9U
 #define HUNDAI_WIRE_BITS      72U
 
-// Boundary between a Manchester cell (<= ~1000us) and a real gap / header LOW.
 #define HUNDAI_BOUNDARY_MIN_US 1500U
 
-// Button nibble codes (OR'd into b5 low nibble).
 #define HUNDAI_BTN_0 0x01U
 #define HUNDAI_BTN_1 0x02U
 #define HUNDAI_BTN_2 0x09U
 
 #define HUNDAI_DEFAULT_REPEAT 2U
 
-// Encoder capacity for ONE frame: header(3) + 32*8*2 preamble cells + 72*2 body
-// cells + trailing gap. The whole thing is emitted twice, plus the inter-frame
-// gap markers, all inside a single upload buffer.
 #define HUNDAI_FRAME_CELLS \
     (3U + (HUNDAI_PREAMBLE_BYTES * 8U * 2U) + (HUNDAI_WIRE_BITS * 2U))
 #define HUNDAI_UPLOAD_CAPACITY ((HUNDAI_FRAME_CELLS * 2U) + 8U)
 
 #define HUNDAI_DATA_FIELD "Data"
 
-// Decoder alignment anchor: require this many trailing preamble 0x55 bytes
-// immediately before the 9-byte body so the byte alignment is unambiguous.
 #define HUNDAI_SYNC_PREAMBLE_BYTES 4U
 
-// Cell buffer: we collect all Manchester half-cells of a frame (header +
-// 32-byte preamble + 9-byte body). At the end-of-frame gap the body is decoded
-// from the TAIL of the buffer: the last (anchor + 9) bytes, anchored on the 4
-// trailing preamble 0x55 bytes. Buffer sized for the whole frame plus margin.
 #define HUNDAI_ANCHOR_BYTES HUNDAI_SYNC_PREAMBLE_BYTES
 #define HUNDAI_TAIL_BYTES   (HUNDAI_ANCHOR_BYTES + HUNDAI_WIRE_BYTES)
 #define HUNDAI_CELL_CAPACITY \
@@ -111,20 +65,15 @@ struct SubGhzProtocolDecoderHundai {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    // Manchester half-cell buffer. Each entry is a captured half-cell level
-    // (0/1); merged long pulses are split into two identical half-cells before
-    // being pushed. Decoded from the tail at the end-of-frame gap.
     uint8_t cells[SUBGHZ_BITBUF_BYTES(HUNDAI_CELL_CAPACITY)];
     uint16_t cell_count;
 
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
 
-    // Duplicate/integrity check: the fob sends two identical frames per press.
     uint8_t prev_frame[HUNDAI_WIRE_BYTES];
     bool prev_frame_valid;
-    bool dup_confirmed; // second identical frame was seen
+    bool dup_confirmed;
 
-    // Last reported frame, to suppress endless re-report of the same press.
     uint8_t last_reported[HUNDAI_WIRE_BYTES];
     bool last_reported_valid;
 };
@@ -137,7 +86,6 @@ struct SubGhzProtocolEncoderHundai {
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderHundai);
-
 
 const SubGhzProtocolDecoder subghz_protocol_hundai_decoder = {
     .alloc = subghz_protocol_decoder_hundai_alloc,
@@ -162,12 +110,8 @@ const SubGhzProtocol subghz_protocol_hundai = {
     .encoder = &subghz_protocol_hundai_encoder_ext.vtable,
 };
 
-// ---------------------------------------------------------------------------
-// Field helpers
-// ---------------------------------------------------------------------------
-
 static uint32_t hundai_uid(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
-    // b0..b3 as the 32-bit UID view (b4/b8 are extra serial/check bytes).
+
     return ((uint32_t)raw[0] << 24U) | ((uint32_t)raw[1] << 16U) | ((uint32_t)raw[2] << 8U) |
            raw[3];
 }
@@ -186,31 +130,11 @@ static void hundai_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[
     generic->btn = hundai_button(raw);
     generic->cnt = raw[6];
     generic->data_count_bit = HUNDAI_WIRE_BITS;
-    // 72 bits do not fit generic.data; keep a 64-bit digest (b1..b8) for hashing.
+
     uint64_t data = 0U;
     for(size_t i = 1U; i < HUNDAI_WIRE_BYTES; i++) data = (data << 8U) | raw[i];
     generic->data = data;
 }
-
-// b7 high-nibble key-index rollover: advance when the session counter b6 wraps
-// to 0. new_hi = 1 + old_hi; if that would be 0 (old_hi == 15), reset to 1.
-// Applied together with the b6 increment for a genuine (non-replay) press.
-// ---------------------------------------------------------------------------
-// Decoder: collect Manchester half-cells into a sliding window (mazda_infinity
-// style) and scan byte-aligned offsets for the tail of the 0x55 preamble
-// followed by the 9-byte body. This gives EXACT, self-inverse polarity control
-// and copes with the alternating 0x55 preamble (which the self-synchronizing
-// firmware manchester state machine cannot decode from merged pulses).
-//
-// Cell-pair -> bit mapping (matches the encoder / RE polarity):
-//   HIGH,LOW -> 1 ; LOW,HIGH -> 0
-// i.e. bit1 = HIGH 500 -> LOW 500, bit0 = LOW 500 -> HIGH 500. Verified to
-// round-trip exactly against the encoder for all 9 body bytes.
-//
-// A merged long pulse (two adjacent same-level half-cells) is split into two
-// identical half-cells before being pushed, so the window always holds true
-// half-cells regardless of pulse merging on capture.
-// ---------------------------------------------------------------------------
 
 static bool hundai_is_short(uint32_t d) {
     return DURATION_DIFF(d, HUNDAI_TE_SHORT) < HUNDAI_TE_DELTA;
@@ -225,15 +149,13 @@ static void hundai_clear_cells(SubGhzProtocolDecoderHundai* instance) {
     memset(instance->cells, 0, sizeof(instance->cells));
 }
 
-// Decode `bytes` logical bytes MSB-first from cells starting at cell offset
-// `cell_off`. Returns false if any pair is not a valid Manchester cell.
 static bool
     hundai_cells_to_bytes(const uint8_t* cells, uint16_t cell_off, uint8_t* out, size_t bytes) {
     for(size_t bit = 0U; bit < bytes * 8U; bit++) {
         const uint8_t first = subghz_bitbuf_get(cells, cell_off + bit * 2U);
         const uint8_t second = subghz_bitbuf_get(cells, cell_off + bit * 2U + 1U);
-        if(first == second) return false; // not a valid Manchester cell
-        // HIGH,LOW -> 1 ; LOW,HIGH -> 0
+        if(first == second) return false;
+
         const bool value = (first != 0U) && (second == 0U);
         if(bit % 8U == 0U) out[bit / 8U] = 0U;
         if(value) {
@@ -244,7 +166,7 @@ static bool
 }
 
 static void hundai_commit(SubGhzProtocolDecoderHundai* instance, const uint8_t frame[HUNDAI_WIRE_BYTES]) {
-    // Confirm the second repeated frame matches (dup / integrity check).
+
     if(instance->prev_frame_valid &&
        memcmp(instance->prev_frame, frame, HUNDAI_WIRE_BYTES) == 0) {
         instance->dup_confirmed = true;
@@ -252,7 +174,6 @@ static void hundai_commit(SubGhzProtocolDecoderHundai* instance, const uint8_t f
     memcpy(instance->prev_frame, frame, HUNDAI_WIRE_BYTES);
     instance->prev_frame_valid = true;
 
-    // Suppress endless re-report of the same press.
     if(instance->last_reported_valid &&
        memcmp(instance->last_reported, frame, HUNDAI_WIRE_BYTES) == 0) {
         return;
@@ -269,9 +190,6 @@ static void hundai_commit(SubGhzProtocolDecoderHundai* instance, const uint8_t f
     }
 }
 
-// Decode the body from the TAIL of the collected cells: the last (anchor + 9)
-// bytes, anchored on the 4 trailing preamble 0x55 bytes. This is unambiguous
-// even when the body's leading bytes happen to be 0x55.
 static void hundai_try_decode(SubGhzProtocolDecoderHundai* instance) {
     const uint16_t tail_cells = HUNDAI_TAIL_BYTES * 8U * 2U;
     if(instance->cell_count < tail_cells) return;
@@ -281,10 +199,10 @@ static void hundai_try_decode(SubGhzProtocolDecoderHundai* instance) {
     if(!hundai_cells_to_bytes(instance->cells, off, win, HUNDAI_TAIL_BYTES)) return;
 
     for(uint8_t i = 0U; i < HUNDAI_ANCHOR_BYTES; i++) {
-        if(win[i] != HUNDAI_PREAMBLE_BYTE) return; // preamble anchor mismatch
+        if(win[i] != HUNDAI_PREAMBLE_BYTE) return;
     }
 
-    const uint8_t* frame = &win[HUNDAI_ANCHOR_BYTES]; // 9 body bytes
+    const uint8_t* frame = &win[HUNDAI_ANCHOR_BYTES];
     if(!hundai_frame_valid(frame)) return;
 
     hundai_commit(instance, frame);
@@ -309,8 +227,6 @@ void* subghz_protocol_decoder_hundai_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_hundai_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderHundai* instance = context;
@@ -332,9 +248,7 @@ void subghz_protocol_decoder_hundai_feed(void* context, bool level, uint32_t dur
 
     switch(instance->decoder.parser_step) {
     case HundaiDecoderStepReset:
-        // Wait for the header / inter-frame gap LOW (>= 1500us) then start
-        // collecting cells; the header HIGH/LOW and remaining preamble are
-        // absorbed by the sliding-window scan.
+
         if(!level && duration >= HUNDAI_BOUNDARY_MIN_US) {
             hundai_clear_cells(instance);
             instance->decoder.parser_step = HundaiDecoderStepData;
@@ -345,13 +259,11 @@ void subghz_protocol_decoder_hundai_feed(void* context, bool level, uint32_t dur
         if(hundai_is_short(duration)) {
             hundai_push_cell(instance, level);
         } else if(hundai_is_long(duration)) {
-            // Merged long pulse = two identical half-cells.
+
             hundai_push_cell(instance, level);
             hundai_push_cell(instance, level);
         } else {
-            // Header HIGH (~1000us is a long, handled above), inter-frame gap, or
-            // end of frame. On a real gap (>=1500us LOW), try a final decode then
-            // start a fresh collection window for the repeated frame.
+
             hundai_try_decode(instance);
             hundai_clear_cells(instance);
             if(!level && duration >= HUNDAI_BOUNDARY_MIN_US) {
@@ -436,18 +348,4 @@ void subghz_protocol_decoder_hundai_get_string(void* context, FuriString* output
     };
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
-
-
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire and send the frame TWICE.
-//   Per frame:
-//     header  : LOW 4500 -> HIGH 1000 -> LOW 500
-//     preamble: 32x 0x55 Manchester (MSB-first)
-//     body    : 9 bytes Manchester (MSB-first)
-//       bit1 -> HIGH 500 , LOW 500
-//       bit0 -> LOW 500 , HIGH 500
-//   inter-frame gap between the two frames: LOW 2500 -> HIGH 1000 -> LOW 500
-// Replay-based: the stored 9 bytes reproduce the wire exactly. A D-pad button
-// change re-stamps b5's button nibble and advances b6 (+ b7 key-index on wrap).
-// ---------------------------------------------------------------------------
 

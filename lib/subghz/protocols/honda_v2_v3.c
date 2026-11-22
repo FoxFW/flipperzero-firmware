@@ -1,15 +1,4 @@
-/**
- * @file honda_v2_v3.c
- * @brief Combined Honda V2/V3 SubGHz Protocol -- single "HondaV2&V3" protocol
- *
- * One protocol registration, variant detected at runtime from preamble timing.
- * V2: ~148 data bits, Manchester te_short=96us, preamble ~116x 1460us pulses
- * V3: 120-bit frame (15 bytes), Manchester te_short=250us, preamble ~230x 500us pulses
- *
- * Frequency: 433.920 MHz
- * Modulation: 2-FSK (FuriHalSubGhzPreset2FSKDev476Async)
- * Encoding: Manchester (custom LUT)
- */
+
 
 #include "honda_v2_v3.h"
 
@@ -26,11 +15,6 @@
 
 #define TAG "SubGhzProtocolHondaV2V3"
 
-// ============================================================================
-// TIMING CONSTANTS
-// ============================================================================
-
-// V2
 #define HONDA_V2_TE_SHORT       96
 #define HONDA_V2_TE_LONG        192
 #define HONDA_V2_TE_DELTA       50
@@ -51,7 +35,6 @@ static const SubGhzBlockConst subghz_protocol_honda_v2_const = {
     .min_count_bit_for_found = HONDA_V2_MIN_FRAME_BITS,
 };
 
-// V3
 #define HONDA_V3_TE_SHORT       250
 #define HONDA_V3_TE_LONG        500
 #define HONDA_V3_TE_DELTA       80
@@ -73,13 +56,8 @@ static const SubGhzBlockConst subghz_protocol_honda_v3_const = {
     .min_count_bit_for_found = HONDA_V3_MIN_FRAME_BITS,
 };
 
-// V2 sync pattern bytes: 0x0E 0x1E 0x1E 0x1E 0x0D 0x6C
 static const uint8_t honda_v2_sync_pattern[HONDA_V2_SYNC_BYTES] =
     {0x0E, 0x1E, 0x1E, 0x1E, 0x0D, 0x6C};
-
-// ============================================================================
-// MANCHESTER TABLE & SHARED DECODE
-// ============================================================================
 
 static const uint8_t honda_manchester_table[4] = {0x01, 0x91, 0x9B, 0xFB};
 
@@ -112,10 +90,6 @@ static bool honda_manchester_decode(uint8_t* state, uint8_t timing_type, uint8_t
 
     return false;
 }
-
-// ============================================================================
-// VARIANT ENUM & PARAMETERS TABLE
-// ============================================================================
 
 typedef enum {
     HondaVariantV2 = 2,
@@ -163,11 +137,6 @@ static const HondaVariantParams* honda_get_params(HondaVariant v) {
     return &honda_variant_params[HONDA_VARIANT_IDX(v)];
 }
 
-// ============================================================================
-// BUTTON CONSTANTS
-// ============================================================================
-
-// V2 buttons (btn_byte1, btn_byte2 pairs)
 #define HONDA_V2_BTN1_LOCK       0x40
 #define HONDA_V2_BTN2_LOCK       0x20
 #define HONDA_V2_BTN1_UNLOCK     0x41
@@ -177,18 +146,12 @@ static const HondaVariantParams* honda_get_params(HondaVariant v) {
 #define HONDA_V2_BTN1_TRUNK      0x40
 #define HONDA_V2_BTN2_TRUNK      0x60
 
-// V2 combined button codes for generic.btn (use btn_byte2 as primary identifier)
 #define HONDA_V2_BTN_LOCK   0x20
 #define HONDA_V2_BTN_UNLOCK 0x40
 #define HONDA_V2_BTN_TRUNK  0x60
 
-// V3 buttons (from byte 4 in Type A frames)
 #define HONDA_V3_BTN_LOCK   0x8A
 #define HONDA_V3_BTN_UNLOCK 0x8C
-
-// ============================================================================
-// UNIFIED BUTTON FUNCTIONS
-// ============================================================================
 
 static bool honda_v2_validate_buttons(uint8_t btn1, uint8_t btn2) {
     if(btn1 == HONDA_V2_BTN1_LOCK && btn2 == HONDA_V2_BTN2_LOCK) return true;
@@ -197,10 +160,6 @@ static bool honda_v2_validate_buttons(uint8_t btn1, uint8_t btn2) {
     if(btn1 == HONDA_V2_BTN1_TRUNK && btn2 == HONDA_V2_BTN2_TRUNK) return true;
     return false;
 }
-
-// ============================================================================
-// DATA STRUCTURES
-// ============================================================================
 
 typedef enum {
     HondaDecoderStepReset = 0,
@@ -219,7 +178,7 @@ typedef struct {
 
     union {
         struct {
-            uint32_t serial; // 24-bit serial
+            uint32_t serial;
             uint8_t btn_byte1;
             uint8_t btn_byte2;
             uint16_t padding;
@@ -229,14 +188,14 @@ typedef struct {
             bool has_sync;
         } v2;
         struct {
-            uint8_t sync; // should be 0x6A
+            uint8_t sync;
             uint8_t counter;
-            uint8_t payload[12]; // bytes 2-13
+            uint8_t payload[12];
             uint8_t crc;
-            uint16_t serial; // from Type A frames
+            uint16_t serial;
             uint8_t btn_byte;
             uint8_t flags;
-            bool is_fixed; // Type A vs Type B
+            bool is_fixed;
         } v3;
     } extra;
 } SubGhzProtocolDecoderHondaV2V3;
@@ -271,11 +230,6 @@ typedef struct {
     } extra;
 } SubGhzProtocolEncoderHondaV2V3;
 
-// ============================================================================
-// PROTOCOL DEFINITION -- single VTable, single registration
-// ============================================================================
-
-
 const SubGhzProtocolDecoder subghz_protocol_honda_v2_v3_decoder = {
     .alloc = subghz_protocol_decoder_honda_v2_v3_alloc,
     .free = subghz_protocol_decoder_common_free,
@@ -298,21 +252,17 @@ const SubGhzProtocol subghz_protocol_honda_v2_v3 = {
     .encoder = &subghz_protocol_honda_v2_v3_encoder_ext.vtable,
 };
 
-// ============================================================================
-// V2 PACK / UNPACK helpers
-// ============================================================================
-
 static void honda_v2_pack_generic(
     SubGhzBlockGeneric* generic,
     uint32_t serial,
     uint8_t counter,
     uint32_t rolling,
     uint8_t btn_byte2) {
-    // Pack: serial(24) in upper bits, counter(8), rolling(32)
+
     generic->data = ((uint64_t)(serial & 0xFFFFFF) << 40) | ((uint64_t)counter << 32) | rolling;
     generic->data_count_bit = HONDA_V2_FRAME_BITS;
     generic->serial = serial;
-    generic->btn = btn_byte2; // use btn_byte2 as primary button identifier
+    generic->btn = btn_byte2;
     generic->cnt = counter;
 }
 
@@ -326,12 +276,8 @@ static void honda_v2_unpack_generic(
     if(rolling_out) *rolling_out = (uint32_t)(generic->data & 0xFFFFFFFF);
 }
 
-// ============================================================================
-// V3 CRC: CRC-16 MSB poly=0x2627 on d[1..13], then 8-bit extraction via masks
-// ============================================================================
-
 static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
-    // CRC-16 MSB-first over frame[1..13] (13 bytes)
+
     uint16_t crc = 0;
     for(int i = 1; i < 14; i++) {
         crc ^= (uint16_t)frame[i] << 8;
@@ -339,10 +285,10 @@ static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
             crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x2627) : (uint16_t)(crc << 1);
         }
     }
-    // Extract 8-bit CRC from 16-bit via parity masks
+
     static const uint16_t masks[8] = {
         0x8181, 0x4141, 0x2121, 0x80F2, 0xAF15, 0x0606, 0x0202, 0x0000};
-    static const uint8_t constants = 0x1B; // bits: 00011011
+    static const uint8_t constants = 0x1B;
     uint8_t result = 0;
     for(int b = 0; b < 8; b++) {
         uint16_t m = crc & masks[b];
@@ -356,18 +302,13 @@ static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
     return result;
 }
 
-// ============================================================================
-// V3 PACK / UNPACK helpers
-// ============================================================================
-
 static void honda_v3_pack_generic(
     SubGhzBlockGeneric* generic,
     uint16_t serial,
     uint8_t counter,
     uint8_t btn_byte,
     uint8_t crc) {
-    // Pack: serial(16) | btn_byte(8) | counter_raw(8) | crc(8) | padding(24)
-    // counter raw byte: actual_counter(6bit) << 2 | tx_flag(1) << 1 | bit0(1)
+
     generic->data = ((uint64_t)(serial & 0xFFFF) << 48) | ((uint64_t)btn_byte << 40) |
                     ((uint64_t)counter << 32) | ((uint64_t)crc << 24);
     generic->data_count_bit = HONDA_V3_FRAME_BITS;
@@ -375,7 +316,7 @@ static void honda_v3_pack_generic(
     generic->btn = btn_byte;
     generic->cnt = counter >> 2;
     generic->crc = crc;
-    /* crc_check is set by the caller only after a real CRC match, not here. */
+
 }
 
 static void honda_v3_unpack_generic(
@@ -390,12 +331,8 @@ static void honda_v3_unpack_generic(
     if(crc_out) *crc_out = (generic->data >> 24) & 0xFF;
 }
 
-// ============================================================================
-// UNIFIED FRAME PROCESSING
-// ============================================================================
-
 static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
-    // Convert decoded bits to bytes
+
     uint16_t byte_count = (instance->bit_count + 7) / 8;
     uint8_t raw_bytes[32];
     memset(raw_bytes, 0, sizeof(raw_bytes));
@@ -408,7 +345,7 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
 
     switch(instance->variant) {
     case HondaVariantV2: {
-        // Find sync pattern in raw bytes
+
         int sync_offset = -1;
         if(byte_count >= HONDA_V2_SYNC_BYTES + HONDA_V2_DATA_BYTES) {
             for(uint16_t offset = 0;
@@ -434,9 +371,9 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
         if(sync_offset >= 0) {
             d = &raw_bytes[sync_offset + HONDA_V2_SYNC_BYTES];
         } else {
-            // Fallback: try to find data without full sync
+
             if(byte_count >= HONDA_V2_DATA_BYTES) {
-                // Skip leading preamble-like bytes and look for plausible data
+
                 for(uint16_t offset = 0; offset <= byte_count - HONDA_V2_DATA_BYTES; offset++) {
                     uint8_t b1 = raw_bytes[offset + 3];
                     uint8_t b2 = raw_bytes[offset + 4];
@@ -449,7 +386,6 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
             if(!d) return;
         }
 
-        // Extract 13 data bytes
         uint32_t serial = ((uint32_t)d[0] << 16) | ((uint32_t)d[1] << 8) | d[2];
         uint8_t btn1 = d[3];
         uint8_t btn2 = d[4];
@@ -459,7 +395,6 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
                            ((uint32_t)d[10] << 8) | d[11];
         uint8_t tail = d[12];
 
-        // Validate button codes
         if(!honda_v2_validate_buttons(btn1, btn2)) return;
 
         instance->extra.v2.serial = serial;
@@ -474,15 +409,13 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
     } break;
 
     case HondaVariantV3: {
-        // Strip trailing 0x55 idle bytes (preamble leakage), but never
-        // below frame size — CRC itself can be 0x55.
+
         while(byte_count > HONDA_V3_TOTAL_BYTES && raw_bytes[byte_count - 1] == 0x55) {
             byte_count--;
         }
 
         if(byte_count < HONDA_V3_TOTAL_BYTES) return;
 
-        // Find sync byte 0x6A
         int sync_idx = -1;
         for(uint16_t i = 0; i <= byte_count - HONDA_V3_TOTAL_BYTES; i++) {
             if(raw_bytes[i] == HONDA_V3_SYNC_BYTE) {
@@ -495,17 +428,11 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
         uint8_t* d = &raw_bytes[sync_idx];
 
         uint8_t sync = d[0];
-        uint8_t counter = d[1]; // raw byte: counter(6bit) << 2 | tx_flag(1) << 1 | bit0(1)
+        uint8_t counter = d[1];
         uint8_t crc = d[14];
 
-        /* Gate on the frame CRC. Previously an aligned 0x6A sync byte alone was
-         * enough to accept a frame, so ~120-bit FSK noise containing a 0x6A
-         * surfaced a bogus "Honda V3" with a false CRC:OK. */
         if(honda_v3_compute_crc(d) != crc) return;
 
-        // Classify frame type: Type A (fixed) vs Type B (hopping)
-        // Fixed frames: d[2..3]=serial, d[4]=button (0x8x), d[5]=flags (0x82/0x83)
-        // Hopping frames: d[2..13] are fully encrypted, no readable button/serial
         uint8_t raw_btn = d[4];
         uint8_t flags = d[5];
         bool is_fixed = ((raw_btn & 0xF0) == 0x80) && (flags == 0x82 || flags == 0x83);
@@ -527,7 +454,7 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
         instance->extra.v3.is_fixed = is_fixed;
 
         honda_v3_pack_generic(&instance->generic, serial, counter, btn_byte, crc);
-        instance->generic.crc_check = true; // CRC validated above
+        instance->generic.crc_check = true;
     } break;
 
     default:
@@ -538,10 +465,6 @@ static void honda_process_frame(SubGhzProtocolDecoderHondaV2V3* instance) {
         instance->base.callback(&instance->base, instance->base.context);
     }
 }
-
-// ============================================================================
-// SHARED DECODE TIMING
-// ============================================================================
 
 static void
     honda_decode_timing(SubGhzProtocolDecoderHondaV2V3* instance, bool level, uint32_t duration) {
@@ -583,17 +506,13 @@ static void
     }
 }
 
-// ============================================================================
-// DECODER -- ALLOC / FREE / RESET
-// ============================================================================
-
 void* subghz_protocol_decoder_honda_v2_v3_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
 
     SubGhzProtocolDecoderHondaV2V3* instance = malloc(sizeof(SubGhzProtocolDecoderHondaV2V3));
     instance->base.protocol = &subghz_protocol_honda_v2_v3;
     instance->generic.protocol_name = subghz_protocol_honda_v2_v3.name;
-    instance->variant = HondaVariantV2; // default, detected at runtime
+    instance->variant = HondaVariantV2;
     instance->manchester_state = 1;
     instance->bit_count = 0;
     memset(instance->bits, 0, sizeof(instance->bits));
@@ -601,8 +520,6 @@ void* subghz_protocol_decoder_honda_v2_v3_alloc(SubGhzEnvironment* environment) 
 
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_v2_v3_reset(void* context) {
     furi_assert(context);
@@ -616,24 +533,12 @@ void subghz_protocol_decoder_honda_v2_v3_reset(void* context) {
     memset(&instance->extra, 0, sizeof(instance->extra));
 }
 
-// ============================================================================
-// DECODER -- FEED (variant auto-detection from preamble/data timing)
-// ============================================================================
-
 void subghz_protocol_decoder_honda_v2_v3_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderHondaV2V3* instance = context;
 
     switch(instance->decoder.parser_step) {
     case HondaDecoderStepReset: {
-        // Auto-detect variant from timing.
-        // V2 preamble pulses are ~1460us, data Manchester uses te_short=96us
-        // V3 preamble pulses are ~500us, data Manchester uses te_short=250us
-        //
-        // Strategy: Match incoming duration against both te_short values.
-        // V2 te_short=96 vs V3 te_short=250 are well separated.
-        // V2 preamble at 1460us won't match either te_short, so we'll
-        // start collecting once we see actual data timings.
 
         int best_idx = -1;
         uint32_t best_diff = UINT32_MAX;
@@ -647,7 +552,6 @@ void subghz_protocol_decoder_honda_v2_v3_feed(void* context, bool level, uint32_
             }
         }
 
-        // Also check te_long for entry
         if(best_idx < 0) {
             for(int i = 0; i < HONDA_VARIANT_COUNT; i++) {
                 const SubGhzBlockConst* bc = honda_variant_params[i].block_const;
@@ -672,7 +576,6 @@ void subghz_protocol_decoder_honda_v2_v3_feed(void* context, bool level, uint32_
     case HondaDecoderStepData: {
         const HondaVariantParams* params = honda_get_params(instance->variant);
 
-        // Frame boundary: gap > min_gap
         if(duration > params->min_gap) {
             if(instance->bit_count >= params->block_const->min_count_bit_for_found) {
                 honda_process_frame(instance);
@@ -693,20 +596,12 @@ void subghz_protocol_decoder_honda_v2_v3_feed(void* context, bool level, uint32_
     }
 }
 
-// ============================================================================
-// DECODER -- GET HASH DATA
-// ============================================================================
-
 uint8_t subghz_protocol_decoder_honda_v2_v3_get_hash_data(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderHondaV2V3* instance = context;
     return subghz_protocol_blocks_get_hash_data(
         &instance->decoder, (instance->bit_count >> 3) + 1);
 }
-
-// ============================================================================
-// DECODER -- SERIALIZE
-// ============================================================================
 
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v2_v3_serialize(
     void* context,
@@ -719,7 +614,6 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v2_v3_serialize(
         subghz_block_generic_serialize(&dec->generic, flipper_format, preset);
     if(ret != SubGhzProtocolStatusOk) return ret;
 
-    // Write variant number
     uint32_t variant_temp = (uint32_t)dec->variant;
     if(!flipper_format_insert_or_update_uint32(flipper_format, "Variant", &variant_temp, 1)) {
         return SubGhzProtocolStatusError;
@@ -763,7 +657,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v2_v3_serialize(
         if(!flipper_format_insert_or_update_uint32(flipper_format, "Flags", &flags_temp, 1)) {
             return SubGhzProtocolStatusError;
         }
-        // Save payload bytes as hex
+
         if(!flipper_format_insert_or_update_hex(
                flipper_format, "Payload", dec->extra.v3.payload, 12)) {
             return SubGhzProtocolStatusError;
@@ -774,20 +668,14 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v2_v3_serialize(
     return SubGhzProtocolStatusOk;
 }
 
-// ============================================================================
-// DECODER -- DESERIALIZE
-// ============================================================================
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_honda_v2_v3_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolDecoderHondaV2V3* dec = context;
 
-    // Read generic data first (Key, Bit)
     SubGhzProtocolStatus ret = subghz_block_generic_deserialize(&dec->generic, flipper_format);
     if(ret != SubGhzProtocolStatusOk) return ret;
 
-    // Read variant -- or auto-detect from Bit count
     uint32_t variant_temp = 0;
     if(flipper_format_read_uint32(flipper_format, "Variant", &variant_temp, 1)) {
         dec->variant = (HondaVariant)variant_temp;
@@ -806,7 +694,6 @@ SubGhzProtocolStatus
 
     const HondaVariantParams* params = honda_get_params(dec->variant);
 
-    // Validate bit count
     if(dec->generic.data_count_bit != params->frame_bits) {
         return SubGhzProtocolStatusErrorValueBitCount;
     }
@@ -837,7 +724,6 @@ SubGhzProtocolStatus
             dec->extra.v2.btn_byte2 = btn_lo_temp & 0xFF;
         }
 
-        // Unpack generic data
         uint32_t serial;
         uint8_t counter;
         uint32_t rolling;
@@ -870,13 +756,11 @@ SubGhzProtocolStatus
         flipper_format_read_uint32(flipper_format, "Flags", &flags_temp, 1);
         dec->extra.v3.flags = flags_temp & 0xFF;
 
-        // Read payload
         uint8_t payload_buf[12] = {0};
         if(flipper_format_read_hex(flipper_format, "Payload", payload_buf, 12)) {
             memcpy(dec->extra.v3.payload, payload_buf, 12);
         }
 
-        // Unpack generic data
         uint16_t serial;
         uint8_t counter;
         uint8_t btn_byte;
@@ -901,10 +785,6 @@ SubGhzProtocolStatus
     return SubGhzProtocolStatusOk;
 }
 
-// ============================================================================
-// DECODER -- GET STRING
-// ============================================================================
-
 void subghz_protocol_decoder_honda_v2_v3_get_string(void* context, FuriString* output) {
     SubGhzProtocolDecoderHondaV2V3* dec = context;
     const SubGhzDecodeInput input = {
@@ -916,14 +796,4 @@ void subghz_protocol_decoder_honda_v2_v3_get_string(void* context, FuriString* o
     };
     subghz_decode_plugin_get_string(dec->generic.protocol_name, &input, output);
 }
-
-
-// ============================================================================
-// MANCHESTER ENCODER (shared, parametrized by te_short/te_long)
-// ============================================================================
-
-// Helper: Manchester-encode a byte array MSB-first
-// ============================================================================
-// UNIFIED BUILD UPLOAD
-// ============================================================================
 

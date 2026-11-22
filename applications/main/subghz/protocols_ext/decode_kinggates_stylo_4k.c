@@ -1,4 +1,4 @@
-/* decode_kinggates_stylo_4k.fal : SD get_string for kinggates_stylo_4k (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/kinggates_stylo_4k.h>
@@ -24,8 +24,6 @@ struct SubGhzProtocolDecoderKingGates_stylo_4k {
 static void kinggates_stylo_4k_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderKingGates_stylo_4k* instance = input->decoder;
-
-    /* KeeLoq decrypt done internally */
 
     subghz_block_generic_global.cnt_is_available = true;
     subghz_block_generic_global.cnt_length_bit = 16;

@@ -1,13 +1,7 @@
-/* FoxFW2.0 config-externalization Stage 3 (2026-10-31).
- * Receiver config scene (the main sub-GHz Read config) as an on-demand .fal.
- * Reaches SubGhz/txrx/hopper/speaker/predefined/lock state ONLY through
- * SubGhzConfigHostApi; never includes subghz_i.h. Faithful port of the former
- * resident subghz_scene_receiver_config.c, with per-change SD saves removed
- * (settings update in RAM + radio reconfigures immediately; persisted once in
- * on_exit) to kill fast-scroll heap/SD churn. */
+
 
 #include "../helpers/subghz_config_scene.h"
-#include <lib/subghz/types.h>  /* SubGhzProtocolFlag_* */
+#include <lib/subghz/types.h>
 #include <lib/toolbox/value_index.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,7 +9,6 @@
 
 static const SubGhzConfigHostApi* g_api = NULL;
 
-/* Private custom-event codes (round-trip within this scene only). */
 #define RC_EVT_LOCK  0xFA10u
 #define RC_EVT_RESET 0xFA11u
 
@@ -25,8 +18,13 @@ enum SubGhzSettingIndex {
     SubGhzSettingIndexModulation,
     SubGhzSettingIndexRadioDevice,
     SubGhzSettingIndexCaptureUnknownRaw,
+    SubGhzSettingIndexShowPsaEncrypted,
+    SubGhzSettingIndexCombineRepeats,
     SubGhzSettingIndexHopping,
     SubGhzSettingIndexPresetHopping,
+    SubGhzSettingIndexPresetHopGroup,
+    SubGhzSettingIndexRAWThresholdRSSI,
+    SubGhzSettingIndexAdaptiveRSSI,
     SubGhzSettingIndexBinRAW,
     SubGhzSettingIndexIgnoreReversRB2,
     SubGhzSettingIndexIgnoreAlarms,
@@ -38,7 +36,6 @@ enum SubGhzSettingIndex {
     SubGhzSettingIndexSound,
     SubGhzSettingIndexResetToDefault,
     SubGhzSettingIndexLock,
-    SubGhzSettingIndexRAWThresholdRSSI,
 };
 
 #define RAW_THRESHOLD_RSSI_COUNT 11
@@ -65,6 +62,10 @@ static const float preset_hopping_mode_value[PRESET_HOPPING_MODE_COUNT] = {
     NAN, -90.0f, -85.0f, -80.0f, -75.0f, -70.0f,
     -65.0f, -60.0f, -55.0f, -50.0f, -45.0f, -40.0f};
 
+#define PRESET_HOP_GROUP_COUNT 3
+static const char* const preset_hop_group_text[PRESET_HOP_GROUP_COUNT] = {
+    "Standard", "Extended", "Both"};
+
 #define COMBO_BOX_COUNT 2
 static const char* const combobox_text[COMBO_BOX_COUNT] = {"OFF", "ON"};
 static const uint32_t bin_raw_value[COMBO_BOX_COUNT] = {
@@ -75,7 +76,6 @@ static const uint32_t bin_raw_value[COMBO_BOX_COUNT] = {
 static const char* const receiver_radio_device_text[RECEIVER_RADIO_DEVICE_COUNT] = {
     "Internal", "External"};
 
-/* ---- modulation-filter display<->actual mapping (filter always allocated) ---- */
 static uint8_t rc_mod_enabled_count(void) {
     SubGhzSetting* s = g_api->get_setting(g_api->ctx);
     size_t total = subghz_setting_get_preset_count(s);
@@ -143,7 +143,6 @@ static uint8_t rc_preset_hopper_value_index(void) {
         PRESET_HOPPING_MODE_COUNT);
 }
 
-/* ============================ change callbacks ============================ */
 static void rc_set_predefined(VariableItem* item) {
     uint16_t index = (uint16_t)variable_item_get_current_value_index(item);
     VariableItemList* list = g_api->get_item_list(g_api->ctx);
@@ -216,6 +215,18 @@ static void rc_set_capture_unknown_raw(VariableItem* item) {
     g_api->get_last_settings(g_api->ctx)->capture_unknown_raw = index == 1;
 }
 
+static void rc_set_show_psa_encrypted(VariableItem* item) {
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, combobox_text[index]);
+    g_api->get_last_settings(g_api->ctx)->show_psa_encrypted = index == 1;
+}
+
+static void rc_set_combine_repeats(VariableItem* item) {
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, combobox_text[index]);
+    g_api->get_last_settings(g_api->ctx)->combine_repeats = index == 1;
+}
+
 static void rc_set_hopping(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     SubGhzSetting* setting = g_api->get_setting(g_api->ctx);
@@ -279,6 +290,17 @@ static void rc_set_preset_hopping(VariableItem* item) {
 
     VariableItem* hopping_item = variable_item_list_get(list, SubGhzSettingIndexHopping);
     variable_item_set_locked(hopping_item, index != 0, "Turn off\nPreset\nHopping\nfirst!");
+
+    VariableItem* group_item = variable_item_list_get(list, SubGhzSettingIndexPresetHopGroup);
+    variable_item_set_locked(group_item, index == 0, "Turn on\nPreset\nHopping\nfirst!");
+}
+
+static void rc_set_preset_hop_group(VariableItem* item) {
+    uint8_t index = variable_item_get_current_value_index(item);
+    if(index >= PRESET_HOP_GROUP_COUNT) index = 0;
+    SubGhzLastSettings* last = g_api->get_last_settings(g_api->ctx);
+    variable_item_set_current_value_text(item, preset_hop_group_text[index]);
+    last->preset_hopper_mode = index;
 }
 
 static void rc_set_speaker(VariableItem* item) {
@@ -291,6 +313,17 @@ static void rc_set_bin_raw(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, combobox_text[index]);
     g_api->set_filter(g_api->ctx, bin_raw_value[index]);
+}
+
+static void rc_set_rssi_adaptive(VariableItem* item) {
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, combobox_text[index]);
+    SubGhzLastSettings* last = g_api->get_last_settings(g_api->ctx);
+    if(g_api->is_read_raw_mode(g_api->ctx)) {
+        last->readraw_rssi_adaptive = index == 1;
+    } else {
+        last->read_rssi_adaptive = index == 1;
+    }
 }
 
 static void rc_set_raw_threshold_rssi(VariableItem* item) {
@@ -354,7 +387,6 @@ static void rc_enter_cb(void* context, uint32_t index) {
     }
 }
 
-/* ================================ lifecycle ================================ */
 static void rc_plugin_set_host_api(const SubGhzConfigHostApi* api) {
     g_api = api;
 }
@@ -416,11 +448,25 @@ static void rc_plugin_on_enter(void) {
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, receiver_radio_device_text[value_index]);
 
-    item = variable_item_list_add(
-        list, "Unknown RAW", COMBO_BOX_COUNT, rc_set_capture_unknown_raw, NULL);
-    value_index = last->capture_unknown_raw ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, combobox_text[value_index]);
+    if(!read_raw) {
+        item = variable_item_list_add(
+            list, "Unknown RAW", COMBO_BOX_COUNT, rc_set_capture_unknown_raw, NULL);
+        value_index = last->capture_unknown_raw ? 1 : 0;
+        variable_item_set_current_value_index(item, value_index);
+        variable_item_set_current_value_text(item, combobox_text[value_index]);
+
+        item = variable_item_list_add(
+            list, "PSA (encrypted)", COMBO_BOX_COUNT, rc_set_show_psa_encrypted, NULL);
+        value_index = last->show_psa_encrypted ? 1 : 0;
+        variable_item_set_current_value_index(item, value_index);
+        variable_item_set_current_value_text(item, combobox_text[value_index]);
+
+        item = variable_item_list_add(
+            list, "Combine Repeats", COMBO_BOX_COUNT, rc_set_combine_repeats, NULL);
+        value_index = last->combine_repeats ? 1 : 0;
+        variable_item_set_current_value_index(item, value_index);
+        variable_item_set_current_value_text(item, combobox_text[value_index]);
+    }
 
     if(!read_raw) {
         value_index = rc_hopper_value_index();
@@ -442,6 +488,17 @@ static void rc_plugin_on_enter(void) {
         variable_item_set_current_value_text(item, preset_hopping_mode_text[value_index]);
         variable_item_set_locked(
             item, g_api->hopper_get_running(g_api->ctx), "Turn off\nHopping\nfirst!");
+
+        value_index =
+            (uint8_t)(last->preset_hopper_mode < PRESET_HOP_GROUP_COUNT ? last->preset_hopper_mode : 0);
+        item = variable_item_list_add(
+            list, "Preset Hop Set", PRESET_HOP_GROUP_COUNT, rc_set_preset_hop_group, NULL);
+        variable_item_set_current_value_index(item, value_index);
+        variable_item_set_current_value_text(item, preset_hop_group_text[value_index]);
+        variable_item_set_locked(
+            item,
+            !g_api->preset_hopper_get_running(g_api->ctx),
+            "Turn on\nPreset\nHopping\nfirst!");
     }
 
     item = variable_item_list_add(
@@ -450,6 +507,11 @@ static void rc_plugin_on_enter(void) {
         g_api->threshold_rssi_get(g_api->ctx), raw_threshold_rssi_value, RAW_THRESHOLD_RSSI_COUNT);
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, raw_threshold_rssi_text[value_index]);
+
+    item = variable_item_list_add(list, "Adaptive RSSI", COMBO_BOX_COUNT, rc_set_rssi_adaptive, NULL);
+    value_index = (read_raw ? last->readraw_rssi_adaptive : last->read_rssi_adaptive) ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, combobox_text[value_index]);
 
     if(!read_raw) {
         item = variable_item_list_add(list, "Bin RAW", COMBO_BOX_COUNT, rc_set_bin_raw, NULL);

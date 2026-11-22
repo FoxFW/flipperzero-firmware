@@ -19,6 +19,11 @@
 #define AIRFORCE_COUNT_BIT   18
 #define AIRFORCE_NAME        "Airforce"
 
+#define CAME_12_COUNT_BIT      12
+#define CAME_12_FOREIGN_TE_MIN 340
+#define CAME_12_GAP_TE_MIN     42
+#define CAME_12_GAP_TE_MAX     52
+
 static const SubGhzBlockConst subghz_protocol_came_const = {
     .te_short = 320,
     .te_long = 640,
@@ -31,6 +36,8 @@ struct SubGhzProtocolDecoderCame {
 
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
+    uint32_t header_te;
+    uint32_t te;
 };
 
 struct SubGhzProtocolEncoderCame {
@@ -82,6 +89,42 @@ void* subghz_protocol_decoder_came_alloc(SubGhzEnvironment* environment) {
         sizeof(SubGhzProtocolDecoderCame), &subghz_protocol_came);
 }
 
+static bool subghz_protocol_came_key_is_degenerate(uint64_t data, uint8_t bits) {
+    if(bits == 0U) return true;
+    if(bits > 64U) bits = 64U;
+    uint64_t mask = (bits == 64U) ? UINT64_MAX : ((1ULL << bits) - 1ULL);
+    data &= mask;
+    if((data == 0U) || (data == mask)) return true;
+    if((data == (0xAAAAAAAAAAAAAAAAULL & mask)) || (data == (0x5555555555555555ULL & mask)))
+        return true;
+    return false;
+}
+
+static bool subghz_protocol_came_payload_ok(uint64_t data, uint8_t bits, uint32_t header_te) {
+    if(subghz_protocol_came_key_is_degenerate(data, bits)) return false;
+    if(bits != CAME_12_COUNT_BIT) return true;
+    if(header_te < (uint32_t)subghz_protocol_came_const.te_short * 41U) return false;
+    uint8_t open_nibbles = 0U;
+    for(uint8_t i = 0U; i < 3U; i++) {
+        uint8_t nibble = (uint8_t)((data >> (4U * i)) & 0x0FU);
+        if((nibble == 0x0AU) || (nibble == 0x05U)) open_nibbles++;
+    }
+    return open_nibbles < 2U;
+}
+
+static bool
+    subghz_protocol_came_is_foreign_12bit(SubGhzProtocolDecoderCame* instance, uint32_t gap) {
+    if(instance->decoder.decode_count_bit != CAME_12_COUNT_BIT) {
+        return false;
+    }
+    uint32_t te = instance->te / (instance->decoder.decode_count_bit * 3 + 1);
+    if(te < CAME_12_FOREIGN_TE_MIN) {
+        return false;
+    }
+    uint32_t gap_te = gap / te;
+    return (gap_te < CAME_12_GAP_TE_MIN) || (gap_te > CAME_12_GAP_TE_MAX);
+}
+
 void subghz_protocol_decoder_came_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderCame* instance = context;
@@ -89,7 +132,7 @@ void subghz_protocol_decoder_came_feed(void* context, bool level, uint32_t durat
     case CameDecoderStepReset:
         if((!level) && (DURATION_DIFF(duration, subghz_protocol_came_const.te_short * 56) <
                         subghz_protocol_came_const.te_delta * 63)) {
-
+            instance->header_te = duration;
             instance->decoder.parser_step = CameDecoderStepFoundStartBit;
         }
         break;
@@ -103,6 +146,7 @@ void subghz_protocol_decoder_came_feed(void* context, bool level, uint32_t durat
             instance->decoder.parser_step = CameDecoderStepSaveDuration;
             instance->decoder.decode_data = 0;
             instance->decoder.decode_count_bit = 0;
+            instance->te = duration;
         } else {
             instance->decoder.parser_step = CameDecoderStepReset;
         }
@@ -111,24 +155,31 @@ void subghz_protocol_decoder_came_feed(void* context, bool level, uint32_t durat
         if(!level) {
             if(duration >= (subghz_protocol_came_const.te_short * 4)) {
                 instance->decoder.parser_step = CameDecoderStepFoundStartBit;
-                if((instance->decoder.decode_count_bit ==
+                if(((instance->decoder.decode_count_bit ==
                     subghz_protocol_came_const.min_count_bit_for_found) ||
                    (instance->decoder.decode_count_bit == AIRFORCE_COUNT_BIT) ||
                    (instance->decoder.decode_count_bit == PRASTEL_25_COUNT_BIT) ||
                    (instance->decoder.decode_count_bit == PRASTEL_42_COUNT_BIT) ||
-                   (instance->decoder.decode_count_bit == CAME_24_COUNT_BIT)) {
-                    instance->generic.serial = 0x0;
-                    instance->generic.btn = 0x0;
+                   (instance->decoder.decode_count_bit == CAME_24_COUNT_BIT)) &&
+                   !subghz_protocol_came_is_foreign_12bit(instance, duration)) {
+                    if(subghz_protocol_came_payload_ok(
+                           instance->decoder.decode_data,
+                           instance->decoder.decode_count_bit,
+                           instance->header_te)) {
+                        instance->generic.serial = 0x0;
+                        instance->generic.btn = 0x0;
 
-                    instance->generic.data = instance->decoder.decode_data;
-                    instance->generic.data_count_bit = instance->decoder.decode_count_bit;
+                        instance->generic.data = instance->decoder.decode_data;
+                        instance->generic.data_count_bit = instance->decoder.decode_count_bit;
 
-                    if(instance->base.callback)
-                        instance->base.callback(&instance->base, instance->base.context);
+                        if(instance->base.callback)
+                            instance->base.callback(&instance->base, instance->base.context);
+                    }
                 }
                 break;
             }
             instance->decoder.te_last = duration;
+            instance->te += duration;
             instance->decoder.parser_step = CameDecoderStepCheckDuration;
         } else {
             instance->decoder.parser_step = CameDecoderStepReset;
@@ -136,6 +187,7 @@ void subghz_protocol_decoder_came_feed(void* context, bool level, uint32_t durat
         break;
     case CameDecoderStepCheckDuration:
         if(level) {
+            instance->te += duration;
             if((DURATION_DIFF(instance->decoder.te_last, subghz_protocol_came_const.te_short) <
                 subghz_protocol_came_const.te_delta) &&
                (DURATION_DIFF(duration, subghz_protocol_came_const.te_long) <

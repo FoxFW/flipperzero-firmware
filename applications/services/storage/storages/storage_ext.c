@@ -552,6 +552,7 @@ static bool storage_ext_dir_read(
     if(fileinfo != NULL) {
         fileinfo->size = _fileinfo.fsize;
         fileinfo->flags = 0;
+        fileinfo->date = ((uint32_t)_fileinfo.fdate << 16) | (uint32_t)_fileinfo.ftime;
 
         if(_fileinfo.fattrib & AM_DIR) fileinfo->flags |= FSF_DIRECTORY;
     }
@@ -584,6 +585,7 @@ static FS_Error storage_ext_common_stat(void* ctx, const char* path, FileInfo* f
     if(fileinfo != NULL) {
         fileinfo->size = _fileinfo.fsize;
         fileinfo->flags = 0;
+        fileinfo->date = ((uint32_t)_fileinfo.fdate << 16) | (uint32_t)_fileinfo.ftime;
 
         if(_fileinfo.fattrib & AM_DIR) fileinfo->flags |= FSF_DIRECTORY;
     }

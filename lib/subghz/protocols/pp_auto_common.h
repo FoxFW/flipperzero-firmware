@@ -1,18 +1,5 @@
 #pragma once
-/*
- * pp_auto_common - shared helpers for the ProtoPirate-derived automotive
- * protocols (alps_rke, code_alarm, mic6sc2, hyundai_kia_rio, porsche_touareg,
- * santa_fe). These helpers were previously copy-pasted (byte-identical) as
- * `static inline pp_*` into each of those 6 files while they lived in separate
- * .fal groups. Now that they are all live in libsubghz, the single shared copy
- * lives here under the `ppa_` prefix.
- *
- * NOTE: the `ppa_` prefix deliberately differs from the `pp_` helpers in
- * protocols_common.c. Those are a SEPARATE lineage with DIFFERENT behaviour
- * (e.g. pp_serialize_fields there uses write-with-error-check; the version here
- * uses update-or-insert). Do not merge the two without on-hardware testing.
- * FoxFW2.0 2026-10-21
- */
+
 #include <furi.h>
 #include <lib/subghz/types.h>
 #include <lib/subghz/blocks/const.h>

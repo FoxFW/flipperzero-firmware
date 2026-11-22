@@ -1,43 +1,14 @@
 #include "../subghz_i.h"
-#include <string.h>
+#include "../helpers/subghz_config_scene_loader.h"
 
 void subghz_scene_details_on_enter(void* context) {
-    SubGhz* subghz = context;
-    widget_reset(subghz->widget);
-
-    const char* full = furi_string_get_cstr(subghz->error_str);
-
-    char proto[48] = "Details";
-    const char* body = full;
-    const char* nl = strchr(full, '\n');
-    if(nl) {
-        size_t len = (size_t)(nl - full);
-        if(len >= sizeof(proto)) len = sizeof(proto) - 1;
-        memcpy(proto, full, len);
-        proto[len] = '\0';
-        body = nl + 1;
-    }
-
-    widget_add_string_element(
-        subghz->widget, 64, 2, AlignCenter, AlignTop, FontPrimary, proto);
-
-    FuriString* body_str = furi_string_alloc_set_str(body);
-    furi_string_trim(body_str);
-    widget_add_text_scroll_element(
-        subghz->widget, 0, 14, 128, 50, furi_string_get_cstr(body_str));
-    furi_string_free(body_str);
-
-    view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdWidget);
+    subghz_config_scene_enter(context, "subghz_config_details", SubGhzSceneDetails);
 }
 
 bool subghz_scene_details_on_event(void* context, SceneManagerEvent event) {
-
-    UNUSED(context);
-    UNUSED(event);
-    return false;
+    return subghz_config_scene_event(context, event);
 }
 
 void subghz_scene_details_on_exit(void* context) {
-    SubGhz* subghz = context;
-    widget_reset(subghz->widget);
+    subghz_config_scene_exit(context);
 }

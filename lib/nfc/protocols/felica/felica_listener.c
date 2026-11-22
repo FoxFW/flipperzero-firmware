@@ -43,16 +43,11 @@ FelicaListener* felica_listener_alloc(Nfc* nfc, FelicaData* data) {
     instance->current_system_idx = 0;
     nfc_config(instance->nfc, NfcModeListener, NfcTechFelica);
 
-    // PMm bytes 2-6 encode the max response time a reader should allow per command
-    // (Request Service / Request Response / Read / Write / Auth). Cards saved from a
-    // real (hardware-fast) FeliCa IC carry short values here; our software emulation
-    // is slower to respond, so real readers following those short timeouts abandon
-    // the session mid-transaction. Widen them to the max so readers wait long enough.
     instance->pmm = data->pmm;
     memset(instance->pmm.data + 2, 0xFF, FELICA_PMM_SIZE - 2);
 
     uint16_t system_code = *(uint16_t*)data->data.fs.sys_c.data;
-    // Standard cards keep their System Codes in the System list rather than in SYS_C
+
     if(data->workflow_type == FelicaStandard && simple_array_get_count(data->systems) > 0) {
         const FelicaSystem* system = simple_array_cget(data->systems, 0);
         system_code = __builtin_bswap16(system->system_code);
@@ -171,9 +166,6 @@ static FelicaError felica_listener_command_handler_write(
     return felica_listener_frame_exchange(instance, instance->tx_buffer);
 }
 
-// Returns the currently selected System (instance->current_system_idx), or NULL if
-// there is none - callers must not assume System 0 is the active one, since Polling
-// with a specific System Code can switch this mid-session.
 static const FelicaSystem* felica_listener_get_current_system(const FelicaListener* instance) {
     uint32_t system_count = simple_array_get_count(instance->data->systems);
     if(instance->current_system_idx >= system_count) return NULL;
@@ -186,7 +178,6 @@ static FelicaSystem* felica_listener_get_current_system_mut(FelicaListener* inst
     return simple_array_get(instance->data->systems, instance->current_system_idx);
 }
 
-// Returns the Service with the given code in the System, or NULL if there is none
 static const FelicaService*
     felica_listener_get_service(const FelicaSystem* system, uint16_t service_code) {
     if(!system) return NULL;
@@ -198,7 +189,6 @@ static const FelicaService*
     return NULL;
 }
 
-// Sends a response that carries only the Status Flags
 static FelicaError felica_listener_send_status_response(
     FelicaListener* instance,
     uint8_t response_code,
@@ -218,7 +208,6 @@ static FelicaError felica_listener_send_status_response(
     return felica_listener_frame_exchange(instance, instance->tx_buffer);
 }
 
-// Max blocks for Standard read that fit within the 128-byte tx buffer (with CRC)
 #define FELICA_STANDARD_READ_BLOCK_MAX (7U)
 
 static FelicaError felica_listener_command_handler_standard_read(
@@ -389,7 +378,6 @@ static FelicaError felica_listener_command_handler_standard_write(
         }
     }
 
-    // Block Data must be present in full for every block in the Block List
     const uint8_t* raw_end = raw + generic_request->length;
     if(sf1 == FELICA_SF1_SUCCESS &&
        (bptr > raw_end || (size_t)(raw_end - bptr) < block_count * FELICA_DATA_BLOCK_SIZE)) {
@@ -409,7 +397,6 @@ static FelicaError felica_listener_command_handler_request_response(
     const FelicaListenerGenericRequest* const generic_request) {
     UNUSED(generic_request);
 
-    // Response: length(1) + RC(1) + IDm(8) + mode(1) = 11 bytes
     const size_t resp_size = 11;
     uint8_t resp_buf[resp_size];
     resp_buf[0] = (uint8_t)resp_size;
@@ -430,7 +417,6 @@ static FelicaError felica_listener_command_handler_request_service(
     uint8_t n = raw[10];
     FURI_LOG_D(TAG, "Request Service cmd, n=%u", n);
 
-    // Clamp: response is 11 + 2n bytes; tx buffer is FELICA_LISTENER_MAX_BUFFER_SIZE bytes (incl. 2-byte CRC)
     const uint8_t n_max = (FELICA_LISTENER_MAX_BUFFER_SIZE - 2 - 11) / 2;
     if(n > n_max) n = n_max;
 
@@ -551,7 +537,7 @@ static FelicaError felica_listener_command_handler_search_service_code(
         resp->data[2] = (uint8_t)(code_hi & 0xFF);
         resp->data[3] = (uint8_t)(code_hi >> 8);
     } else {
-        // Service code or end-of-list (0xFFFF)
+
         resp->data[0] = (uint8_t)(code_lo & 0xFF);
         resp->data[1] = (uint8_t)(code_lo >> 8);
     }
@@ -639,27 +625,23 @@ static bool felica_listener_check_system_code(
         generic_request->polling.system_code == (code | 0xFF00U));
 }
 
-// Returns the matched System's wire-format code, or FELICA_SYSTEM_CODE_CODE if none
-// matched. When the match is a real entry in instance->data->systems (as opposed to
-// the virtual NDEF/Lite-S codes), *matched_idx is set to its index so the caller can
-// derive that System's IDm; otherwise *matched_idx is left at 0.
 static uint16_t felica_listener_get_response_system_code(
     FelicaListener* instance,
     const FelicaListenerGenericRequest* const generic_request,
     uint8_t* matched_idx) {
     uint16_t resp_system_code = FELICA_SYSTEM_CODE_CODE;
     *matched_idx = 0;
-    // Standard cards only answer to Systems from their dump
+
     const bool is_standard = instance->data->workflow_type == FelicaStandard;
     if(!is_standard &&
        felica_listener_check_system_code(generic_request, FELICA_LISTENER_SYSTEM_CODE_NDEF) &&
        instance->data->data.fs.mc.data[FELICA_MC_SYS_OP] == 1) {
-        // NDEF
+
         resp_system_code = FELICA_LISTENER_SYSTEM_CODE_NDEF;
     } else if(
         !is_standard &&
         felica_listener_check_system_code(generic_request, FELICA_LISTENER_SYSTEM_CODE_LITES)) {
-        // Lite-S
+
         resp_system_code = FELICA_LISTENER_SYSTEM_CODE_LITES;
     } else {
         uint32_t system_count = simple_array_get_count(instance->data->systems);
@@ -679,7 +661,7 @@ static uint16_t felica_listener_get_response_system_code(
 static FelicaError felica_listener_process_system_code(
     FelicaListener* instance,
     const FelicaListenerGenericRequest* const generic_request) {
-    // A card that doesn't have the requested System doesn't respond to the Polling
+
     FelicaError result = FelicaErrorIgnore;
     do {
         uint8_t matched_idx = 0;
@@ -687,8 +669,6 @@ static FelicaError felica_listener_process_system_code(
             felica_listener_get_response_system_code(instance, generic_request, &matched_idx);
         if(resp_system_code == FELICA_SYSTEM_CODE_CODE) break;
 
-        // Switch context to the newly selected System before building the response,
-        // since the response IDm (and all subsequent commands) must reflect it.
         instance->current_system_idx = matched_idx;
 
         FelicaListenerPollingResponse* resp = malloc(sizeof(FelicaListenerPollingResponse));
@@ -726,7 +706,7 @@ NfcCommand felica_listener_run(NfcGenericEvent event, void* context) {
         FURI_LOG_D(TAG, "Field On");
     } else if(nfc_event->type == NfcEventTypeListenerActivated) {
         instance->state = Felica_ListenerStateActivated;
-        // The NFC controller answered a Polling by itself, with the IDm of System 0
+
         instance->current_system_idx = 0;
         FURI_LOG_D(TAG, "Activated");
     } else if(nfc_event->type == NfcEventTypeFieldOff) {
@@ -755,7 +735,7 @@ NfcCommand felica_listener_run(NfcGenericEvent event, void* context) {
             }
 
             if(request->header.code == FELICA_LISTENER_CMD_POLLING) {
-                // Will always respond at Time Slot 0 for now.
+
                 nfc_felica_listener_timer_anticol_start(instance->nfc, 0);
                 if(request->polling.system_code != FELICA_SYSTEM_CODE_CODE) {
                     error = felica_listener_process_system_code(instance, request);
@@ -781,7 +761,6 @@ NfcCommand felica_listener_run(NfcGenericEvent event, void* context) {
             }
         } while(false);
 
-        // No response was sent, re-enable reception to keep listening
         if(error != FelicaErrorNone) {
             command = NfcCommandReset;
         }

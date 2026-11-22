@@ -36,10 +36,9 @@ struct KeeloqTool {
     ByteInput* byte_input;
     DialogsApp* dialogs;
 
-    SubGhzKeeloqKeysManager* keeloq_keys_manager; /* lazy-allocated */
+    SubGhzKeeloqKeysManager* keeloq_keys_manager;
     SubGhzViewKeeloqDecrypt* keeloq_decrypt;
 
-    /* lifted verbatim from subghz_i.h */
     struct {
         uint8_t key_bytes[8];
         char name[65];
@@ -61,8 +60,8 @@ struct KeeloqTool {
         uint8_t learn_type;
     } keeloq_bf2;
 
-    FuriString* signal_path; /* current signal (.sub) read by bf2/decrypt */
-    FuriString* file_path;   /* decrypt annotation save-back target */
+    FuriString* signal_path;
+    FuriString* file_path;
     FuriString* error_str;
 
     char return_marker[24];

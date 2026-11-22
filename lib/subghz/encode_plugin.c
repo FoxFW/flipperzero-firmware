@@ -1,6 +1,4 @@
-/* SD encoder-plugin loader used by the transmitter - FoxFW2.0 v2.1. See encode_plugin.h.
- * Load-per-transmitter (no persistent cache): no heap is held once TX ends, which
- * matters on a device that has hit OOM before. Plugins are small, so load is quick. */
+
 #include "encode_plugin.h"
 
 #include <furi.h>
@@ -12,8 +10,6 @@
 #define TAG "SubGhzEncodePlugin"
 #define SUBGHZ_ENCODE_PLUGIN_DIR EXT_PATH("apps_data/subghz/plugins")
 
-/* Placeholder stubs. Never used for real TX (the transmitter swaps in the plugin's
- * encoder); they only need to be non-NULL and safe if something calls them. */
 void* subghz_encoder_external_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return NULL;
@@ -67,7 +63,7 @@ const SubGhzProtocolEncoder*
     const SubGhzEncodePluginEntry* entry = plugin_manager_get_ep(manager, 0);
     if(!entry || !entry->name || !entry->encoder || !entry->encoder->alloc ||
        !entry->encoder->free || !entry->encoder->deserialize || !entry->encoder->yield ||
-       strcmp(entry->name, protocol->name) != 0) {
+       (strcmp(entry->name, protocol->name) != 0 && strcmp(entry->name, "*") != 0)) {
         FURI_LOG_E(TAG, "%s: invalid plugin entry", ext->fal);
         plugin_manager_free(manager);
         return NULL;
@@ -79,7 +75,7 @@ const SubGhzProtocolEncoder*
             plugin_manager_free(manager);
             return NULL;
         }
-        *entry->host_slot = ext->host; /* plugin RAM; set before any encoder call */
+        *entry->host_slot = ext->host;
     }
 
     *handle = manager;

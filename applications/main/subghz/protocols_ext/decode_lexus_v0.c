@@ -1,4 +1,4 @@
-/* decode_lexus_v0.fal : SD get_string for lexus_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -16,16 +16,15 @@ struct SubGhzProtocolDecoderLexusV0 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 reset, 1 preamble, 2 data
+    uint8_t step;
     uint16_t preamble_count;
     bool half_bit;
     uint16_t bit_count;
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(LEXUS_V0_FRAME_BITS + 8)];
 
-    uint8_t rolling[LEXUS_V0_DATA_BYTES]; // full 160-bit payload
+    uint8_t rolling[LEXUS_V0_DATA_BYTES];
     uint32_t serial;
 
-    // Toyota complement-signature cross-frame validator.
     uint32_t prev_serial;
     bool have_prev;
     bool compl_ok;

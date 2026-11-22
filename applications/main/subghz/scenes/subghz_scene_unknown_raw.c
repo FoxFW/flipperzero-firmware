@@ -1,9 +1,5 @@
 #include "../subghz_i.h"
 
-/* Per-item menu for an "Unknown RAW" history entry (an RF burst captured during
- * live Read that none of the registered decoders recognised). Reached from the
- * receiver list when the selected item's label is "Unknown RAW". */
-
 #define TAG "SubGhzSceneUnknownRaw"
 
 #define SUBGHZ_UNKNOWN_RAW_TMP_PATH \
@@ -73,8 +69,7 @@ bool subghz_scene_unknown_raw_on_event(void* context, SceneManagerEvent event) {
             subghz_scene_unknown_raw_emulate(subghz, idx);
             return true;
         case SubGhzUnknownRawSave:
-            /* SaveName's default branch writes subghz_history_get_raw_data(idx_menu_chosen)
-             * straight to the chosen file -- no decoder needed for a RAW item. */
+
             subghz->state_notifications = SubGhzNotificationStateIDLE;
             subghz_txrx_hopper_set_state(subghz->txrx, SubGhzHopperStateOFF);
             subghz_txrx_stop(subghz->txrx);
@@ -91,7 +86,7 @@ bool subghz_scene_unknown_raw_on_event(void* context, SceneManagerEvent event) {
             return true;
         case SubGhzUnknownRawDiscard:
             subghz_history_delete_item(subghz->history, idx);
-            /* Receiver on_enter rebuilds its list from history, so the item is gone. */
+
             scene_manager_previous_scene(subghz->scene_manager);
             return true;
         default:

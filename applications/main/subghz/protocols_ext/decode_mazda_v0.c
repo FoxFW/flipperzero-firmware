@@ -1,4 +1,4 @@
-/* decode_mazda_v0.fal : SD get_string for mazda_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mazda_v0.h>
@@ -17,7 +17,7 @@ typedef struct SubGhzProtocolDecoderMazdaV0 {
     uint32_t serial;
     uint8_t button;
     uint32_t count;
-} 
+}
 SubGhzProtocolDecoderMazdaV0;
 
 static const SubGhzBlockConst subghz_protocol_mazda_v0_const = {
@@ -100,7 +100,6 @@ static void mazda_v0_decode_key(SubGhzBlockGeneric* generic) {
 static void mazda_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderMazdaV0* instance = input->decoder;
-
 
     mazda_v0_decode_key(&instance->generic);
 

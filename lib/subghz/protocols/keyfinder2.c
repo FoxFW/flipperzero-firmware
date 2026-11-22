@@ -9,8 +9,6 @@
 
 #define TAG "SubGhzProtocolKeyFinder2"
 
-// Frame is btn(3) | 10011 | btn(3): the button code in 3 wide symbols, a constant, then
-// the same code again in narrow bits. Frames repeat back to back with no gap.
 #define KEYFINDER2_TE_WIDE_SHORT 1500
 #define KEYFINDER2_TE_WIDE_LONG  2500
 #define KEYFINDER2_TE_WIDE_DELTA 350
@@ -73,15 +71,6 @@ const SubGhzProtocol subghz_protocol_keyfinder2 = {
     .encoder = &subghz_protocol_keyfinder2_encoder_ext.vtable,
 };
 
-/**
- * Generating an upload from data.
- * @param context Pointer to a SubGhzProtocolEncoderKeyFinder2 instance
- * @return true Always; this encoder has no failure path
- */
-/**
- * Analysis of received data
- * @param instance Pointer to a SubGhzBlockGeneric* instance
- */
 void* subghz_protocol_decoder_keyfinder2_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return subghz_protocol_decoder_common_alloc(
@@ -144,14 +133,14 @@ void subghz_protocol_decoder_keyfinder2_feed(void* context, bool level, uint32_t
         break;
     case KeyFinder2DecoderStepCheckDuration:
         if(!level) {
-            // Bit 1 is short and long timing = 350us HIGH (te_last) and 1020us LOW
+
             if((DURATION_DIFF(
                     instance->decoder.te_last, subghz_protocol_keyfinder2_const.te_short) <
                 subghz_protocol_keyfinder2_const.te_delta) &&
                (DURATION_DIFF(duration, subghz_protocol_keyfinder2_const.te_long) <
                 subghz_protocol_keyfinder2_const.te_delta)) {
                 subghz_protocol_blocks_add_bit(&instance->decoder, 1);
-                // Bit 0 is long and short timing = 1020us HIGH (te_last) and 350us LOW
+
             } else if(
                 (DURATION_DIFF(
                      instance->decoder.te_last, subghz_protocol_keyfinder2_const.te_long) <

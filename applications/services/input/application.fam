@@ -7,5 +7,14 @@ App(
     stack_size=1 * 1024,
     order=80,
     sdk_headers=["input.h"],
-    provides=["input_settings"],
+    provides=["input_settings", "cli_input"],
+    sources=["*.c*", "!input_cli.c"],
+)
+
+App(
+    appid="cli_input",
+    apptype=FlipperAppType.PLUGIN,
+    entry_point="cli_input_ep",
+    requires=["cli"],
+    sources=["input_cli.c"],
 )

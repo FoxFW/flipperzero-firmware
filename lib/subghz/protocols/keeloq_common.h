@@ -40,6 +40,5 @@ uint64_t subghz_protocol_keeloq_common_magic_serial_type2_learning(uint32_t data
 
 uint64_t subghz_protocol_keeloq_common_magic_serial_type3_learning(uint32_t data, uint64_t man);
 
-/* AERF (type 14) device-key derivation + nl_extend-based decrypt (JCM family). */
 uint64_t subghz_protocol_keeloq_common_learning_aerf(uint32_t fix, const uint64_t key);
 uint32_t subghz_protocol_keeloq_common_decrypt_aerf(uint32_t hop, uint64_t man, uint32_t outer_limit);

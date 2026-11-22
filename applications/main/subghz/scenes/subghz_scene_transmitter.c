@@ -136,10 +136,7 @@ void subghz_scene_transmitter_on_enter(void* context) {
         (scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneTransmitter) == 1);
 
     if(raw_send_mode) {
-        /* RAW replay of a decode-only capture: there is no decoder/encoder to
-         * deserialize, so skip update_data_show (which would report "not found").
-         * Show the centre Send d-pad with inert arrows (show_button path, no
-         * custom buttons) and let OK fire subghz_tx_start on the RAW fff_data. */
+
         subghz_custom_btn_set(SUBGHZ_CUSTOM_BTN_OK);
         FuriString* frequency_str = furi_string_alloc();
         FuriString* modulation_str = furi_string_alloc();
@@ -156,9 +153,7 @@ void subghz_scene_transmitter_on_enter(void* context) {
                 furi_string_set(raw_title, "RAW");
             }
         }
-        /* Append "RAW" after a real protocol name so the user knows this is a raw
-         * replay, not an encoded send (new: SEND on un-decodable signals). A pure
-         * RAW/BinRAW capture stays just "RAW". */
+
         if(furi_string_cmp_str(raw_title, "RAW") != 0 &&
            furi_string_cmp_str(raw_title, "BinRAW") != 0) {
             furi_string_cat_str(raw_title, " RAW");
@@ -211,6 +206,11 @@ bool subghz_scene_transmitter_on_event(void* context, SceneManagerEvent event) {
                    subghz->scene_manager, SubGhzSceneReceiverInfo)) {
                 scene_manager_search_and_switch_to_previous_scene(
                     subghz->scene_manager, SubGhzSceneReceiverInfo);
+            } else if(scene_manager_has_previous_scene(
+                          subghz->scene_manager, SubGhzSceneSavedMenu)) {
+
+                scene_manager_search_and_switch_to_previous_scene(
+                    subghz->scene_manager, SubGhzSceneSavedMenu);
             } else {
                 scene_manager_search_and_switch_to_previous_scene(
                     subghz->scene_manager, SubGhzSceneStart);
@@ -263,7 +263,6 @@ void subghz_scene_transmitter_on_exit(void* context) {
     subghz_block_generic_global.endless_tx = false;
     subghz_txrx_stop(subghz->txrx);
 
-    /* Clear the RAW-send marker so a later normal entry isn't treated as RAW. */
     scene_manager_set_scene_state(subghz->scene_manager, SubGhzSceneTransmitter, 0);
 
     subghz_txrx_reset_dynamic_and_custom_btns(subghz->txrx);

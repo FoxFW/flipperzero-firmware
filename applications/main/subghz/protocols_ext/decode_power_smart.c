@@ -1,4 +1,4 @@
-/* decode_power_smart.fal : SD get_string for power_smart (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/power_smart.h>

@@ -1,11 +1,5 @@
 #include "porsche_touareg.h"
 
-/* ==== Self-contained sub-GHz helpers (de-refactored from the ProtoPirate/applab
- * "protocols_common" pp-framework) so this decoder depends only on the core
- * sub-GHz lib and carries no shared helper unit into lib/. All helpers are
- * static inline: unused ones are dropped with no -Wunused-function warning, and
- * the TX scratch buffer is a function-local static (no file-scope unused-var).
- * FoxFW2.0 2026-10-18 internal batch 2. ==== */
 #include <furi.h>
 #include <string.h>
 #include <lib/subghz/types.h>
@@ -17,7 +11,6 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include <flipper_format/flipper_format.h>
-
 
 #ifndef PP_COMPAT_SHIM_DEFINED
 #define PP_COMPAT_SHIM_DEFINED
@@ -47,14 +40,12 @@ typedef struct {
     SubGhzProtocolBlockEncoder encoder;
 } ProtoPirateEncoderHeader;
 
-#endif /* PP_COMPAT_SHIM_DEFINED */
+#endif
 
 #include <string.h>
 #include "common.h"
 #include "../encode_plugin.h"
 #include "pp_auto_common.h"
-
-// Original implementation by @lupettohf
 
 #define PORSCHE_TOUAREG_BIT_COUNT 64
 #define PC_TE_SYNC                3370U
@@ -191,9 +182,6 @@ static void porsche_touareg_publish_frame(SubGhzProtocolDecoderPorscheTouareg* i
     instance->generic.data_count_bit = PORSCHE_TOUAREG_BIT_COUNT;
     porsche_touareg_parse_data(instance);
 
-    // parse_data leaves cnt==0 when the counter brute-force failed to
-    // reproduce pkt[4..7]; only a real match sets cnt in 1..256. Suppress
-    // the callback on no-match so foreign 64-bit frames are not emitted.
     if(instance->generic.cnt != 0 && instance->base.callback) {
         instance->base.callback(&instance->base, instance->base.context);
     }
@@ -221,7 +209,6 @@ const SubGhzProtocolDecoder subghz_protocol_porsche_touareg_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&ppa_bytes_to_u64_be) ppa_bytes_to_u64_be;
     __typeof__(&ppa_emit) ppa_emit;
@@ -248,7 +235,7 @@ static const enc_porsche_touareg_host_t enc_porsche_touareg_host = {
 };
 static const SubGhzEncoderExternal subghz_protocol_porsche_touareg_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_porsche_touareg", &enc_porsche_touareg_host);
 
-const SubGhzProtocol porsche_touareg_protocol = {
+const SubGhzProtocol subghz_protocol_porsche_touareg = {
     .name = PORSCHE_TOUAREG_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_868 | SubGhzProtocolFlag_AM |
@@ -263,7 +250,7 @@ void* subghz_protocol_decoder_porsche_touareg_alloc(SubGhzEnvironment* environme
     SubGhzProtocolDecoderPorscheTouareg* instance =
         calloc(1, sizeof(SubGhzProtocolDecoderPorscheTouareg));
     furi_check(instance);
-    instance->base.protocol = &porsche_touareg_protocol;
+    instance->base.protocol = &subghz_protocol_porsche_touareg;
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
@@ -299,7 +286,7 @@ void subghz_protocol_decoder_porsche_touareg_feed(void* context, bool level, uin
     case PorscheTouaregDecoderStepSync:
         if(level) {
             if(DURATION_DIFF(duration, PC_TE_SYNC) < te_delta) {
-                // keep collecting sync pairs
+
             } else if(
                 instance->sync_count >= PC_SYNC_MIN &&
                 DURATION_DIFF(duration, PC_TE_GAP) < te_delta) {

@@ -39,7 +39,11 @@ bool lfrfid_scene_read_key_menu_on_event(void* context, SceneManagerEvent event)
             consumed = true;
         } else if(event.event == SubmenuIndexSave) {
             furi_string_reset(app->file_name);
-            scene_manager_next_scene(app->scene_manager, LfRfidSceneSaveName);
+            if(lfrfid_check_duplicate(app)) {
+                scene_manager_next_scene(app->scene_manager, LfRfidSceneDuplicateConfirm);
+            } else {
+                scene_manager_next_scene(app->scene_manager, LfRfidSceneSaveName);
+            }
             consumed = true;
         } else if(event.event == SubmenuIndexEmulate) {
             scene_manager_next_scene(app->scene_manager, LfRfidSceneEmulate);

@@ -1,4 +1,4 @@
-/* decode_honda_v6.fal : SD get_string for honda_v6 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/honda_v6.h>
@@ -12,7 +12,7 @@ struct SubGhzProtocolDecoderHondaV6 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t parser_step; // 0 reset, 1 checkpre, 2 collect
+    uint8_t parser_step;
     uint32_t header;
     uint8_t man_state;
     uint64_t lo;
@@ -24,13 +24,12 @@ struct SubGhzProtocolDecoderHondaV6 {
     uint32_t serial;
     uint8_t btn;
     uint32_t cnt;
-    uint8_t variant; // 0 stock45, 1 pandora, 2 313 (3-level trit)
-    uint64_t data_hi; // pandora high word / 313 d1 (trits 32..63)
+    uint8_t variant;
+    uint64_t data_hi;
 
-    // 313 MHz 3-level "trit" mode state
     uint16_t trit_count;
-    uint64_t d2; // trits 0..31 packed 2 bits each, MSB-first
-    uint64_t d1; // trits 32..63
+    uint64_t d2;
+    uint64_t d1;
 };
 
 static const char* honda_v6_btn_name(uint8_t btn);
@@ -65,7 +64,7 @@ static void honda_v6_decode(const SubGhzDecodeInput* input, FuriString* output) 
             honda_v6_btn_name(instance->btn),
             (unsigned)instance->cnt);
     } else if(instance->variant == 2) {
-        // 313 MHz 3-level trit: generic.data = d2 (trits 0..31), data_hi = d1 (32..63).
+
         furi_string_cat_printf(
             output,
             "%s %dbit\r\n"

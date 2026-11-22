@@ -4,18 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "BmwV2"
-
-// BMW V2 -- ported from firmware bmw_v2.c via KeeLoq-RX arke_mitsu_bmw.py.
-// OOK/AM Manchester, te 500/1000 us, delta 150, inter-frame gap > 1700 us.
-// 56-bit frame: [header8 = 0xCF][rolling40][trailer8 = 0x3A].
-// te_last half-period accumulator (a LONG = one bit; two SHORTs = one bit; the
-// bit value is the INVERSE of the completing pulse level). Header + trailer are
-// FIXED FRAMING BYTES, NOT a checksum -- they gate the frame but there is no CRC
-// (crc_ok is never asserted). The "serial" is carved from the ENCRYPTED rolling
-// code, so it changes every press and is not a stable identifier; it is surfaced
-// only to mirror the firmware. Decode-only; .encoder = NULL.
 
 #define BMW_V2_DATA_BITS 56
 #define BMW_V2_GAP_MIN 1700
@@ -31,16 +22,15 @@ static const SubGhzBlockConst subghz_protocol_bmw_v2_const = {
 
 struct SubGhzProtocolDecoderBmwV2 {
     SubGhzProtocolDecoderBase base;
-    SubGhzBlockDecoder decoder; // parser_step / te_last / decode_data / decode_count_bit
+    SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
     uint8_t header;
     uint8_t trailer;
-    uint32_t serial; // 24-bit, carved from the encrypted rolling code
-    uint16_t cnt; // 16-bit, low part of the rolling code
+    uint32_t serial;
+    uint16_t cnt;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderBmwV2);
-
 
 typedef enum {
     BmwV2StepReset = 0,
@@ -56,8 +46,6 @@ static bool bmw_v2_is_degenerate(uint32_t serial) {
     return false;
 }
 
-// Mirror of arke BmwV2._try_emit: require >= 56 bits, right-align to 56, gate on
-// the fixed 0xCF header + 0x3A trailer, carve the serial/cnt, reject degenerates.
 static void bmw_v2_try_emit(SubGhzProtocolDecoderBmwV2* instance) {
     if(instance->decoder.decode_count_bit < BMW_V2_DATA_BITS) return;
     uint64_t data = instance->decoder.decode_data;
@@ -68,9 +56,9 @@ static void bmw_v2_try_emit(SubGhzProtocolDecoderBmwV2* instance) {
     uint8_t trailer = (uint8_t)(data & 0xFFU);
     if(header != BMW_V2_HEADER || trailer != BMW_V2_TRAILER) return;
 
-    uint64_t rolling = (data >> 8) & 0xFFFFFFFFFFULL; // 40-bit encrypted payload
-    uint32_t serial = (uint32_t)((rolling >> 16) & 0xFFFFFFU); // upper 24 bits
-    uint16_t cnt = (uint16_t)(rolling & 0xFFFFU); // lower 16 bits
+    uint64_t rolling = (data >> 8) & 0xFFFFFFFFFFULL;
+    uint32_t serial = (uint32_t)((rolling >> 16) & 0xFFFFFFU);
+    uint16_t cnt = (uint16_t)(rolling & 0xFFFFU);
     if(bmw_v2_is_degenerate(serial)) return;
 
     instance->header = header;
@@ -78,7 +66,7 @@ static void bmw_v2_try_emit(SubGhzProtocolDecoderBmwV2* instance) {
     instance->serial = serial;
     instance->cnt = cnt;
 
-    instance->generic.data = data & 0x00FFFFFFFFFFFFFFULL; // 56-bit frame
+    instance->generic.data = data & 0x00FFFFFFFFFFFFFFULL;
     instance->generic.data_count_bit = BMW_V2_DATA_BITS;
     instance->generic.serial = serial;
     instance->generic.btn = 0;
@@ -97,8 +85,6 @@ void* subghz_protocol_decoder_bmw_v2_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_bmw_v2_reset(void* context) {
     furi_check(context);
@@ -138,7 +124,7 @@ void subghz_protocol_decoder_bmw_v2_feed(void* context, bool level, uint32_t dur
             }
         } else {
             if(duration > BMW_V2_GAP_MIN) {
-                // another gap, keep waiting
+
             } else {
                 instance->decoder.parser_step = BmwV2StepReset;
             }
@@ -168,12 +154,12 @@ void subghz_protocol_decoder_bmw_v2_feed(void* context, bool level, uint32_t dur
                 instance->decoder.decode_count_bit++;
                 instance->decoder.te_last = 0;
             }
-        } else { // is_long
+        } else {
             uint8_t bit = level ? 0 : 1;
             instance->decoder.decode_data = (instance->decoder.decode_data << 1) | bit;
             instance->decoder.decode_count_bit++;
             if(instance->decoder.te_last != 0) {
-                instance->decoder.te_last = te_s; // S+L: third half stays pending
+                instance->decoder.te_last = te_s;
             } else {
                 instance->decoder.te_last = 0;
             }
@@ -188,8 +174,6 @@ void subghz_protocol_decoder_bmw_v2_feed(void* context, bool level, uint32_t dur
         return;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_bmw_v2_serialize(
     void* context,
@@ -248,12 +232,16 @@ const SubGhzProtocolDecoder subghz_protocol_bmw_v2_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_bmw_v2_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_bmw_v2 = {
     .name = BMW_V2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    // OOK/AM -> no FM flag.
+
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_bmw_v2_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_bmw_v2_encoder_ext.vtable,
 };

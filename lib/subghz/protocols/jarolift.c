@@ -17,7 +17,7 @@
 
 #define TAG "SubGhzProtocolJarolift"
 
-static bool jarolift_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool jarolift_raw_replay = false;
 
 static const SubGhzBlockConst subghz_protocol_jarolift_const = {
     .te_short = 400,
@@ -67,7 +67,6 @@ const SubGhzProtocolDecoder subghz_protocol_jarolift_decoder = {
     .get_string = subghz_protocol_decoder_jarolift_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* jarolift_raw_replay;
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
@@ -95,7 +94,6 @@ const SubGhzProtocol subghz_protocol_jarolift = {
 static void subghz_protocol_jarolift_remote_controller(
     SubGhzBlockGeneric* instance,
     SubGhzKeystore* keystore);
-
 
 bool subghz_protocol_jarolift_create_data(
     void* context,
@@ -376,8 +374,7 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_jarolift_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderJarolift* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): KeeLoq decrypt needs the live keystore,
-    // so it stays internal; the SD plugin only formats.
+
     subghz_protocol_jarolift_remote_controller(&instance->generic, instance->keystore);
     const SubGhzDecodeInput input = {
         .decoder = context,

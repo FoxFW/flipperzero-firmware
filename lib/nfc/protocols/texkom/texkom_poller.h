@@ -11,7 +11,7 @@ extern "C" {
 typedef struct TexkomPoller TexkomPoller;
 
 typedef enum {
-    TexkomPollerEventTypeReady, /**< A frame was captured and decoded. */
+    TexkomPollerEventTypeReady,
 } TexkomPollerEventType;
 
 typedef struct {

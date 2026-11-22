@@ -1,4 +1,4 @@
-/* decode_chrysler.fal : SD get_string for chrysler (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/chrysler.h>
@@ -53,7 +53,6 @@ static uint32_t chrysler_v0_get_sn_b(const SubGhzProtocolDecoderChrysler* instan
 static void chrysler_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderChrysler* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

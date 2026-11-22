@@ -616,10 +616,7 @@ void text_input_set_result_callback(
             model->callback_context = callback_context;
             model->text_buffer = text_buffer;
             model->text_buffer_size = text_buffer_size;
-            // Fox: never pre-select/highlight the default text. The cursor starts at the end (set below)
-            // with the OK button focused (see enter_callback), so you can type to append, Backspace to
-            // delete from the end, or just press OK to keep the name as-is. (Ignoring the caller's flag
-            // also removes the "first Backspace only de-selects" quirk the companion had to work around.)
+
             (void)clear_default_text;
             model->clear_default_text = false;
             model->layer = TextInputLayerLetters;

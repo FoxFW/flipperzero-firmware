@@ -1,5 +1,5 @@
-/* enc_honda_v2_v3.fal : SD encoder for honda_v2_v3 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_honda_v2_v3_alloc enc_honda_v2_v3__subghz_protocol_encoder_honda_v2_v3_alloc
 #define subghz_protocol_encoder_honda_v2_v3_deserialize enc_honda_v2_v3__subghz_protocol_encoder_honda_v2_v3_deserialize
 #define subghz_protocol_encoder_honda_v2_v3_free enc_honda_v2_v3__subghz_protocol_encoder_honda_v2_v3_free
@@ -141,15 +141,9 @@ static const HondaVariantParams honda_variant_params[HONDA_VARIANT_COUNT] = {
 };
 
 static const HondaVariantParams* honda_get_params(HondaVariant v);
-// ============================================================================
-// UNIFIED BUTTON FUNCTIONS
-// ============================================================================
 
 static void honda_v2_btn_to_pair(uint8_t btn, uint8_t* btn1_out, uint8_t* btn2_out);
 static uint8_t honda_get_btn_code(HondaVariant variant, uint8_t original_btn);
-// ============================================================================
-// V2 PACK / UNPACK helpers
-// ============================================================================
 
 static void honda_v2_pack_generic(
     SubGhzBlockGeneric* generic,
@@ -162,14 +156,8 @@ static void honda_v2_unpack_generic(
     uint32_t* serial_out,
     uint8_t* counter_out,
     uint32_t* rolling_out);
-// ============================================================================
-// V3 CRC: CRC-16 MSB poly=0x2627 on d[1..13], then 8-bit extraction via masks
-// ============================================================================
 
 static uint8_t honda_v3_compute_crc(const uint8_t* frame);
-// ============================================================================
-// V3 PACK / UNPACK helpers
-// ============================================================================
 
 static void honda_v3_pack_generic(
     SubGhzBlockGeneric* generic,
@@ -183,13 +171,10 @@ static void honda_v3_unpack_generic(
     uint8_t* counter_out,
     uint8_t* btn_byte_out,
     uint8_t* crc_out);
-// ============================================================================
-// MANCHESTER ENCODER (shared, parametrized by te_short/te_long)
-// ============================================================================
 
 static size_t
     honda_encode_bit(LevelDuration* buf, uint8_t* state, uint8_t bit, uint16_t te_s, uint16_t te_l);
-// Helper: Manchester-encode a byte array MSB-first
+
 static size_t honda_encode_bytes(
     LevelDuration* buf,
     uint8_t* state,
@@ -197,19 +182,12 @@ static size_t honda_encode_bytes(
     uint16_t num_bytes,
     uint16_t te_s,
     uint16_t te_l);
-// ============================================================================
-// UNIFIED BUILD UPLOAD
-// ============================================================================
 
 static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc);
 
 static const HondaVariantParams* honda_get_params(HondaVariant v) {
     return &honda_variant_params[HONDA_VARIANT_IDX(v)];
 }
-
-// ============================================================================
-// UNIFIED BUTTON FUNCTIONS
-// ============================================================================
 
 static void honda_v2_btn_to_pair(uint8_t btn, uint8_t* btn1_out, uint8_t* btn2_out) {
     switch(btn) {
@@ -262,21 +240,17 @@ static uint8_t honda_get_btn_code(HondaVariant variant, uint8_t original_btn) {
     return original_btn;
 }
 
-// ============================================================================
-// V2 PACK / UNPACK helpers
-// ============================================================================
-
 static void honda_v2_pack_generic(
     SubGhzBlockGeneric* generic,
     uint32_t serial,
     uint8_t counter,
     uint32_t rolling,
     uint8_t btn_byte2) {
-    // Pack: serial(24) in upper bits, counter(8), rolling(32)
+
     generic->data = ((uint64_t)(serial & 0xFFFFFF) << 40) | ((uint64_t)counter << 32) | rolling;
     generic->data_count_bit = HONDA_V2_FRAME_BITS;
     generic->serial = serial;
-    generic->btn = btn_byte2; // use btn_byte2 as primary button identifier
+    generic->btn = btn_byte2;
     generic->cnt = counter;
 }
 
@@ -290,12 +264,8 @@ static void honda_v2_unpack_generic(
     if(rolling_out) *rolling_out = (uint32_t)(generic->data & 0xFFFFFFFF);
 }
 
-// ============================================================================
-// V3 CRC: CRC-16 MSB poly=0x2627 on d[1..13], then 8-bit extraction via masks
-// ============================================================================
-
 static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
-    // CRC-16 MSB-first over frame[1..13] (13 bytes)
+
     uint16_t crc = 0;
     for(int i = 1; i < 14; i++) {
         crc ^= (uint16_t)frame[i] << 8;
@@ -303,10 +273,10 @@ static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
             crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x2627) : (uint16_t)(crc << 1);
         }
     }
-    // Extract 8-bit CRC from 16-bit via parity masks
+
     static const uint16_t masks[8] = {
         0x8181, 0x4141, 0x2121, 0x80F2, 0xAF15, 0x0606, 0x0202, 0x0000};
-    static const uint8_t constants = 0x1B; // bits: 00011011
+    static const uint8_t constants = 0x1B;
     uint8_t result = 0;
     for(int b = 0; b < 8; b++) {
         uint16_t m = crc & masks[b];
@@ -320,18 +290,13 @@ static uint8_t honda_v3_compute_crc(const uint8_t* frame) {
     return result;
 }
 
-// ============================================================================
-// V3 PACK / UNPACK helpers
-// ============================================================================
-
 static void honda_v3_pack_generic(
     SubGhzBlockGeneric* generic,
     uint16_t serial,
     uint8_t counter,
     uint8_t btn_byte,
     uint8_t crc) {
-    // Pack: serial(16) | btn_byte(8) | counter_raw(8) | crc(8) | padding(24)
-    // counter raw byte: actual_counter(6bit) << 2 | tx_flag(1) << 1 | bit0(1)
+
     generic->data = ((uint64_t)(serial & 0xFFFF) << 48) | ((uint64_t)btn_byte << 40) |
                     ((uint64_t)counter << 32) | ((uint64_t)crc << 24);
     generic->data_count_bit = HONDA_V3_FRAME_BITS;
@@ -339,7 +304,7 @@ static void honda_v3_pack_generic(
     generic->btn = btn_byte;
     generic->cnt = counter >> 2;
     generic->crc = crc;
-    /* crc_check is set by the caller only after a real CRC match, not here. */
+
 }
 
 static void honda_v3_unpack_generic(
@@ -353,10 +318,6 @@ static void honda_v3_unpack_generic(
     if(btn_byte_out) *btn_byte_out = (generic->data >> 40) & 0xFF;
     if(crc_out) *crc_out = (generic->data >> 24) & 0xFF;
 }
-
-// ============================================================================
-// MANCHESTER ENCODER (shared, parametrized by te_short/te_long)
-// ============================================================================
 
 static size_t
     honda_encode_bit(LevelDuration* buf, uint8_t* state, uint8_t bit, uint16_t te_s, uint16_t te_l) {
@@ -411,7 +372,6 @@ static size_t
     return count;
 }
 
-// Helper: Manchester-encode a byte array MSB-first
 static size_t honda_encode_bytes(
     LevelDuration* buf,
     uint8_t* state,
@@ -428,10 +388,6 @@ static size_t honda_encode_bytes(
     return idx;
 }
 
-// ============================================================================
-// UNIFIED BUILD UPLOAD
-// ============================================================================
-
 static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc) {
     LevelDuration* buf = enc->encoder.upload;
     size_t idx = 0;
@@ -442,19 +398,16 @@ static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc) {
 
     switch(enc->variant) {
     case HondaVariantV2: {
-        // V2: Preamble ~116 alternating pulses at 1460us
+
         for(int p = 0; p < 116; p++) {
             buf[idx++] = level_duration_make(p % 2 == 0, HONDA_V2_PREAMBLE_PULSE);
         }
 
-        // Transition into data zone
         state = 0;
 
-        // Encode sync pattern (6 bytes)
         idx += honda_encode_bytes(
             &buf[idx], &state, honda_v2_sync_pattern, HONDA_V2_SYNC_BYTES, te_s, te_l);
 
-        // Encode 13 data bytes: serial(3) + btn(2) + pad(2) + counter(1) + rolling(4) + tail(1)
         uint8_t data[HONDA_V2_DATA_BYTES];
         data[0] = (enc->extra.v2.serial >> 16) & 0xFF;
         data[1] = (enc->extra.v2.serial >> 8) & 0xFF;
@@ -472,13 +425,10 @@ static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc) {
 
         idx += honda_encode_bytes(&buf[idx], &state, data, HONDA_V2_DATA_BYTES, te_s, te_l);
 
-        // Trailing gap
         buf[idx++] = level_duration_make(true, HONDA_V2_MIN_GAP);
     } break;
 
     case HondaVariantV3: {
-        // V3: 2 bursts (TX then RTX)
-        // Each burst: preamble + gap + data
 
         uint8_t frame[HONDA_V3_TOTAL_BYTES];
         frame[0] = enc->extra.v3.sync;
@@ -487,33 +437,26 @@ static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc) {
         frame[14] = honda_v3_compute_crc(frame);
 
         for(int burst = 0; burst < 2; burst++) {
-            // Update counter for RTX burst
+
             if(burst == 1) {
-                // RTX counter = TX counter - 2
+
                 frame[1] = (enc->extra.v3.counter >= 2) ? (enc->extra.v3.counter - 2) : 0;
                 frame[14] = honda_v3_compute_crc(frame);
             }
 
-            // Preamble: ~230 alternating 500us pulses
             for(int p = 0; p < 230; p++) {
                 buf[idx++] = level_duration_make(p % 2 == 0, HONDA_V3_PREAMBLE_PULSE);
             }
 
-            // Gap before data
             buf[idx++] = level_duration_make(false, HONDA_V3_PREAMBLE_GAP);
 
-            // Manchester encode 15 bytes (120 bits)
             state = 0;
             idx += honda_encode_bytes(&buf[idx], &state, frame, HONDA_V3_TOTAL_BYTES, te_s, te_l);
 
-            // Flush last bit: if encoder ended high (state 1), the trailing gap
-            // would merge with the last timing in roundtrip, losing the final bit.
-            // A short low pulse separates them cleanly.
             if(state == 1) {
                 buf[idx++] = level_duration_make(false, te_s);
             }
 
-            // Trailing gap
             buf[idx++] = level_duration_make(true, HONDA_V3_MIN_GAP);
         }
     } break;
@@ -522,17 +465,13 @@ static void honda_build_upload(SubGhzProtocolEncoderHondaV2V3* enc) {
     enc->encoder.size_upload = idx;
 }
 
-// ============================================================================
-// ENCODER -- ALLOC / FREE / STOP / YIELD
-// ============================================================================
-
 void* subghz_protocol_encoder_honda_v2_v3_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
 
     SubGhzProtocolEncoderHondaV2V3* instance = malloc(sizeof(SubGhzProtocolEncoderHondaV2V3));
     instance->base.protocol = &subghz_protocol_honda_v2_v3;
     instance->generic.protocol_name = subghz_protocol_honda_v2_v3.name;
-    instance->variant = HondaVariantV2; // default, set during deserialize
+    instance->variant = HondaVariantV2;
     instance->encoder.repeat = 10;
     instance->encoder.size_upload = 1024;
     instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
@@ -573,10 +512,6 @@ LevelDuration subghz_protocol_encoder_honda_v2_v3_yield(void* context) {
     return ret;
 }
 
-// ============================================================================
-// ENCODER -- DESERIALIZE
-// ============================================================================
-
 SubGhzProtocolStatus
     subghz_protocol_encoder_honda_v2_v3_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -594,7 +529,6 @@ SubGhzProtocolStatus
             break;
         }
 
-        // Read variant -- or auto-detect from Bit count
         uint32_t variant_temp = 0;
         if(flipper_format_read_uint32(flipper_format, "Variant", &variant_temp, 1)) {
             enc->variant = (HondaVariant)variant_temp;
@@ -612,12 +546,11 @@ SubGhzProtocolStatus
             }
         }
 
-        // Optional Repeat
         flipper_format_read_uint32(flipper_format, "Repeat", (uint32_t*)&enc->encoder.repeat, 1);
 
         switch(enc->variant) {
         case HondaVariantV2: {
-            // Read extra fields
+
             uint32_t rolling_temp = 0;
             if(flipper_format_read_uint32(flipper_format, "Rolling", &rolling_temp, 1)) {
                 enc->extra.v2.rolling = rolling_temp;
@@ -638,7 +571,6 @@ SubGhzProtocolStatus
                 enc->extra.v2.btn_byte2 = btn_lo_temp & 0xFF;
             }
 
-            // Unpack generic
             uint32_t serial;
             uint8_t counter;
             uint32_t rolling;
@@ -650,7 +582,6 @@ SubGhzProtocolStatus
             }
             enc->extra.v2.padding = 0x0000;
 
-            // Button handling
             if(subghz_custom_btn_get_original() == 0) {
                 subghz_custom_btn_set_original(enc->extra.v2.btn_byte2);
             }
@@ -663,11 +594,10 @@ SubGhzProtocolStatus
                     btn = honda_get_btn_code(enc->variant, original);
                 }
                 enc->extra.v2.btn_byte2 = btn;
-                // Update btn_byte1 to match
+
                 honda_v2_btn_to_pair(btn, &enc->extra.v2.btn_byte1, NULL);
             }
 
-            // Counter override (8-bit, +2/press)
             {
                 uint32_t cnt32 = enc->extra.v2.counter;
                 if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
@@ -693,7 +623,7 @@ SubGhzProtocolStatus
         } break;
 
         case HondaVariantV3: {
-            // Read extra fields
+
             uint32_t sync_temp = 0;
             flipper_format_read_uint32(flipper_format, "Sync", &sync_temp, 1);
             enc->extra.v3.sync = sync_temp & 0xFF;
@@ -711,13 +641,11 @@ SubGhzProtocolStatus
             flipper_format_read_uint32(flipper_format, "Flags", &flags_temp, 1);
             enc->extra.v3.flags = flags_temp & 0xFF;
 
-            // Read payload
             uint8_t payload_buf[12] = {0};
             if(flipper_format_read_hex(flipper_format, "Payload", payload_buf, 12)) {
                 memcpy(enc->extra.v3.payload, payload_buf, 12);
             }
 
-            // Unpack generic
             uint16_t serial;
             uint8_t counter;
             uint8_t btn_byte;
@@ -730,7 +658,6 @@ SubGhzProtocolStatus
                 enc->extra.v3.crc = crc;
             }
 
-            // Button handling
             if(subghz_custom_btn_get_original() == 0) {
                 subghz_custom_btn_set_original(enc->extra.v3.btn_byte);
             }
@@ -743,15 +670,12 @@ SubGhzProtocolStatus
                     btn = honda_get_btn_code(enc->variant, original);
                 }
                 enc->extra.v3.btn_byte = btn;
-                // Update button in payload if fixed frame
+
                 if(enc->extra.v3.is_fixed) {
-                    enc->extra.v3.payload[2] = btn; // payload[2] = byte 4 = button
+                    enc->extra.v3.payload[2] = btn;
                 }
             }
 
-            // Counter override (8-bit, +4/press = 2 bursts x +2)
-            // Raw counter byte: display_counter(6bit) << 2 | tx_bits(2)
-            // So +1 display counter = +4 in raw byte
             {
                 uint32_t cnt32 = enc->extra.v3.counter;
                 if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
@@ -772,13 +696,12 @@ SubGhzProtocolStatus
                 enc->extra.v3.counter,
                 enc->extra.v3.btn_byte,
                 enc->extra.v3.crc);
-            enc->generic.crc_check = true; // frame rebuilt with computed CRC
+            enc->generic.crc_check = true;
         } break;
         }
 
         honda_build_upload(enc);
 
-        // Write updated Key back
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
             break;
@@ -809,7 +732,6 @@ static const SubGhzProtocolEncoder enc_honda_v2_v3_vt = {
     .yield = subghz_protocol_encoder_honda_v2_v3_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_honda_v2_v3 = {
     .name = SUBGHZ_PROTOCOL_HONDA_V2_V3_NAME,
     .type = SubGhzProtocolTypeDynamic,

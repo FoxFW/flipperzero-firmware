@@ -12,38 +12,6 @@
 #include "../encode_plugin.h"
 #include "decode_plugin.h"
 
-// ============================================================================
-// Mercedes / Maybach SubGHz keyfob protocol (decoder + encoder)
-//
-// Reverse-engineered from the PANDORA_MAX firmware, TX engine handler 0xf144
-// (RF bit-banger at 0x8ebc). Maybach uses the same Mercedes keyfob system, so
-// this is a single protocol.
-//
-// Wire (verified against the RE bit-banger at 0x8ebc):
-//   - modulation: OOK/ASK (AM650 preset), bands 315 / 433 / 868 MHz.
-//   - Manchester, Te = 500 us (te_delta ~125).
-//       * movw r0,#3700  -> 3700 us lead gap.
-//       * loop cmp r4,#55 -> 55 preamble cycles of {HIGH 500 / LOW 500}.
-//       * sync boundary   -> an extra LOW 500 then HIGH 500 (the 8f06..8f16 tail).
-//       * loop cmp r4,#112 -> 112 Manchester data bits, MSB-first over 14 bytes.
-//   - Per-bit polarity (spec, matches the RE branch that swaps 0x80d0/0x8160):
-//       bit1 = LOW 500 -> HIGH 500   (rising edge mid-bit)
-//       bit0 = HIGH 500 -> LOW 500   (falling edge mid-bit)
-//
-// 14-byte payload layout (shared Pandora struct convention):
-//   b0..b3  = UID / serial
-//   b4      = button / command
-//   b5..b6  = 16-bit rolling counter (b5 = high, b6 = low)
-//   b7      = checksum = sum(b0..b6) & 0xFF   (display only, never rejected)
-//   b8..b13 = additional rolling / auth bytes (opaque; replayed as-is)
-//
-// 112 bits do not fit in generic.data (uint64), so the 14 raw bytes are stored
-// in raw_data[] and serialized as a "Data" hex field (mirrors fiat_v2.c "Raw").
-//
-// Rolling code with no known key -> emulation is a byte-identical REPLAY of the
-// captured 14 bytes (optionally re-stamping only b4 for the D-pad).
-// ============================================================================
-
 #define MERCEDES_TE_SHORT      500U
 #define MERCEDES_TE_DELTA      125U
 #define MERCEDES_LEAD_GAP_US   3700U
@@ -51,11 +19,8 @@
 #define MERCEDES_WIRE_BYTES    14U
 #define MERCEDES_WIRE_BITS     112U
 
-// Boundary between a preamble/half-bit cell and a real gap.
 #define MERCEDES_BOUNDARY_MIN_US 1500U
 
-// Encoder capacity: lead gap + 55 preamble pairs + sync (2) + 112 bits * 2 cells
-// + trailing gap, generous margin.
 #define MERCEDES_UPLOAD_CAPACITY \
     (1U + (MERCEDES_PREAMBLE_PAIRS * 2U) + 4U + (MERCEDES_WIRE_BITS * 2U) + 2U)
 
@@ -101,7 +66,6 @@ struct SubGhzProtocolEncoderMercedes {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderMercedes);
 
-
 const SubGhzProtocolDecoder subghz_protocol_mercedes_decoder = {
     .alloc = subghz_protocol_decoder_mercedes_alloc,
     .free = subghz_protocol_decoder_common_free,
@@ -125,10 +89,6 @@ const SubGhzProtocol subghz_protocol_mercedes = {
     .encoder = &subghz_protocol_mercedes_encoder_ext.vtable,
 };
 
-// ---------------------------------------------------------------------------
-// Shared field helpers
-// ---------------------------------------------------------------------------
-
 static uint32_t mercedes_uid(const uint8_t raw[MERCEDES_WIRE_BYTES]) {
     return ((uint32_t)raw[0] << 24U) | ((uint32_t)raw[1] << 16U) | ((uint32_t)raw[2] << 8U) |
            raw[3];
@@ -143,30 +103,15 @@ static void mercedes_decode_fields(SubGhzBlockGeneric* generic, const uint8_t ra
     generic->btn = raw[4];
     generic->cnt = mercedes_counter(raw);
     generic->data_count_bit = MERCEDES_WIRE_BITS;
-    // generic.data cannot hold 112 bits; keep the most useful 64 bits (uid|cnt)
-    // for hashing/display symmetry. The authoritative payload lives in raw_data.
+
     generic->data = ((uint64_t)generic->serial << 16U) | generic->cnt;
 }
 
 static bool mercedes_frame_valid(const uint8_t raw[MERCEDES_WIRE_BYTES]) {
-    // The checksum is display-only (may be opaque on real captures), so validity
-    // is intentionally loose: reject only the empty / all-ones degenerate frames.
+
     const uint32_t uid = mercedes_uid(raw);
     return uid != 0U && uid != UINT32_MAX;
 }
-
-// ---------------------------------------------------------------------------
-// Decoder: Manchester demod via the firmware manchester_decoder state machine
-// (same approach as kia_v2.c). The state machine self-synchronizes and natively
-// handles both short (Te) and long (2*Te) pulses, so it copes with the sync HIGH
-// cell merging into an adjacent data cell. Verified by simulation to recover the
-// exact 112 encoded bits for every input (guaranteed round-trip).
-//
-// Pulse -> event mapping (matches the chosen wire polarity, seed = Mid1):
-//   short: level ? ShortHigh : ShortLow
-//   long : level ? LongHigh  : LongLow
-// yielding: bit1 = LOW 500 -> HIGH 500, bit0 = HIGH 500 -> LOW 500.
-// ---------------------------------------------------------------------------
 
 static bool mercedes_duration_is_short(uint32_t duration) {
     return DURATION_DIFF(duration, MERCEDES_TE_SHORT) < MERCEDES_TE_DELTA;
@@ -196,7 +141,6 @@ static void mercedes_report(SubGhzProtocolDecoderMercedes* instance) {
 
     if(!mercedes_frame_valid(instance->bytes)) return;
 
-    // Accept repeated identical frames silently (fob repeats each press).
     if(instance->last_raw_valid &&
        memcmp(instance->last_raw_data, instance->bytes, MERCEDES_WIRE_BYTES) == 0) {
         return;
@@ -243,8 +187,6 @@ void* subghz_protocol_decoder_mercedes_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_mercedes_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderMercedes* instance = context;
@@ -264,8 +206,7 @@ void subghz_protocol_decoder_mercedes_feed(void* context, bool level, uint32_t d
 
     switch(instance->decoder.parser_step) {
     case MercedesDecoderStepReset:
-        // Wait for the 3700 us lead gap (a long LOW), then start counting the
-        // 55x {HIGH 500 / LOW 500} preamble.
+
         if(!level && duration >= MERCEDES_BOUNDARY_MIN_US) {
             instance->decoder.parser_step = MercedesDecoderStepPreamble;
             instance->preamble_count = 0U;
@@ -273,22 +214,17 @@ void subghz_protocol_decoder_mercedes_feed(void* context, bool level, uint32_t d
         break;
 
     case MercedesDecoderStepPreamble:
-        // The preamble is 55 cycles of { HIGH 500 / LOW 500 } = alternating
-        // short cells. The sync boundary is an EXTRA LOW 500 that merges with the
-        // trailing preamble LOW into a single 1000 us (te_long) LOW, immediately
-        // followed by a HIGH 500 sync cell and then the 112 data bits.
+
         if(mercedes_duration_is_short(duration)) {
             instance->preamble_count++;
         } else if(
             !level && mercedes_duration_is_long(duration) &&
             instance->preamble_count >= (MERCEDES_PREAMBLE_PAIRS * 2U - 6U)) {
-            // te_long LOW after a solid preamble = the sync double-low. Start the
-            // Manchester state machine; the following sync HIGH cell is absorbed
-            // by the self-synchronizing decoder before the 112 data bits.
+
             instance->decoder.parser_step = MercedesDecoderStepData;
             mercedes_data_reset(instance);
         } else if(!level && duration >= MERCEDES_BOUNDARY_MIN_US) {
-            // Another lead gap: restart the preamble search.
+
             instance->preamble_count = 0U;
         } else {
             instance->decoder.parser_step = MercedesDecoderStepReset;
@@ -302,8 +238,7 @@ void subghz_protocol_decoder_mercedes_feed(void* context, bool level, uint32_t d
         } else if(mercedes_duration_is_long(duration)) {
             mercedes_feed_manchester(instance, level, true);
         } else {
-            // End of frame / gap: try to report whatever we have, then reset to
-            // catch the fob's repeat.
+
             mercedes_report(instance);
             mercedes_data_reset(instance);
             instance->decoder.parser_step = MercedesDecoderStepReset;
@@ -391,17 +326,4 @@ void subghz_protocol_decoder_mercedes_get_string(void* context, FuriString* outp
     };
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
-
-
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire.
-//   3700 us lead gap
-//   + 55x { HIGH 500 / LOW 500 } preamble
-//   + sync boundary (LOW 500 then HIGH 500)
-//   + 112 Manchester bits of the 14 raw bytes (MSB-first)
-//       bit1 -> LOW 500 , HIGH 500
-//       bit0 -> HIGH 500 , LOW 500
-//   + trailing gap
-// Replay-based (rolling code / no key). D-pad only re-stamps b4.
-// ---------------------------------------------------------------------------
 

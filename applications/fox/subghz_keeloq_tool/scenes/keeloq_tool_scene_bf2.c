@@ -55,9 +55,6 @@ static bool kl_bf2_extract_key(KeeloqTool* app, uint32_t* out_fix, uint32_t* out
 
 #define KL_BF2_MAX_SCAN_FILES 128U
 
-// Auto-find sig2: scan sig1's folder for another KeeLoq .sub from the SAME remote
-// (same 28-bit serial, different hop) and load it as sig2 with no prompt -- the same
-// convenience Hitag2Hell has. Requires sig1 already loaded with serial/hop1 populated.
 static void kl_bf2_scan_for_sig2(KeeloqTool* app) {
     if(!app->keeloq_bf2.sig1_loaded || app->keeloq_bf2.sig2_loaded) return;
 
@@ -214,16 +211,13 @@ void keeloq_tool_scene_bf2_on_enter(void* context) {
     if(!prefilled) {
         app->keeloq_bf2.sig1_loaded = false;
     } else {
-        /* Entered from the saved menu: sig1_path/sig1_loaded were set there, but the loaded
-         * file's serial/fix/hop1 were NOT derived. Do it now from the currently-loaded signal
-         * (which IS sig1) so the sig2 same-remote check compares against a real serial instead
-         * of a stale one -- otherwise every sig2 falsely reports "Serial mismatch". */
+
         uint32_t fix = 0, hop = 0;
         if(kl_bf2_extract_key(app, &fix, &hop)) {
             app->keeloq_bf2.fix = fix;
             app->keeloq_bf2.hop1 = hop;
             app->keeloq_bf2.serial = fix & 0x0FFFFFFF;
-            // Auto-load a same-remote 2nd capture from the folder, like Hitag2Hell.
+
             kl_bf2_scan_for_sig2(app);
         }
     }

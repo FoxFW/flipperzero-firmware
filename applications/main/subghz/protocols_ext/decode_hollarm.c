@@ -1,4 +1,4 @@
-/* decode_hollarm.fal : SD get_string for hollarm (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/hollarm.h>
@@ -54,7 +54,6 @@ static const char* subghz_protocol_hollarm_get_button_name(uint8_t btn) {
 static void hollarm_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderHollarm* instance = input->decoder;
-
 
     subghz_protocol_hollarm_remote_controller(&instance->generic);
 

@@ -90,11 +90,6 @@ inline uint64_t
     return (man & 0xFFFFFFFFFF000000) | (data & 0xFFFFFF);
 }
 
-
-/* ---- AERF (type 14) manufacturer derivation (JCM-family manufacturer_nl_extend) ----
- * Explicit shift guards (n>=32 -> 0) match the ARM target AND KeeLoq-RX kl_crack.py
- * (NOT x86 mask-mod-32), so host and device agree. See
- * claude/KEELOQ_AERF_JCM_DECODER_REVIEW.md for why the raw decompiled shifts were unsafe. */
 static uint32_t keeloq_common_nl_extend(uint32_t x, uint32_t k_lo, uint32_t k_hi, uint32_t outer_limit) {
     uint32_t r5 = 0u;
     while(r5 != outer_limit) {

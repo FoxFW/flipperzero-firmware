@@ -1,4 +1,4 @@
-/* decode_mitsubishi_v1.fal : SD get_string for mitsubishi_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mitsubishi_v1.h>
@@ -14,7 +14,7 @@ struct SubGhzProtocolDecoderMitsubishiV1 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 = Reset, 1 = Collect
+    uint8_t step;
     bool half;
     uint8_t all_bits[MITSUBISHI_V1_ALL_BITS_MAX];
     uint16_t bit_count;
@@ -22,7 +22,7 @@ struct SubGhzProtocolDecoderMitsubishiV1 {
     uint8_t fix;
     uint8_t btn;
     uint16_t cnt;
-    uint64_t hop; // 42-bit encrypted rolling code
+    uint64_t hop;
 };
 
 static const char* mitsubishi_v1_button_name(uint8_t btn);

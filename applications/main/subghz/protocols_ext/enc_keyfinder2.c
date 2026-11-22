@@ -1,5 +1,5 @@
-/* enc_keyfinder2.fal : SD encoder for keyfinder2 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_keyfinder2__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_deserialize enc_keyfinder2__subghz_protocol_encoder_common_deserialize
 #define subghz_protocol_encoder_common_free enc_keyfinder2__subghz_protocol_encoder_common_free
@@ -37,18 +37,8 @@ static const SubGhzBlockConst subghz_protocol_keyfinder2_const = {
     .min_count_bit_for_found = 11,
 };
 
-/**
- * Generating an upload from data.
- * @param context Pointer to a SubGhzProtocolEncoderKeyFinder2 instance
- * @return true Always; this encoder has no failure path
- */
 static bool subghz_protocol_encoder_keyfinder2_get_upload(void* context);
 
-/**
- * Generating an upload from data.
- * @param context Pointer to a SubGhzProtocolEncoderKeyFinder2 instance
- * @return true Always; this encoder has no failure path
- */
 static bool subghz_protocol_encoder_keyfinder2_get_upload(void* context) {
     SubGhzProtocolEncoderKeyFinder2* instance = context;
     furi_assert(instance);
@@ -74,7 +64,6 @@ static bool subghz_protocol_encoder_keyfinder2_get_upload(void* context) {
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -82,13 +71,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -107,7 +94,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -123,7 +109,6 @@ void* subghz_protocol_encoder_common_alloc(
     return instance;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 SubGhzProtocolStatus subghz_protocol_encoder_common_deserialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -146,12 +131,6 @@ SubGhzProtocolStatus subghz_protocol_encoder_common_deserialize(
     return ret;
 }
 
-/**
- * Colour printed on the button for this code. Taken from one four button fob, so a fob
- * with a different button layout may well name them differently.
- * @param btn Button code, 3 bit
- * @return Colour name
- */
 void* subghz_protocol_encoder_keyfinder2_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return subghz_protocol_encoder_common_alloc(
@@ -175,7 +154,6 @@ static const SubGhzProtocolEncoder enc_keyfinder2_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_keyfinder2 = {
     .name = SUBGHZ_PROTOCOL_KEYFINDER2_NAME,
     .type = SubGhzProtocolTypeStatic,

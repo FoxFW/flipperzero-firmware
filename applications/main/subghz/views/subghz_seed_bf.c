@@ -27,7 +27,6 @@ static void subghz_view_seed_bf_draw(Canvas* canvas, void* _model) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str_aligned(canvas, 64, 2, AlignCenter, AlignTop, "Seed BruteForce");
 
-        /* Fox progress bar: 122px frame, 116px inner fill. */
         canvas_draw_rframe(canvas, 3, 17, 122, 12, 2);
         uint32_t total = model->total ? model->total : 1U;
         uint8_t pct = (uint8_t)(((uint64_t)model->tested * 100U) / total);

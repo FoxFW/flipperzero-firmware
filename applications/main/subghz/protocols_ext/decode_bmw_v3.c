@@ -1,4 +1,4 @@
-/* decode_bmw_v3.fal : SD get_string for bmw_v3 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/bmw_v3.h>
@@ -12,14 +12,14 @@ struct SubGhzProtocolDecoderBmwV3 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 reset, 1 waitgap, 2 findheader, 3 collectdata
+    uint8_t step;
     uint64_t data;
     uint16_t nbit;
     uint32_t te_last;
 
-    uint16_t serial; // 16-bit cleartext serial
+    uint16_t serial;
     uint8_t btn;
-    uint16_t cnt; // 16-bit cleartext counter field
+    uint16_t cnt;
 };
 
 static const char* bmw_v3_button_name(uint8_t btn);

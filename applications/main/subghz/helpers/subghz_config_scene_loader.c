@@ -1,13 +1,19 @@
 #include "subghz_config_scene_loader.h"
 #include "subghz_config_scene.h"
 #include "../subghz_i.h"
+#include "../subghz_protocol_filter.h"
+#include <lib/subghz/subghz_protocol_registry.h>
 #include <applications/drivers/subghz/cc1101_ext/cc1101_ext_interconnect.h>
 #include <string.h>
 #include <targets/f7/furi_hal/furi_hal_subghz.h>
 
+#define SUBGHZ_RAW_EDIT_FAP_PATH EXT_PATH("apps/Sub-GHz/subghz_raw_edit.fap")
+void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx);
+
 #include <furi.h>
 #include <flipper_application/plugins/plugin_manager.h>
 #include <loader/firmware_api/firmware_api.h>
+#include <loader/loader.h>
 
 #define TAG "SubGhzConfigLoader"
 #define SUBGHZ_CONFIG_MIN_FREE_HEAP 8192u
@@ -17,15 +23,16 @@ typedef struct {
     const SubGhzConfigScenePlugin* plugin;
     SubGhzConfigHostApi api;
     uint32_t scene_id;
-    uint8_t pending_nav; /* 0 = none; else SubGhzConfigNavTarget + 1 (deferred) */
-    bool pending_prev;   /* deferred scene_manager_previous_scene (lock/reset) */
-    bool nav_child;      /* this exit is a hop to a child scene -> keep FAL loaded */
-    char fal[40];        /* currently-loaded FAL base name ("" = none loaded) */
+    uint8_t pending_nav;
+    bool pending_prev;
+    uint8_t pending_nav2_kind;
+    uint32_t pending_nav2_target;
+    bool nav_child;
+    char fal[40];
 } SubGhzConfigActive;
 
 static SubGhzConfigActive s_active = {0};
 
-/* ===== Host-API backing: resident, derefs SubGhz / furi_hal. FALs never do. ===== */
 static SubGhzSetting* host_get_setting(void* ctx) {
     return subghz_txrx_get_setting(((SubGhz*)ctx)->txrx);
 }
@@ -50,10 +57,7 @@ static void host_set_scene_state(void* ctx, uint32_t state) {
     scene_manager_set_scene_state(subghz->scene_manager, s_active.scene_id, state);
 }
 static void host_open_scene(void* ctx, SubGhzConfigNavTarget target) {
-    /* Deferred: record intent only. The resident loader performs the real
-     * scene_manager_next_scene AFTER the FAL on_event returns, so the FAL is
-     * never freed (by the synchronous on_exit that next_scene triggers) while
-     * its code is still on the call stack. */
+
     UNUSED(ctx);
     s_active.pending_nav = (uint8_t)target + 1u;
 }
@@ -141,11 +145,9 @@ static bool host_is_debug_mode(void* ctx) {
     return furi_hal_rtc_is_flag_set(FuriHalRtcFlagDebug);
 }
 
-/* ---- v3 (receiver_config) ---- */
 #define RC_LAST_SETTINGS_FILE EXT_PATH("subghz/assets/last_subghz.settings")
 #define RC_FA_PRESET_IDX_KEY  "FAPresetIndex"
 
-/* Port of receiver_config's static subghz_config_sync_preset_to_fa (self-contained). */
 static void host_fa_sync(int preset_index) {
     if(preset_index < 0) return;
     Storage* s = furi_record_open(RECORD_STORAGE);
@@ -172,9 +174,7 @@ static void host_clear_read_raw_state(void* ctx) {
         subghz->scene_manager, SubGhzSceneReadRAW, SubGhzCustomEventManagerNoSet);
 }
 static void host_previous_scene(void* ctx) {
-    /* Deferred: scene_manager_previous_scene calls on_exit synchronously, which would
-     * free this FAL while its on_event is still on the stack. Record it; the loader
-     * performs it after on_event returns. */
+
     UNUSED(ctx);
     s_active.pending_prev = true;
 }
@@ -264,8 +264,7 @@ static void host_apply_frequency(void* ctx, uint32_t frequency) {
     subghz_setting_set_default_frequency(setting, frequency);
 }
 static void host_apply_preset_at_frequency(void* ctx, uint32_t frequency) {
-    /* Matches set_hopping's OFF path: re-apply current preset at freq WITHOUT touching
-     * last_settings->frequency or set_default_frequency. */
+
     SubGhz* subghz = ctx;
     SubGhzRadioPreset preset = subghz_txrx_get_preset(subghz->txrx);
     subghz_txrx_set_tx_power(preset.data, preset.data_size, subghz->tx_power);
@@ -327,7 +326,8 @@ static void host_reset_to_default(void* ctx) {
     subghz->last_settings->filter = subghz->filter;
     subghz->last_settings->delete_old_signals = false;
     subghz->last_settings->auto_save = false;
-    subghz->last_settings->capture_unknown_raw = true;
+    subghz->last_settings->capture_unknown_raw = false;
+    subghz->last_settings->show_psa_encrypted = false;
     subghz->last_settings->tx_power = subghz->tx_power = 0;
     subghz_txrx_speaker_set_state(subghz->txrx, SubGhzSpeakerStateShutdown);
     subghz_txrx_hopper_set_state(subghz->txrx, SubGhzHopperStateOFF);
@@ -342,6 +342,256 @@ static void host_reset_to_default(void* ctx) {
 static void host_sync_preset_to_fa(void* ctx, int preset_index) {
     UNUSED(ctx);
     host_fa_sync(preset_index);
+}
+
+static const NotificationSequence subghz_config_seq_sd_error = {
+    &message_red_255,
+    &message_green_255,
+    &message_do_not_reset,
+    NULL,
+};
+
+static uint32_t subghz_config_map_scene(SubGhzConfigSceneId id) {
+    switch(id) {
+    case SubGhzConfigSceneStart:
+        return SubGhzSceneStart;
+    case SubGhzConfigSceneReceiver:
+        return SubGhzSceneReceiver;
+    case SubGhzConfigSceneSaved:
+        return SubGhzSceneSaved;
+    case SubGhzConfigSceneSaveName:
+        return SubGhzSceneSaveName;
+    case SubGhzConfigSceneSaveSuccess:
+        return SubGhzSceneSaveSuccess;
+    case SubGhzConfigSceneShowError:
+        return SubGhzSceneShowError;
+    case SubGhzConfigSceneShowErrorSub:
+        return SubGhzSceneShowErrorSub;
+    case SubGhzConfigSceneTransmitter:
+        return SubGhzSceneTransmitter;
+    case SubGhzConfigSceneDecodeRAW:
+        return SubGhzSceneDecodeRAW;
+    case SubGhzConfigSceneReceiverInfo:
+        return SubGhzSceneReceiverInfo;
+    case SubGhzConfigSceneDeleteSuccess:
+        return SubGhzSceneDeleteSuccess;
+    case SubGhzConfigSceneReadRAW:
+        return SubGhzSceneReadRAW;
+    case SubGhzConfigSceneDeleteRAW:
+        return SubGhzSceneDeleteRAW;
+    case SubGhzConfigSceneNone:
+    default:
+        return SubGhzSceneStart;
+    }
+}
+
+static Widget* host_get_widget(void* ctx) {
+    return ((SubGhz*)ctx)->widget;
+}
+static Popup* host_get_popup(void* ctx) {
+    return ((SubGhz*)ctx)->popup;
+}
+static TextInput* host_get_text_input(void* ctx) {
+    return ((SubGhz*)ctx)->text_input;
+}
+static ByteInput* host_get_byte_input(void* ctx) {
+    return ((SubGhz*)ctx)->byte_input;
+}
+static Submenu* host_get_submenu(void* ctx) {
+    return ((SubGhz*)ctx)->submenu;
+}
+static void host_switch_to_view(void* ctx, SubGhzConfigView view) {
+    SubGhz* subghz = ctx;
+    uint32_t vid;
+    switch(view) {
+    case SubGhzConfigViewPopup:
+        vid = SubGhzViewIdPopup;
+        break;
+    case SubGhzConfigViewTextInput:
+        vid = SubGhzViewIdTextInput;
+        break;
+    case SubGhzConfigViewByteInput:
+        vid = SubGhzViewIdByteInput;
+        break;
+    case SubGhzConfigViewSubmenu:
+        vid = SubGhzViewIdMenu;
+        break;
+    case SubGhzConfigViewWidget:
+    default:
+        vid = SubGhzViewIdWidget;
+        break;
+    }
+    view_dispatcher_switch_to_view(subghz->view_dispatcher, vid);
+}
+static void host_widget_add_fw_icon(void* ctx, uint8_t x, uint8_t y, SubGhzConfigIcon icon) {
+    SubGhz* subghz = ctx;
+    UNUSED(icon);
+    widget_add_icon_element(subghz->widget, x, y, &I_SDQuestion_35x43);
+}
+static uint32_t host_get_scene_state(void* ctx) {
+    SubGhz* subghz = ctx;
+    return scene_manager_get_scene_state(subghz->scene_manager, s_active.scene_id);
+}
+static void host_set_scene_state_of(void* ctx, SubGhzConfigSceneId scene, uint32_t state) {
+    SubGhz* subghz = ctx;
+    scene_manager_set_scene_state(subghz->scene_manager, subghz_config_map_scene(scene), state);
+}
+static bool host_has_previous_scene(void* ctx, SubGhzConfigSceneId scene) {
+    SubGhz* subghz = ctx;
+    return scene_manager_has_previous_scene(
+        subghz->scene_manager, subghz_config_map_scene(scene));
+}
+static FuriString* host_get_error_str(void* ctx) {
+    return ((SubGhz*)ctx)->error_str;
+}
+static void host_set_error_str(void* ctx, const char* text) {
+    furi_string_set(((SubGhz*)ctx)->error_str, text);
+}
+static void host_notify_sd_error(void* ctx) {
+    notification_message(((SubGhz*)ctx)->notifications, &subghz_config_seq_sd_error);
+}
+static void host_notify_reset_rgb(void* ctx) {
+    notification_message(((SubGhz*)ctx)->notifications, &sequence_reset_rgb);
+}
+static FuriString* host_get_file_path(void* ctx) {
+    return ((SubGhz*)ctx)->file_path;
+}
+static char* host_get_file_name_tmp(void* ctx) {
+    return ((SubGhz*)ctx)->file_name_tmp;
+}
+static void host_nav(void* ctx, SubGhzConfigNavKind kind, SubGhzConfigSceneId target) {
+
+    UNUSED(ctx);
+    s_active.pending_nav2_kind = (uint8_t)kind + 1u;
+    s_active.pending_nav2_target = (uint32_t)target;
+}
+
+static void host_notify_set_red(void* ctx) {
+    notification_message(((SubGhz*)ctx)->notifications, &sequence_set_red_255);
+}
+static void host_get_freq_mod(void* ctx, FuriString* freq, FuriString* mod) {
+    subghz_txrx_get_frequency_and_modulation(((SubGhz*)ctx)->txrx, freq, mod, false);
+}
+static void host_get_decoder_string(void* ctx, FuriString* out) {
+    subghz_protocol_decoder_base_get_string(
+        subghz_txrx_get_decoder(((SubGhz*)ctx)->txrx), out);
+}
+static FuriString* host_get_file_path_tmp(void* ctx) {
+    return ((SubGhz*)ctx)->file_path_tmp;
+}
+static bool host_delete_file(void* ctx) {
+    return subghz_delete_file((SubGhz*)ctx);
+}
+
+static SubGhzConfigRxKeyState host_get_rx_key_state(void* ctx) {
+    switch(subghz_rx_key_state_get((SubGhz*)ctx)) {
+    case SubGhzRxKeyStateBack:
+        return SubGhzConfigRxKeyStateBack;
+    case SubGhzRxKeyStateExit:
+        return SubGhzConfigRxKeyStateExit;
+    case SubGhzRxKeyStateRAWLoad:
+        return SubGhzConfigRxKeyStateRAWLoad;
+    default:
+        return SubGhzConfigRxKeyStateIDLE;
+    }
+}
+static void host_set_rx_key_state(void* ctx, SubGhzConfigRxKeyState state) {
+    SubGhzRxKeyState s;
+    switch(state) {
+    case SubGhzConfigRxKeyStateBack:
+        s = SubGhzRxKeyStateBack;
+        break;
+    case SubGhzConfigRxKeyStateExit:
+        s = SubGhzRxKeyStateExit;
+        break;
+    case SubGhzConfigRxKeyStateRAWLoad:
+        s = SubGhzRxKeyStateRAWLoad;
+        break;
+    case SubGhzConfigRxKeyStateIDLE:
+    default:
+        s = SubGhzRxKeyStateIDLE;
+        break;
+    }
+    subghz_rx_key_state_set((SubGhz*)ctx, s);
+}
+static void host_reset_preset_am650(void* ctx) {
+    SubGhz* subghz = ctx;
+    subghz_txrx_set_preset(subghz->txrx, "AM650", subghz->last_settings->frequency, NULL, 0);
+}
+static void host_receiver_release(void* ctx) {
+    subghz_txrx_receiver_release(((SubGhz*)ctx)->txrx);
+}
+static size_t host_protocol_count(void* ctx) {
+    UNUSED(ctx);
+    return subghz_protocol_registry_count(&subghz_protocol_registry);
+}
+static const char* host_protocol_name(void* ctx, size_t index) {
+    UNUSED(ctx);
+    const SubGhzProtocol* p =
+        subghz_protocol_registry_get_by_index(&subghz_protocol_registry, index);
+    return p ? p->name : NULL;
+}
+static bool host_protocol_filter_is_enabled(void* ctx, size_t index) {
+    return subghz_protocol_filter_is_enabled(((SubGhz*)ctx)->protocol_filter, index);
+}
+static void host_protocol_filter_set_enabled(void* ctx, size_t index, bool enabled) {
+    subghz_protocol_filter_set_enabled(((SubGhz*)ctx)->protocol_filter, index, enabled);
+}
+static size_t host_protocol_filter_enabled_count(void* ctx, size_t total) {
+    return subghz_protocol_filter_enabled_count(((SubGhz*)ctx)->protocol_filter, total);
+}
+static void host_protocol_filter_save(void* ctx) {
+    subghz_protocol_filter_save(((SubGhz*)ctx)->protocol_filter);
+}
+
+static bool host_freq_is_valid(void* ctx, uint32_t hz) {
+    UNUSED(ctx);
+    return furi_hal_subghz_is_frequency_valid(hz);
+}
+
+static bool host_file_available(void* ctx) {
+    return subghz_file_available((SubGhz*)ctx);
+}
+static bool host_raw_edit_available(void* ctx) {
+    UNUSED(ctx);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    bool present = storage_file_exists(storage, SUBGHZ_RAW_EDIT_FAP_PATH);
+    furi_record_close(RECORD_STORAGE);
+    return present;
+}
+static void host_launch_raw_edit(void* ctx) {
+    SubGhz* subghz = ctx;
+
+    Storage* raw_storage = furi_record_open(RECORD_STORAGE);
+    File* raw_f = storage_file_alloc(raw_storage);
+    if(storage_file_open(raw_f, "/ext/subghz/.focus_file", FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        const char* fp = furi_string_get_cstr(subghz->file_path);
+        const char* prefix = "rawreturn:";
+        storage_file_write(raw_f, prefix, strlen(prefix));
+        storage_file_write(raw_f, fp, strlen(fp));
+    }
+    storage_file_close(raw_f);
+    storage_file_free(raw_f);
+    furi_record_close(RECORD_STORAGE);
+
+    if(!subghz->blank_transition_viewport) {
+        subghz->blank_transition_viewport = view_port_alloc();
+        view_port_draw_callback_set(
+            subghz->blank_transition_viewport, subghz_blank_transition_draw_cb, NULL);
+        gui_add_view_port(subghz->gui, subghz->blank_transition_viewport, GuiLayerFullscreen);
+        view_port_update(subghz->blank_transition_viewport);
+    }
+
+    Loader* loader = furi_record_open(RECORD_LOADER);
+    loader_enqueue_launch(
+        loader,
+        SUBGHZ_RAW_EDIT_FAP_PATH,
+        furi_string_get_cstr(subghz->file_path),
+        LoaderDeferredLaunchFlagNone);
+    furi_record_close(RECORD_LOADER);
+
+    scene_manager_stop(subghz->scene_manager);
+    view_dispatcher_stop(subghz->view_dispatcher);
 }
 
 static void subghz_config_fill_api(SubGhz* subghz) {
@@ -399,11 +649,49 @@ static void subghz_config_fill_api(SubGhz* subghz) {
     a->apply_predefined = host_apply_predefined;
     a->reset_to_default = host_reset_to_default;
     a->sync_preset_to_fa = host_sync_preset_to_fa;
+
+    a->get_widget = host_get_widget;
+    a->get_popup = host_get_popup;
+    a->get_text_input = host_get_text_input;
+    a->get_byte_input = host_get_byte_input;
+    a->get_submenu = host_get_submenu;
+    a->switch_to_view = host_switch_to_view;
+    a->widget_add_fw_icon = host_widget_add_fw_icon;
+    a->get_scene_state = host_get_scene_state;
+    a->set_scene_state_of = host_set_scene_state_of;
+    a->has_previous_scene = host_has_previous_scene;
+    a->get_error_str = host_get_error_str;
+    a->set_error_str = host_set_error_str;
+    a->notify_sd_error = host_notify_sd_error;
+    a->notify_reset_rgb = host_notify_reset_rgb;
+    a->get_file_path = host_get_file_path;
+    a->get_file_name_tmp = host_get_file_name_tmp;
+    a->nav = host_nav;
+
+    a->notify_set_red = host_notify_set_red;
+    a->get_freq_mod = host_get_freq_mod;
+    a->get_decoder_string = host_get_decoder_string;
+    a->get_file_path_tmp = host_get_file_path_tmp;
+    a->delete_file = host_delete_file;
+
+    a->get_rx_key_state = host_get_rx_key_state;
+    a->set_rx_key_state = host_set_rx_key_state;
+    a->reset_preset_am650 = host_reset_preset_am650;
+    a->receiver_release = host_receiver_release;
+    a->protocol_count = host_protocol_count;
+    a->protocol_name = host_protocol_name;
+    a->protocol_filter_is_enabled = host_protocol_filter_is_enabled;
+    a->protocol_filter_set_enabled = host_protocol_filter_set_enabled;
+    a->protocol_filter_enabled_count = host_protocol_filter_enabled_count;
+    a->protocol_filter_save = host_protocol_filter_save;
+
+    a->freq_is_valid = host_freq_is_valid;
+
+    a->file_available = host_file_available;
+    a->raw_edit_available = host_raw_edit_available;
+    a->launch_raw_edit = host_launch_raw_edit;
 }
 
-/* Free the cached config FAL. Public: called from subghz_free() on app exit so the
- * ELF sections are released while the rest of the subghz heap is being torn down
- * (never mid-session), leaving the heap clean for the desktop return. */
 void subghz_config_scene_loader_flush(void) {
     if(s_active.manager) plugin_manager_free(s_active.manager);
     s_active.manager = NULL;
@@ -415,12 +703,8 @@ void subghz_config_scene_enter(void* context, const char* fal_base, uint32_t sce
     SubGhz* subghz = context;
     s_active.scene_id = scene_id;
     s_active.pending_nav = 0;
-    subghz_config_fill_api(subghz); /* refresh ctx every enter -- valid even on reuse */
+    subghz_config_fill_api(subghz);
 
-    /* Reuse the FAL only if it is still loaded (we are returning from one of this
-     * scene's child scenes, which kept it loaded) and it is the same one -- so child
-     * round trips do NOT unload/reload (no churn). On a fresh config entry it was
-     * unloaded on the previous real exit, so this loads it. */
     bool reuse = s_active.manager && s_active.plugin && strcmp(s_active.fal, fal_base) == 0;
     if(!reuse) {
         subghz_config_scene_loader_flush();
@@ -464,6 +748,7 @@ bool subghz_config_scene_event(void* context, SceneManagerEvent event) {
     if(!s_active.plugin || !s_active.plugin->on_event) return false;
     s_active.pending_nav = 0;
     s_active.pending_prev = false;
+    s_active.pending_nav2_kind = 0;
     bool consumed = s_active.plugin->on_event(event);
     if(s_active.pending_prev) {
         s_active.pending_prev = false;
@@ -473,8 +758,57 @@ bool subghz_config_scene_event(void* context, SceneManagerEvent event) {
         s_active.pending_nav = 0;
         uint32_t id =
             (target == SubGhzConfigNavCustomFreq) ? SubGhzSceneCustomFreq : SubGhzSceneFilePrefix;
-        s_active.nav_child = true; /* keep the FAL loaded across this child-scene hop */
+        s_active.nav_child = true;
         scene_manager_next_scene(subghz->scene_manager, id);
+    } else if(s_active.pending_nav2_kind) {
+
+        SubGhzConfigNavKind kind = (SubGhzConfigNavKind)(s_active.pending_nav2_kind - 1u);
+        uint32_t target =
+            subghz_config_map_scene((SubGhzConfigSceneId)s_active.pending_nav2_target);
+        s_active.pending_nav2_kind = 0;
+        switch(kind) {
+        case SubGhzConfigNavPrevious:
+            scene_manager_previous_scene(subghz->scene_manager);
+            break;
+        case SubGhzConfigNavNext:
+            scene_manager_next_scene(subghz->scene_manager, target);
+            break;
+        case SubGhzConfigNavSearchPrev:
+            scene_manager_search_and_switch_to_previous_scene(subghz->scene_manager, target);
+            break;
+        case SubGhzConfigNavStop:
+            scene_manager_stop(subghz->scene_manager);
+            view_dispatcher_stop(subghz->view_dispatcher);
+            break;
+        case SubGhzConfigNavPreviousOrStop:
+            if(!scene_manager_previous_scene(subghz->scene_manager)) {
+                scene_manager_stop(subghz->scene_manager);
+                view_dispatcher_stop(subghz->view_dispatcher);
+            }
+            break;
+        case SubGhzConfigNavSearchPrevOrStart:
+            if(!scene_manager_search_and_switch_to_previous_scene(
+                   subghz->scene_manager, target)) {
+                scene_manager_search_and_switch_to_previous_scene(
+                    subghz->scene_manager, SubGhzSceneStart);
+            }
+            break;
+        case SubGhzConfigNavSearchPrevOrPrevious:
+            if(!scene_manager_search_and_switch_to_previous_scene(
+                   subghz->scene_manager, target)) {
+                scene_manager_previous_scene(subghz->scene_manager);
+            }
+            break;
+        case SubGhzConfigNavSearchPrevOrStop:
+            if(!scene_manager_search_and_switch_to_previous_scene(
+                   subghz->scene_manager, target)) {
+                scene_manager_stop(subghz->scene_manager);
+                view_dispatcher_stop(subghz->view_dispatcher);
+            }
+            break;
+        default:
+            break;
+        }
     }
     return consumed;
 }
@@ -487,11 +821,7 @@ void subghz_config_scene_exit(void* context) {
         variable_item_list_set_selected_item(subghz->variable_item_list, 0);
         variable_item_list_reset(subghz->variable_item_list);
     }
-    /* Unload on a real config exit (Back to the receiver) so the FAL is NOT resident
-     * during Read/decode, where RAM is tight. Keep it loaded only across a hop to one
-     * of this scene's own child scenes (File Prefix / Custom Freq), so those round
-     * trips do not churn/fragment the heap. Read is always reached via the receiver,
-     * i.e. after this unload, so the config FAL is never in RAM while protocols load. */
+
     bool keep = s_active.nav_child;
     s_active.nav_child = false;
     if(!keep) {

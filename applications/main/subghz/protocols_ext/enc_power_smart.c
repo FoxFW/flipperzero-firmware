@@ -1,5 +1,5 @@
-/* enc_power_smart.fal : SD encoder for power_smart (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_power_smart__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_power_smart__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_power_smart__subghz_protocol_encoder_common_yield
@@ -107,7 +107,6 @@ static void subghz_protocol_power_smart_remote_controller(SubGhzBlockGeneric* in
     instance->cnt = ((instance->data >> 49) & 0x3F);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -115,7 +114,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -134,7 +132,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -153,7 +150,10 @@ void* subghz_protocol_encoder_common_alloc(
 void* subghz_protocol_encoder_power_smart_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return subghz_protocol_encoder_common_alloc(
-        sizeof(SubGhzProtocolEncoderPowerSmart), &subghz_protocol_power_smart, 3, 1024);
+        sizeof(SubGhzProtocolEncoderPowerSmart),
+        &subghz_protocol_power_smart,
+        3,
+        1040);
 }
 
 SubGhzProtocolStatus
@@ -196,7 +196,6 @@ static const SubGhzProtocolEncoder enc_power_smart_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_power_smart = {
     .name = SUBGHZ_PROTOCOL_POWER_SMART_NAME,
     .type = SubGhzProtocolTypeStatic,

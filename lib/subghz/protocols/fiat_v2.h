@@ -14,7 +14,7 @@
 
 typedef struct SubGhzProtocolDecoderFiatV2 SubGhzProtocolDecoderFiatV2;
 
-extern const SubGhzProtocol fiat_v2_protocol;
+extern const SubGhzProtocol subghz_protocol_fiat_v2;
 
 void* subghz_protocol_decoder_fiat_v2_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_fiat_v2_reset(void* context);

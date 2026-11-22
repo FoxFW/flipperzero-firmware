@@ -1,5 +1,5 @@
-/* enc_secplus_v2.fal : SD encoder for secplus_v2 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_secplus_v2__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_secplus_v2__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_secplus_v2__subghz_protocol_encoder_common_yield
@@ -41,7 +41,6 @@ static const SubGhzBlockConst subghz_protocol_secplus_v2_const = {
     .min_count_bit_for_found = 62,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool secplus_v2_raw_replay__bridge_ty;
 typedef struct {
     void* secplus_v2_raw_replay;
@@ -329,7 +328,7 @@ static void subghz_protocol_secplus_v2_encode(SubGhzProtocolEncoderSecPlus_v2* i
     uint8_t roll_2[9] = {0};
 
     if(secplus_v2_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -564,7 +563,6 @@ static uint8_t subghz_protocol_secplus_v2_get_btn_code(void) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -572,7 +570,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -591,7 +588,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -619,7 +615,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderSecPlus_v2* instance = context;
     SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         secplus_v2_raw_replay = false;
         {
             uint32_t secplus_v2_txraw = 0;
@@ -696,7 +692,6 @@ static const SubGhzProtocolEncoder enc_secplus_v2_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_secplus_v2 = {
     .name = SUBGHZ_PROTOCOL_SECPLUS_V2_NAME,
     .type = SubGhzProtocolTypeDynamic,

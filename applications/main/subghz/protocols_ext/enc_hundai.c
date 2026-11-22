@@ -1,5 +1,5 @@
-/* enc_hundai.fal : SD encoder for hundai (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_hundai__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_hundai__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_hundai_alloc enc_hundai__subghz_protocol_encoder_hundai_alloc
@@ -47,41 +47,19 @@ struct SubGhzProtocolEncoderHundai {
     uint8_t raw_data[HUNDAI_WIRE_BYTES];
 };
 
-// ---------------------------------------------------------------------------
-// Field helpers
-// ---------------------------------------------------------------------------
-
 static uint32_t hundai_uid(const uint8_t raw[HUNDAI_WIRE_BYTES]);
 static uint8_t hundai_button(const uint8_t raw[HUNDAI_WIRE_BYTES]);
 static bool hundai_frame_valid(const uint8_t raw[HUNDAI_WIRE_BYTES]);
 static void hundai_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[HUNDAI_WIRE_BYTES]);
-// b7 high-nibble key-index rollover: advance when the session counter b6 wraps
-// to 0. new_hi = 1 + old_hi; if that would be 0 (old_hi == 15), reset to 1.
-// Applied together with the b6 increment for a genuine (non-replay) press.
+
 static void hundai_advance_counter(uint8_t raw[HUNDAI_WIRE_BYTES]);
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire and send the frame TWICE.
-//   Per frame:
-//     header  : LOW 4500 -> HIGH 1000 -> LOW 500
-//     preamble: 32x 0x55 Manchester (MSB-first)
-//     body    : 9 bytes Manchester (MSB-first)
-//       bit1 -> HIGH 500 , LOW 500
-//       bit0 -> LOW 500 , HIGH 500
-//   inter-frame gap between the two frames: LOW 2500 -> HIGH 1000 -> LOW 500
-// Replay-based: the stored 9 bytes reproduce the wire exactly. A D-pad button
-// change re-stamps b5's button nibble and advances b6 (+ b7 key-index on wrap).
-// ---------------------------------------------------------------------------
 
 static size_t hundai_emit_byte_msb(LevelDuration* upload, size_t index, uint8_t byte);
 static size_t hundai_emit_frame(LevelDuration* upload, size_t index, const uint8_t raw[HUNDAI_WIRE_BYTES], bool first_frame);
 static bool hundai_encoder_build_upload(SubGhzProtocolEncoderHundai* instance);
 
-// ---------------------------------------------------------------------------
-// Field helpers
-// ---------------------------------------------------------------------------
-
 static uint32_t hundai_uid(const uint8_t raw[HUNDAI_WIRE_BYTES]) {
-    // b0..b3 as the 32-bit UID view (b4/b8 are extra serial/check bytes).
+
     return ((uint32_t)raw[0] << 24U) | ((uint32_t)raw[1] << 16U) | ((uint32_t)raw[2] << 8U) |
            raw[3];
 }
@@ -100,49 +78,33 @@ static void hundai_decode_fields(SubGhzBlockGeneric* generic, const uint8_t raw[
     generic->btn = hundai_button(raw);
     generic->cnt = raw[6];
     generic->data_count_bit = HUNDAI_WIRE_BITS;
-    // 72 bits do not fit generic.data; keep a 64-bit digest (b1..b8) for hashing.
+
     uint64_t data = 0U;
     for(size_t i = 1U; i < HUNDAI_WIRE_BYTES; i++) data = (data << 8U) | raw[i];
     generic->data = data;
 }
 
-// b7 high-nibble key-index rollover: advance when the session counter b6 wraps
-// to 0. new_hi = 1 + old_hi; if that would be 0 (old_hi == 15), reset to 1.
-// Applied together with the b6 increment for a genuine (non-replay) press.
 static void hundai_advance_counter(uint8_t raw[HUNDAI_WIRE_BYTES]) {
     const uint8_t new_b6 = (uint8_t)(raw[6] + 1U);
     raw[6] = new_b6;
     if(new_b6 == 0U) {
         uint8_t hi = (uint8_t)((raw[7] >> 4U) & 0x0FU);
         uint8_t new_hi = (uint8_t)((hi + 1U) & 0x0FU);
-        if(new_hi == 0U) new_hi = 1U; // never 0; wrap 15 -> 1
-        raw[7] = (uint8_t)((new_hi << 4U) | (raw[7] & 0x0FU)); // preserve channel nibble
+        if(new_hi == 0U) new_hi = 1U;
+        raw[7] = (uint8_t)((new_hi << 4U) | (raw[7] & 0x0FU));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Encoder: rebuild the exact TX wire and send the frame TWICE.
-//   Per frame:
-//     header  : LOW 4500 -> HIGH 1000 -> LOW 500
-//     preamble: 32x 0x55 Manchester (MSB-first)
-//     body    : 9 bytes Manchester (MSB-first)
-//       bit1 -> HIGH 500 , LOW 500
-//       bit0 -> LOW 500 , HIGH 500
-//   inter-frame gap between the two frames: LOW 2500 -> HIGH 1000 -> LOW 500
-// Replay-based: the stored 9 bytes reproduce the wire exactly. A D-pad button
-// change re-stamps b5's button nibble and advances b6 (+ b7 key-index on wrap).
-// ---------------------------------------------------------------------------
 
 static size_t hundai_emit_byte_msb(LevelDuration* upload, size_t index, uint8_t byte) {
     const uint32_t te = HUNDAI_TE_SHORT;
     for(uint8_t bit = 0U; bit < 8U; bit++) {
         const bool value = ((byte >> (7U - bit)) & 1U) != 0U;
         if(value) {
-            // bit1 = HIGH then LOW
+
             upload[index++] = level_duration_make(true, te);
             upload[index++] = level_duration_make(false, te);
         } else {
-            // bit0 = LOW then HIGH
+
             upload[index++] = level_duration_make(false, te);
             upload[index++] = level_duration_make(true, te);
         }
@@ -151,18 +113,16 @@ static size_t hundai_emit_byte_msb(LevelDuration* upload, size_t index, uint8_t 
 }
 
 static size_t hundai_emit_frame(LevelDuration* upload, size_t index, const uint8_t raw[HUNDAI_WIRE_BYTES], bool first_frame) {
-    // Header: LOW (4500 frame / 2500 inter-frame) -> HIGH 1000 -> LOW 500.
+
     upload[index++] =
         level_duration_make(false, first_frame ? HUNDAI_HDR_LOW : HUNDAI_IFG_LOW);
     upload[index++] = level_duration_make(true, HUNDAI_HDR_HIGH);
     upload[index++] = level_duration_make(false, HUNDAI_HDR_LOW2);
 
-    // 32 x 0x55 preamble (MSB-first Manchester).
     for(uint8_t i = 0U; i < HUNDAI_PREAMBLE_BYTES; i++) {
         index = hundai_emit_byte_msb(upload, index, HUNDAI_PREAMBLE_BYTE);
     }
 
-    // 9 body bytes (MSB-first Manchester).
     for(uint8_t i = 0U; i < HUNDAI_WIRE_BYTES; i++) {
         index = hundai_emit_byte_msb(upload, index, raw[i]);
     }
@@ -175,12 +135,10 @@ static bool hundai_encoder_build_upload(SubGhzProtocolEncoderHundai* instance) {
     if(!upload) return false;
 
     size_t index = 0U;
-    // Frame sent TWICE per press. The first frame opens with the 4500us header;
-    // the second is preceded by the inter-frame gap (2500us) header sequence.
+
     index = hundai_emit_frame(upload, index, instance->raw_data, true);
     index = hundai_emit_frame(upload, index, instance->raw_data, false);
 
-    // Trailing gap so consecutive repeats are separable.
     upload[index++] = level_duration_make(false, HUNDAI_IFG_LOW);
 
     instance->encoder.size_upload = index;
@@ -188,7 +146,6 @@ static bool hundai_encoder_build_upload(SubGhzProtocolEncoderHundai* instance) {
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -196,7 +153,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -273,11 +229,6 @@ SubGhzProtocolStatus
     instance->generic.btn = hundai_button(instance->raw_data);
     instance->generic.cnt = instance->raw_data[6];
 
-    // [PROTOPIRATE_PORT] custom_btn support. Hundai exposes 3 buttons via the b5
-    // low nibble: Lock=0x01, Unlock=0x02, Trunk=0x09. OK replays the captured
-    // frame byte-identically. A D-pad change re-stamps b5's button nibble (high
-    // nibble preserved) and advances the session counter b6 (with b7 key-index
-    // rollover on wrap) so the emitted frame is a valid fresh press.
     const uint8_t original_btn = hundai_button(instance->raw_data);
     if(subghz_custom_btn_get_original() == 0) {
         subghz_custom_btn_set_original(original_btn);
@@ -290,13 +241,13 @@ SubGhzProtocolStatus
     case SUBGHZ_CUSTOM_BTN_DOWN: new_btn = HUNDAI_BTN_1; break;
     case SUBGHZ_CUSTOM_BTN_LEFT: new_btn = HUNDAI_BTN_2; break;
     case SUBGHZ_CUSTOM_BTN_OK:
-    default:                     new_btn = original_btn; break; // exact replay
+    default:                     new_btn = original_btn; break;
     }
 
     if(new_btn != original_btn) {
-        // Re-stamp the button nibble (preserve b5 high nibble).
+
         instance->raw_data[5] = (uint8_t)((instance->raw_data[5] & 0xF0U) | (new_btn & 0x0FU));
-        // Advance the session counter (honoring an explicit override if set).
+
         uint32_t override_cnt = 0U;
         if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
             instance->raw_data[6] = (uint8_t)(override_cnt & 0xFFU);
@@ -315,6 +266,10 @@ SubGhzProtocolStatus
     instance->encoder.repeat = (repeat == 0U) ? HUNDAI_DEFAULT_REPEAT : (size_t)repeat;
 
     if(instance->encoder.upload == NULL) {
+        if(instance->encoder.upload) {
+            free(instance->encoder.upload);
+            instance->encoder.upload = NULL;
+        }
         instance->encoder.upload = malloc(HUNDAI_UPLOAD_CAPACITY * sizeof(LevelDuration));
         furi_check(instance->encoder.upload);
     }
@@ -334,7 +289,6 @@ static const SubGhzProtocolEncoder enc_hundai_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_hundai = {
     .name = HUNDAI_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

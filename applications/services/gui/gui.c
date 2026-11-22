@@ -82,17 +82,14 @@ static void gui_draw_desktop_notification(Gui* gui) {
     if(!gui->desktop_notify_active) return;
     int reveal = gui->desktop_notify_reveal;
     if(reveal <= 0) return;
-    if(reveal > GUI_STATUS_BAR_HEIGHT - 1) reveal = GUI_STATUS_BAR_HEIGHT - 1; /* <= 12 */
+    if(reveal > GUI_STATUS_BAR_HEIGHT - 1) reveal = GUI_STATUS_BAR_HEIGHT - 1;
 
     Canvas* canvas = gui->canvas;
     canvas_frame_set(canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);
 
-    /* Erase the covered status-bar strip (rows 1..reveal) to background. The
-     * double border is redrawn after us, so it always stays on top and the
-     * banner appears to slide out from underneath it. */
     canvas_set_color(canvas, ColorBlack);
     {
-        /* Soft bottom-left/right corners; top stays square (flush under the border). */
+
         const int banner_rad = 3;
         if((int)reveal >= 2 * banner_rad) {
             canvas_draw_rbox(canvas, 3, 1, GUI_DISPLAY_WIDTH - 6, (size_t)reveal, banner_rad);
@@ -102,22 +99,20 @@ static void gui_draw_desktop_notification(Gui* gui) {
         }
     }
 
-    /* Text (+ optional info glyph). Baseline rides the revealed edge so the text
-     * slides down with the banner and is masked by the border while still high. */
     canvas_set_color(canvas, ColorWhite);
     canvas_set_font(canvas, FontPrimary);
     const char* text = gui->desktop_notify_text;
     int tw = (int)canvas_string_width(canvas, text);
     int icon_w = 0;
     if(gui->desktop_notify_icon == GuiDesktopNotifyIconInfo)
-        icon_w = 10; /* 7px glyph + 3px gap */
+        icon_w = 10;
     else if(gui->desktop_notify_icon == GuiDesktopNotifyIconWarning)
-        icon_w = 12; /* 9px glyph + 3px gap */
+        icon_w = 12;
     int x = (GUI_DISPLAY_WIDTH - (icon_w + tw)) / 2;
     if(x < 4) x = 4;
     int baseline = reveal - 1;
     if(gui->desktop_notify_icon == GuiDesktopNotifyIconInfo) {
-        /* (i) in a circle */
+
         int cx = x + 3;
         int cy = baseline - 4;
         canvas_draw_circle(canvas, cx, cy, 3);
@@ -125,14 +120,14 @@ static void gui_draw_desktop_notification(Gui* gui) {
         canvas_draw_line(canvas, cx, cy + 1, cx, cy + 2);
         x += icon_w;
     } else if(gui->desktop_notify_icon == GuiDesktopNotifyIconWarning) {
-        /* (!) in an upward triangle */
+
         int cx = x + 4;
         int b = baseline;
         canvas_draw_line(canvas, cx, b - 8, cx - 4, b);
         canvas_draw_line(canvas, cx, b - 8, cx + 4, b);
         canvas_draw_line(canvas, cx - 4, b, cx + 4, b);
-        canvas_draw_line(canvas, cx, b - 5, cx, b - 3); /* stem */
-        canvas_draw_dot(canvas, cx, b - 1);             /* dot */
+        canvas_draw_line(canvas, cx, b - 5, cx, b - 3);
+        canvas_draw_dot(canvas, cx, b - 1);
         x += icon_w;
     }
     canvas_draw_str(canvas, x, baseline, text);
@@ -682,13 +677,7 @@ void gui_remove_view_port(Gui* gui, ViewPort* view_port) {
             }
         }
     }
-    /* FoxFW: hand a layer's backing back to the heap once it becomes empty.
-     * mlib arrays keep their capacity after _remove, so the first fullscreen
-     * app of a boot would otherwise strand its layer-array backing high in the
-     * heap for the rest of the session (the max free block never fully recovers
-     * on app close). Freeing an emptied layer makes an app return ALL of its
-     * heap; a later app simply reallocates on its next push. Populated layers
-     * (desktop, status bar) are never empty, so they are untouched. */
+
     for(size_t gi = 0; gi < GuiLayerMAX; gi++) {
         if(ViewPortArray_empty_p(gui->layers[gi])) {
             ViewPortArray_clear(gui->layers[gi]);

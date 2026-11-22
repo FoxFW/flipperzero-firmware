@@ -13,88 +13,30 @@
 #include "../encode_plugin.h"
 #include "decode_plugin.h"
 
-// ============================================================================
-// Mazda Infinity SubGHz keyfob protocol (decoder + encoder)
-//
-// Reverse-engineered from the PANDORA_MAX firmware, TX dispatcher handler
-// 0xf0d0 + RF bit-banger 0x8fc4. Whitening/interleave verified against the
-// firmware routines at 0x12a90 (counter interleave + data whitening) and
-// 0x10994 (popcount parity of the checksum byte).
-//
-// Wire (verified against 0x8fc4):
-//   - modulation: OOK/ASK (AM650), bands 315 / 433 MHz.
-//   - Manchester, Te = 250 us (te_delta ~62).
-//       bit1 = HIGH 250 -> LOW 250
-//       bit0 = LOW 250 -> HIGH 250
-//   - Frame on the air:
-//       12x Manchester of byte 0xFF  (all-ones preamble)          [RAW]
-//       ~50 unit gap
-//       sync bytes FF FF D7                                        [RAW]
-//       8 payload bytes, each ONE'S-COMPLEMENTED (255-x) on wire   [INVERTED]
-//       trailer byte 0x5A                                          [RAW]
-//     repeated up to 4 times.
-//
-// Logical 8-byte payload (before interleave/whitening/inversion):
-//   b0..b3 = UID / serial
-//   b4     = button/command. On-wire codes: Lock/Unlock/Trunk -> 0x10/0x20/0x40
-//            (best-effort mapping; the raw b4 is always stored & replayed).
-//   b5     = counter high, b6 = counter low  (bit-interleaved on the wire)
-//   b7     = checksum = sum(b0..b6) & 0xFF
-//
-// WHITENING applied when BUILDING the frame (reversed on decode):
-//   1) checksum: b7 = sum(b0..b6) & 0xFF
-//   2) counter interleave (0x12a90):
-//        new_b5 = (b5 & 0xAA) | (b6 & 0x55)
-//        new_b6 = (b5 & 0x55) | (b6 & 0xAA)
-//      (self-inverse: applying the same merge again restores b5/b6)
-//   3) data whitening (0x12a90, keyed by popcount(b7)&1):
-//        p = popcount(b7) & 1
-//        if p==1: for k in 0..5      : b[k] ^= b[6]
-//        else   : for k in {0,1,2,3,4,6}: b[k] ^= b[5]
-//      (XOR is self-inverse; b7 is never modified so p is recoverable directly)
-//   4) each of the 8 payload bytes is one's-complemented (255-x) on the wire;
-//      preamble / sync / trailer are RAW.
-//
-// The 8 on-air data bytes = 64 bits -> min_count_bit_for_found = 64 and the
-// decoded logical payload fits generic.data. We also keep the raw logical bytes
-// for get_string and exact re-encode.
-// ============================================================================
-
 #define MAZDA_INF_TE_SHORT   250U
 #define MAZDA_INF_TE_DELTA   62U
-// Bit-sync gap between the 0xFF preamble and the FF FF D7 sync. On the original
-// hardware this is a "~50 unit" busy-loop delay (0xe654); on the Flipper it just
-// has to be a clean LOW long enough to separate preamble from sync. The decoder
-// does not need the preamble (it aligns on the sync burst), so this gap simply
-// resets the collector before the real sync+data+trailer window arrives.
+
 #define MAZDA_INF_GAP_US     5000U
 #define MAZDA_INF_PREAMBLE_BYTES 12U
 #define MAZDA_INF_PAYLOAD_BYTES  8U
 #define MAZDA_INF_PAYLOAD_BITS   64U
 #define MAZDA_INF_TRAILER        0x5AU
 
-// Sync bytes FF FF D7 (RAW, not inverted).
 #define MAZDA_INF_SYNC0 0xFFU
 #define MAZDA_INF_SYNC1 0xFFU
 #define MAZDA_INF_SYNC2 0xD7U
 
-// Button on-wire codes.
 #define MAZDA_INF_BTN_LOCK   0x10U
 #define MAZDA_INF_BTN_UNLOCK 0x20U
 #define MAZDA_INF_BTN_TRUNK  0x40U
 
 #define MAZDA_INF_DEFAULT_REPEAT 4U
 
-// Total wire bytes fed as Manchester cells: preamble(12) + sync(3) + data(8) +
-// trailer(1) = 24 bytes -> 24*8 bits -> 24*8*2 cells. We only align/decode the
-// data window, so the decoder scans a sliding cell buffer for FF FF D7.
 #define MAZDA_INF_WIRE_BYTES (MAZDA_INF_PREAMBLE_BYTES + 3U + MAZDA_INF_PAYLOAD_BYTES + 1U)
 
-// Sliding cell window sized to hold sync(3) + data(8) + trailer(1) = 12 bytes.
 #define MAZDA_INF_WINDOW_BYTES 12U
 #define MAZDA_INF_WINDOW_CELLS (MAZDA_INF_WINDOW_BYTES * 8U * 2U)
 
-// Encoder capacity: (12+3+8+1) bytes * 8 bits * 2 cells + gap markers + margin.
 #define MAZDA_INF_UPLOAD_CAPACITY \
     ((MAZDA_INF_WIRE_BYTES * 8U * 2U) + 8U)
 
@@ -120,7 +62,7 @@ struct SubGhzProtocolDecoderMazdaInfinity {
     uint8_t cells[MAZDA_INF_WINDOW_CELLS];
     uint16_t cell_count;
 
-    uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]; // de-whitened logical payload
+    uint8_t logical[MAZDA_INF_PAYLOAD_BYTES];
     uint8_t last_logical[MAZDA_INF_PAYLOAD_BYTES];
     bool last_valid;
     bool checksum_ok;
@@ -134,7 +76,6 @@ struct SubGhzProtocolEncoderMazdaInfinity {
     uint8_t logical[MAZDA_INF_PAYLOAD_BYTES];
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderMazdaInfinity);
-
 
 const SubGhzProtocolDecoder subghz_protocol_mazda_infinity_decoder = {
     .alloc = subghz_protocol_decoder_mazda_infinity_alloc,
@@ -159,11 +100,6 @@ const SubGhzProtocol subghz_protocol_mazda_infinity = {
     .encoder = &subghz_protocol_mazda_infinity_encoder_ext.vtable,
 };
 
-// ---------------------------------------------------------------------------
-// Whitening / interleave primitives (verified against 0x12a90 & 0x10994).
-// All are self-inverse, so the same routine is used to build and to reverse.
-// ---------------------------------------------------------------------------
-
 static uint8_t mazda_inf_parity(uint8_t v) {
     v ^= (uint8_t)(v >> 4);
     v ^= (uint8_t)(v >> 2);
@@ -179,7 +115,6 @@ static uint8_t mazda_inf_checksum(const uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     return (uint8_t)(sum & 0xFFU);
 }
 
-// Step 2: counter interleave (self-inverse merge of b5/b6).
 static void mazda_inf_interleave(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     const uint8_t b5 = b[5];
     const uint8_t b6 = b[6];
@@ -187,7 +122,6 @@ static void mazda_inf_interleave(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     b[6] = (uint8_t)((b5 & 0x55U) | (b6 & 0xAAU));
 }
 
-// Step 3: data whitening keyed by popcount(b7)&1 (self-inverse XOR).
 static void mazda_inf_whiten(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     const uint8_t p = mazda_inf_parity(b[7]);
     if(p == 1U) {
@@ -204,21 +138,16 @@ static void mazda_inf_whiten(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     }
 }
 
-// Build the 8 whitened+inverted on-wire data bytes from the logical payload.
-//   logical -> checksum -> interleave -> whiten -> one's-complement
-// Recover the logical payload from the 8 on-wire data bytes.
-//   wire -> un-invert -> un-whiten -> de-interleave  (b7 stays the checksum)
 static void mazda_inf_wire_to_logical(
     const uint8_t wire[MAZDA_INF_PAYLOAD_BYTES],
     uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]) {
     uint8_t b[MAZDA_INF_PAYLOAD_BYTES];
     for(size_t i = 0U; i < MAZDA_INF_PAYLOAD_BYTES; i++) {
-        b[i] = (uint8_t)(255U - wire[i]); // inverse of step 4
+        b[i] = (uint8_t)(255U - wire[i]);
     }
-    // b now holds { whitened b0..b6, checksum b7 }. b7 was never whitened, so
-    // popcount(b7)&1 is directly usable to undo step 3 (XOR self-inverse).
-    mazda_inf_whiten(b); // inverse of step 3
-    mazda_inf_interleave(b); // inverse of step 2
+
+    mazda_inf_whiten(b);
+    mazda_inf_interleave(b);
     memcpy(logical, b, MAZDA_INF_PAYLOAD_BYTES);
 }
 
@@ -236,7 +165,7 @@ static void mazda_inf_decode_fields(SubGhzBlockGeneric* generic, const uint8_t l
     generic->btn = logical[4];
     generic->cnt = mazda_inf_counter(logical);
     generic->data_count_bit = MAZDA_INF_PAYLOAD_BITS;
-    // 64-bit logical payload fits in generic.data (MSB-first over b0..b7).
+
     uint64_t data = 0U;
     for(size_t i = 0U; i < MAZDA_INF_PAYLOAD_BYTES; i++) {
         data = (data << 8U) | logical[i];
@@ -248,12 +177,6 @@ static bool mazda_inf_frame_valid(const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]
     const uint32_t uid = mazda_inf_uid(logical);
     return uid != 0U && uid != UINT32_MAX;
 }
-
-// ---------------------------------------------------------------------------
-// Decoder: collect Manchester half-bit cells, slide a window and look for the
-// FF FF D7 sync followed by 8 data bytes + 0x5A trailer. Cell pairs decode as:
-//   HIGH,LOW -> 1 ; LOW,HIGH -> 0   (matches the encoder / RE polarity).
-// ---------------------------------------------------------------------------
 
 static bool mazda_inf_duration_is_short(uint32_t duration) {
     return DURATION_DIFF(duration, MAZDA_INF_TE_SHORT) < MAZDA_INF_TE_DELTA;
@@ -268,8 +191,6 @@ static void mazda_inf_clear_cells(SubGhzProtocolDecoderMazdaInfinity* instance) 
     memset(instance->cells, 0, sizeof(instance->cells));
 }
 
-// Decode `bytes` logical bytes MSB-first from cells starting at cell offset
-// `cell_off`. Returns false if any pair is not a valid Manchester cell.
 static bool mazda_inf_cells_to_bytes(
     const uint8_t* cells,
     uint16_t cell_off,
@@ -279,7 +200,7 @@ static bool mazda_inf_cells_to_bytes(
         const uint8_t first = cells[cell_off + bit * 2U];
         const uint8_t second = cells[cell_off + bit * 2U + 1U];
         if(first == second) return false;
-        // HIGH,LOW -> 1 ; LOW,HIGH -> 0
+
         const bool value = (first != 0U) && (second == 0U);
         if(bit % 8U == 0U) out[bit / 8U] = 0U;
         if(value) {
@@ -290,12 +211,10 @@ static bool mazda_inf_cells_to_bytes(
 }
 
 static void mazda_inf_try_decode(SubGhzProtocolDecoderMazdaInfinity* instance) {
-    // Need sync(3) + data(8) + trailer(1) = 12 bytes = 192 bits = 384 cells.
+
     const uint16_t need_cells = MAZDA_INF_WINDOW_BYTES * 8U * 2U;
     if(instance->cell_count < need_cells) return;
 
-    // Try every byte-aligned offset within the buffered cells so the sync can be
-    // found regardless of how many preamble cells preceded it.
     const uint16_t max_off = (uint16_t)(instance->cell_count - need_cells);
     for(uint16_t off = 0U; off <= max_off; off += 2U) {
         uint8_t win[MAZDA_INF_WINDOW_BYTES];
@@ -309,7 +228,7 @@ static void mazda_inf_try_decode(SubGhzProtocolDecoderMazdaInfinity* instance) {
             continue;
         }
 
-        const uint8_t* wire = &win[3]; // 8 inverted+whitened data bytes
+        const uint8_t* wire = &win[3];
         uint8_t logical[MAZDA_INF_PAYLOAD_BYTES];
         mazda_inf_wire_to_logical(wire, logical);
 
@@ -319,7 +238,7 @@ static void mazda_inf_try_decode(SubGhzProtocolDecoderMazdaInfinity* instance) {
 
         if(instance->last_valid &&
            memcmp(instance->last_logical, logical, MAZDA_INF_PAYLOAD_BYTES) == 0) {
-            return; // repeated identical frame
+            return;
         }
 
         memcpy(instance->logical, logical, MAZDA_INF_PAYLOAD_BYTES);
@@ -355,8 +274,6 @@ void* subghz_protocol_decoder_mazda_infinity_alloc(SubGhzEnvironment* environmen
     subghz_protocol_decoder_mazda_infinity_reset(instance);
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_mazda_infinity_reset(void* context) {
     furi_check(context);
@@ -396,8 +313,7 @@ void subghz_protocol_decoder_mazda_infinity_feed(void* context, bool level, uint
             mazda_inf_push_cell(instance, level);
             mazda_inf_push_cell(instance, level);
         } else {
-            // Inter-frame gap or noise: attempt a final decode then reset so the
-            // fob's next repeat can be captured.
+
             mazda_inf_try_decode(instance);
             mazda_inf_clear_cells(instance);
             instance->decoder.parser_step = MazdaInfDecoderStepReset;
@@ -429,7 +345,6 @@ SubGhzProtocolStatus subghz_protocol_decoder_mazda_infinity_serialize(
         return ret;
     }
 
-    // Store the decoded LOGICAL payload; the encoder re-derives the wire from it.
     flipper_format_rewind(flipper_format);
     if(!flipper_format_insert_or_update_hex(
            flipper_format, MAZDA_INF_DATA_FIELD, instance->logical, MAZDA_INF_PAYLOAD_BYTES)) {
@@ -490,15 +405,4 @@ void subghz_protocol_decoder_mazda_infinity_get_string(void* context, FuriString
     };
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
-
-
-// ---------------------------------------------------------------------------
-// Encoder: exact inverse of the decode path.
-//   logical -> (checksum, interleave, whiten, invert) -> 8 wire data bytes,
-//   then emit: 12x Manchester(0xFF) + FF FF D7 + 8 wire bytes + 0x5A trailer,
-//   Manchester Te=250, repeat 4.
-//     bit1 -> HIGH 250 , LOW 250
-//     bit0 -> LOW 250 , HIGH 250
-// Replay-capable: the stored logical bytes reproduce the exact wire.
-// ---------------------------------------------------------------------------
 

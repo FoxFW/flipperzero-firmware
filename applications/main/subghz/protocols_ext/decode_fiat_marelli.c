@@ -1,4 +1,4 @@
-/* decode_fiat_marelli.fal : SD get_string for fiat_marelli (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/fiat_marelli.h>
@@ -29,10 +29,9 @@ struct SubGhzProtocolDecoderFiatMarelli {
     uint32_t te_sum;
     uint16_t te_count;
     uint32_t te_detected;
-    // Cached result of the Hitag2 manufacturer-key dictionary pass (computed
-    // lazily on first get_string; see fiat_marelli_find_hitag2_key).
+
     bool hitag2_checked;
-    int16_t hitag2_key_index; // -1 = no known key matched; >=0 index into fiat_v1 keys
+    int16_t hitag2_key_index;
     uint32_t hitag2_epoch;
 };
 
@@ -67,7 +66,6 @@ static void fiat_marelli_decode(const SubGhzDecodeInput* input, FuriString* outp
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFiatMarelli* instance = input->decoder;
 
-
     uint8_t epoch = instance->raw_data[6] & 0xF;
     uint8_t counter = (instance->raw_data[7] >> 3) & 0x1F;
     const char* variant = (instance->te_detected &&
@@ -84,13 +82,6 @@ static void fiat_marelli_decode(const SubGhzDecodeInput* input, FuriString* outp
         crc_ok = (calc == instance->raw_data[12]);
         crc_str = crc_ok ? " CRC:OK" : " CRC:FAIL";
     }
-
-    // Harmless epoch-0 dictionary stub (kept per maintainer decision, 2026-10-12).
-    // The Marelli payload cipher is unknown and is NOT the Fiat V1 cipher this
-    // reuses, so a full sweep never matches a real frame; nothing is displayed
-    // from it (the old "MfKey:" line was removed). Left GUI-safe (epoch-0 only,
-    // ~38ms, cached once), ready if a real Marelli cipher/key set is added.
-    /* HiTag2 dictionary check done internally */
 
     furi_string_cat_printf(
         output,

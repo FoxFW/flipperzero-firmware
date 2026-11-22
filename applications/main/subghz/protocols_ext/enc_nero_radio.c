@@ -1,5 +1,5 @@
-/* enc_nero_radio.fal : SD encoder for nero_radio (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_nero_radio__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_nero_radio__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_nero_radio__subghz_protocol_encoder_common_stop
@@ -22,15 +22,16 @@
 #define NERO_RADIO_DYN_COUNT_BIT   66
 #define NERO_RADIO_DYN_TE          208
 #define NERO_RADIO_DYN_FRAME_BITS  251
-#define NERO_RADIO_DYN_HEADER      0x54C // 10101001100
+#define NERO_RADIO_DYN_HEADER      0x54C
 #define NERO_RADIO_DYN_HEADER_BITS 11
 #define NERO_RADIO_DYN_SYNC_WORDS  4
 #define NERO_RADIO_DYN_DATA_WORDS  11
 #define NERO_RADIO_DYN_PREAMBLE    34
 #define NERO_RADIO_DYN_CARRIER     128700
 #define NERO_RADIO_DYN_GAP         3000
+#define NERO_RADIO_DYN_TRAIL_MAX   16
 #define NERO_RADIO_NORM_COUNT_BIT  72
-#define NERO_RADIO_NORM_HEADER     0xE24 // 111000100100
+#define NERO_RADIO_NORM_HEADER     0xE24
 #define NERO_RADIO_NORM_HEAD_BITS  12
 #define NERO_RADIO_NORM_ID_BITS    52
 #define NERO_RADIO_NORM_ID_PREAM   8
@@ -74,53 +75,26 @@ static const uint16_t nero_radio_dyn_symbols[64] = {
     0xB433, 0xB689, 0xC24F, 0xC89D, 0xCE16, 0xD23A, 0xD364, 0xD455, 0xD54A,
 };
 
-/**
- * Hamming(7,4) codeword of a nibble, data bits first.
- * @param nibble Data
- * @return 7-bit codeword
- */
 static uint8_t subghz_protocol_nero_radio_hamming(uint8_t nibble);
 static void nero_radio_chip(NeroRadioChipWriter* writer, bool bit);
 static void nero_radio_chip_gap(NeroRadioChipWriter* writer, uint32_t gap);
 static void nero_radio_preamble(NeroRadioChipWriter* writer, uint8_t count, uint32_t last_low);
-/**
- * Generating an upload for the rolling long range format.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
+
 static bool
     subghz_protocol_encoder_nero_radio_get_upload_dyn(SubGhzProtocolEncoderNeroRadio* instance);
-/**
- * Generating an upload for the normal rolling format.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
+
 static bool
     subghz_protocol_encoder_nero_radio_get_upload_norm(SubGhzProtocolEncoderNeroRadio* instance);
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
+
 static bool
     subghz_protocol_encoder_nero_radio_get_upload(SubGhzProtocolEncoderNeroRadio* instance);
-/**
- * Deserialize the key, accepting 56/57 bit static and 66/72 bit rolling replay formats.
- * @param generic Pointer to a SubGhzBlockGeneric instance
- * @param flipper_format Pointer to a FlipperFormat instance
- * @return status
- */
+
 static SubGhzProtocolStatus subghz_protocol_nero_radio_deserialize_key(
     SubGhzBlockGeneric* generic,
     FlipperFormat* flipper_format);
 
-/**
- * Hamming(7,4) codeword of a nibble, data bits first.
- * @param nibble Data
- * @return 7-bit codeword
- */
 static uint8_t subghz_protocol_nero_radio_hamming(uint8_t nibble) {
-    static const uint8_t parity[4] = {0x7, 0x6, 0x5, 0x3}; // for data bits 0..3
+    static const uint8_t parity[4] = {0x7, 0x6, 0x5, 0x3};
     uint8_t par = 0;
     for(uint8_t i = 0; i < 4; i++) {
         if(nibble & (1 << i)) par ^= parity[i];
@@ -155,15 +129,11 @@ static void nero_radio_preamble(NeroRadioChipWriter* writer, uint8_t count, uint
     }
 }
 
-/**
- * Generating an upload for the rolling long range format.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
 static bool
     subghz_protocol_encoder_nero_radio_get_upload_dyn(SubGhzProtocolEncoderNeroRadio* instance) {
-    // Carrier + preamble + sync + worst case one level per bit + gap
-    size_t size_upload = 2 + NERO_RADIO_DYN_PREAMBLE * 2 + 2 + NERO_RADIO_DYN_FRAME_BITS + 1;
+
+    size_t size_upload = 2 + NERO_RADIO_DYN_PREAMBLE * 2 + 2 + NERO_RADIO_DYN_FRAME_BITS +
+                         NERO_RADIO_DYN_TRAIL_MAX + 1;
     if(size_upload > instance->encoder.size_upload) {
         FURI_LOG_E(TAG, "Size upload exceeds allocated encoder buffer.");
         return false;
@@ -194,20 +164,21 @@ static bool
     for(uint16_t chip = 0; chip < COUNT_OF(words) * 16; chip++) {
         nero_radio_chip(&writer, (words[chip >> 4] >> (15 - (chip & 0xF))) & 1);
     }
+
+    uint8_t trail_len = (uint8_t)(instance->generic.data_2 >> 24);
+    if(trail_len > NERO_RADIO_DYN_TRAIL_MAX) trail_len = NERO_RADIO_DYN_TRAIL_MAX;
+    for(uint8_t i = 0; i < trail_len; i++) {
+        nero_radio_chip(&writer, (instance->generic.data_2 >> (8 + trail_len - 1 - i)) & 1);
+    }
     nero_radio_chip_gap(&writer, NERO_RADIO_DYN_GAP);
 
     instance->encoder.size_upload = writer.index;
     return true;
 }
 
-/**
- * Generating an upload for the normal rolling format.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
 static bool
     subghz_protocol_encoder_nero_radio_get_upload_norm(SubGhzProtocolEncoderNeroRadio* instance) {
-    // Carrier, id preamble + sync, id, preamble + start, worst case one level per chip, gap
+
     size_t size_upload = 2 + NERO_RADIO_NORM_ID_PREAM * 2 + 1 + NERO_RADIO_NORM_ID_BITS + 1 +
                          (NERO_RADIO_NORM_PREAMBLE + 1) * 2 + NERO_RADIO_DYN_FRAME_BITS + 1;
     if(size_upload > instance->encoder.size_upload) {
@@ -254,11 +225,6 @@ static bool
     return true;
 }
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderNeroRadio instance
- * @return true On success
- */
 static bool
     subghz_protocol_encoder_nero_radio_get_upload(SubGhzProtocolEncoderNeroRadio* instance) {
     furi_assert(instance);
@@ -277,7 +243,6 @@ static bool
         instance->encoder.size_upload = size_upload;
     }
 
-    //Send header
     for(uint8_t i = 0; i < 49; i++) {
         instance->encoder.upload[index++] =
             level_duration_make(true, (uint32_t)subghz_protocol_nero_radio_const.te_short);
@@ -285,21 +250,19 @@ static bool
             level_duration_make(false, (uint32_t)subghz_protocol_nero_radio_const.te_short);
     }
 
-    //Send start bit
     instance->encoder.upload[index++] = level_duration_make(true, (uint32_t)830);
     instance->encoder.upload[index++] =
         level_duration_make(false, (uint32_t)subghz_protocol_nero_radio_const.te_short);
 
-    //Send key data
     for(uint8_t i = instance->generic.data_count_bit; i > 1; i--) {
         if(bit_read(instance->generic.data, i - 1)) {
-            //send bit 1
+
             instance->encoder.upload[index++] =
                 level_duration_make(true, (uint32_t)subghz_protocol_nero_radio_const.te_long);
             instance->encoder.upload[index++] =
                 level_duration_make(false, (uint32_t)subghz_protocol_nero_radio_const.te_short);
         } else {
-            //send bit 0
+
             instance->encoder.upload[index++] =
                 level_duration_make(true, (uint32_t)subghz_protocol_nero_radio_const.te_short);
             instance->encoder.upload[index++] =
@@ -307,7 +270,7 @@ static bool
         }
     }
     if(bit_read(instance->generic.data, 0)) {
-        //send bit 1
+
         instance->encoder.upload[index++] =
             level_duration_make(true, (uint32_t)subghz_protocol_nero_radio_const.te_long);
         if(instance->generic.data_count_bit == 57) {
@@ -317,7 +280,7 @@ static bool
                 false, (uint32_t)subghz_protocol_nero_radio_const.te_short * 23);
         }
     } else {
-        //send bit 0
+
         instance->encoder.upload[index++] =
             level_duration_make(true, (uint32_t)subghz_protocol_nero_radio_const.te_short);
         if(instance->generic.data_count_bit == 57) {
@@ -330,12 +293,6 @@ static bool
     return true;
 }
 
-/**
- * Deserialize the key, accepting 56/57 bit static and 66/72 bit rolling replay formats.
- * @param generic Pointer to a SubGhzBlockGeneric instance
- * @param flipper_format Pointer to a FlipperFormat instance
- * @return status
- */
 static SubGhzProtocolStatus subghz_protocol_nero_radio_deserialize_key(
     SubGhzBlockGeneric* generic,
     FlipperFormat* flipper_format) {
@@ -365,7 +322,6 @@ static SubGhzProtocolStatus subghz_protocol_nero_radio_deserialize_key(
     return SubGhzProtocolStatusOk;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -373,13 +329,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -398,7 +352,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -427,7 +380,7 @@ SubGhzProtocolStatus
     subghz_protocol_encoder_nero_radio_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolEncoderNeroRadio* instance = context;
-    // A reload must stop the old frame and restore capacity after size_upload held its length.
+
     instance->encoder.is_running = false;
     instance->encoder.front = 0;
     instance->encoder.repeat = 3;
@@ -438,7 +391,7 @@ SubGhzProtocolStatus
         if(ret != SubGhzProtocolStatusOk) {
             break;
         }
-        // Optional value
+
         flipper_format_rewind(flipper_format);
         flipper_format_read_uint32(
             flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
@@ -461,7 +414,6 @@ static const SubGhzProtocolEncoder enc_nero_radio_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_nero_radio = {
     .name = SUBGHZ_PROTOCOL_NERO_RADIO_NAME,
     .type = SubGhzProtocolTypeStatic,

@@ -15,7 +15,6 @@
 
 extern const SubGhzProtocol subghz_protocol_code_alarm;
 
-// Decoder functions
 void* subghz_protocol_decoder_code_alarm_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_code_alarm_reset(void* context);
 void subghz_protocol_decoder_code_alarm_feed(void* context, bool level, uint32_t duration);

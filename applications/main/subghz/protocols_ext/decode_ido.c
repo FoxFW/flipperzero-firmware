@@ -1,4 +1,4 @@
-/* decode_ido.fal : SD get_string for ido (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/ido.h>
@@ -29,7 +29,6 @@ static void subghz_protocol_ido_check_remote_controller(SubGhzBlockGeneric* inst
 static void ido_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderIDo* instance = input->decoder;
-
 
     subghz_protocol_ido_check_remote_controller(&instance->generic);
     uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(

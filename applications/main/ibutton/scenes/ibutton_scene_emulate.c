@@ -19,10 +19,6 @@ void ibutton_scene_emulate_on_enter(void* context) {
     Widget* widget = ibutton->widget;
     FuriString* tmp = furi_string_alloc();
 
-    /* FoxFW: emulate screen — Fox logo fills the left (replacing the old key
-     * icon and the empty space left by a removed animation); the combined
-     * "Emulating / [proto] / key" status sits on the right. Mirrors the
-     * lfrfid emulate screen for consistent spacing across all emulate views. */
     widget_add_icon_element(widget, 0, 0, &I_fox_64x64);
 
     furi_string_printf(

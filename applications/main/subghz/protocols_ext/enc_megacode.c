@@ -1,5 +1,5 @@
-/* enc_megacode.fal : SD encoder for megacode (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_megacode__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_deserialize enc_megacode__subghz_protocol_encoder_common_deserialize
 #define subghz_protocol_encoder_common_free enc_megacode__subghz_protocol_encoder_common_free
@@ -91,7 +91,6 @@ static bool subghz_protocol_encoder_megacode_get_upload(SubGhzProtocolEncoderMeg
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -99,13 +98,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -124,7 +121,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -140,7 +136,6 @@ void* subghz_protocol_encoder_common_alloc(
     return instance;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 SubGhzProtocolStatus subghz_protocol_encoder_common_deserialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -183,7 +178,6 @@ static const SubGhzProtocolEncoder enc_megacode_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_megacode = {
     .name = SUBGHZ_PROTOCOL_MEGACODE_NAME,
     .type = SubGhzProtocolTypeStatic,

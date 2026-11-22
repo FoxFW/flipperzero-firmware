@@ -4,17 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "AudiV3"
-
-// Audi V3 -- ported from firmware audi_v3.c via KeeLoq-RX arke_vag.py (class AudiV3).
-// 2-FSK (FM), te_short~=383 / te_long~=766. Custom half-bit demod (NOT the Manchester
-// table): a preamble of >=20 short pulses, then one long pulse that opens the data
-// window; thereafter one long pulse = one bit, two consecutive short pulses = one bit,
-// and the bit value is (level ? 0 : 1) of the completing pulse. 96-bit frame =
-// Button(8) | Hop(56) | Counter(24) | Chk(8). Accept gate: button in {0x0C Unlock,
-// 0x0D Lock} and the 56-bit hop is neither all-0x00 nor all-0xFF. Rolling hop
-// encrypted -> no clone. Decode-only, 2-FSK; .encoder = NULL.
 
 #define AUDI_V3_PRE_LO    220
 #define AUDI_V3_PRE_HI    470
@@ -44,11 +36,10 @@ struct SubGhzProtocolDecoderAudiV3 {
 
     uint8_t button;
     uint8_t hop[7];
-    uint32_t counter; // 24-bit
+    uint32_t counter;
     uint8_t chk;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderAudiV3);
-
 
 typedef enum {
     AudiV3StepReset = 0,
@@ -82,7 +73,6 @@ static void audi_v3_process(SubGhzProtocolDecoderAudiV3* instance) {
     uint8_t chk = 0;
     for(uint8_t i = 0; i < 8; i++) chk = (uint8_t)((chk << 1) | (b[88 + i] & 1));
 
-    // gate: reject degenerate hop (all 0xFF / all 0x00) and non-whitelisted button
     bool all_ff = true, all_00 = true;
     for(uint8_t i = 0; i < 7; i++) {
         if(hop[i] != 0xFF) all_ff = false;
@@ -91,7 +81,6 @@ static void audi_v3_process(SubGhzProtocolDecoderAudiV3* instance) {
     if(all_ff || all_00) return;
     if(button != 0x0C && button != 0x0D) return;
 
-    // data = button:hop (64 bits), matches arke `data`
     uint64_t data = button;
     for(uint8_t i = 0; i < 7; i++) data = (data << 8) | hop[i];
 
@@ -100,7 +89,7 @@ static void audi_v3_process(SubGhzProtocolDecoderAudiV3* instance) {
     instance->counter = counter;
     instance->chk = chk;
 
-    instance->generic.data = data; // top 64 bits (button | hop)
+    instance->generic.data = data;
     instance->generic.data_count_bit = AUDI_V3_DATA_BITS;
     instance->generic.serial = 0;
     instance->generic.btn = button;
@@ -120,8 +109,6 @@ void* subghz_protocol_decoder_audi_v3_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_audi_v3_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderAudiV3* instance = context;
@@ -133,7 +120,7 @@ void subghz_protocol_decoder_audi_v3_reset(void* context) {
 
 static void audi_v3_append(SubGhzProtocolDecoderAudiV3* instance, bool level) {
     if(instance->nbits < AUDI_V3_DATA_BITS) {
-        instance->bits[instance->nbits] = level ? 0 : 1; // bit = (level ? 0 : 1)
+        instance->bits[instance->nbits] = level ? 0 : 1;
         instance->nbits++;
     }
 }
@@ -160,7 +147,7 @@ void subghz_protocol_decoder_audi_v3_feed(void* context, bool level, uint32_t du
         } else if(is_long && instance->pre >= AUDI_V3_MIN_PRE) {
             instance->parser_step = AudiV3StepData;
             instance->nbits = 0;
-            audi_v3_append(instance, level); // first bit from the opening long
+            audi_v3_append(instance, level);
             instance->half = false;
         } else {
             audi_v3_clear(instance);
@@ -204,8 +191,6 @@ void subghz_protocol_decoder_audi_v3_feed(void* context, bool level, uint32_t du
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_audi_v3_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -222,6 +207,17 @@ SubGhzProtocolStatus subghz_protocol_decoder_audi_v3_serialize(
     if(!flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Chk", &chk, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[12];
+    fdata[0] = instance->button;
+    for(uint8_t i = 0; i < 7; i++) fdata[1 + i] = instance->hop[i];
+    fdata[8] = (uint8_t)(instance->counter >> 16);
+    fdata[9] = (uint8_t)(instance->counter >> 8);
+    fdata[10] = (uint8_t)(instance->counter);
+    fdata[11] = instance->chk;
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -266,12 +262,15 @@ const SubGhzProtocolDecoder subghz_protocol_audi_v3_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_audi_v3_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_audi_v3 = {
     .name = AUDI_V3_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_audi_v3_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_audi_v3_encoder_ext.vtable,
 };

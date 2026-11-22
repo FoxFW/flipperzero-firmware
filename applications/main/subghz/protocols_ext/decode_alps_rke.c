@@ -1,4 +1,4 @@
-/* decode_alps_rke.fal : SD get_string for alps_rke (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/alps_rke.h>
@@ -14,7 +14,7 @@
 #include <lib/toolbox/manchester_decoder.h>
 #include <flipper_format/flipper_format.h>
 
-#define ALPS_RKE_MAX_BITS     96 /* decoded-bit ring capacity */
+#define ALPS_RKE_MAX_BITS     96
 
 struct SubGhzProtocolDecoderAlpsRke {
     SubGhzProtocolDecoderBase base;
@@ -31,8 +31,6 @@ static void alps_rke_decode(const SubGhzDecodeInput* input, FuriString* output) 
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderAlpsRke* instance = input->decoder;
 
-
-    /* Re-derive fields from data so display is correct after load. */
     uint64_t data = instance->generic.data;
     uint32_t id = (uint32_t)(data >> 32);
     uint8_t button = (uint8_t)((data >> 28) & 0x0F);

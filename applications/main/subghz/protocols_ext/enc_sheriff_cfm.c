@@ -1,5 +1,5 @@
-/* enc_sheriff_cfm.fal : SD encoder for sheriff_cfm (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_sheriff_cfm__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_sheriff_cfm__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_sheriff_cfm__subghz_protocol_encoder_common_yield
@@ -49,7 +49,6 @@ static const SubGhzBlockConst subghz_protocol_sheriff_cfm_const = {
     .min_count_bit_for_found = 64,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
     __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
@@ -312,7 +311,6 @@ static bool subghz_protocol_encoder_sheriff_cfm_get_upload(
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -320,13 +318,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -437,7 +433,6 @@ static const SubGhzProtocolEncoder enc_sheriff_cfm_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_sheriff_cfm = {
     .name = SUBGHZ_PROTOCOL_SHERIFF_CFM_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -1,5 +1,5 @@
-/* enc_land_rover_v0.fal : SD encoder for land_rover_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_land_rover_v0__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_land_rover_v0__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_land_rover_v0_alloc enc_land_rover_v0__subghz_protocol_encoder_land_rover_v0_alloc
@@ -44,7 +44,7 @@ typedef struct SubGhzProtocolEncoderLandRoverV0 {
     uint32_t count;
     uint8_t  button;
     uint8_t  check;
-} 
+}
 SubGhzProtocolEncoderLandRoverV0;
 
 static const SubGhzBlockConst subghz_protocol_land_rover_v0_const = {
@@ -309,7 +309,6 @@ static uint64_t land_rover_v0_build_key(
     return lr_bytes_to_u64_be(key_bytes);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -317,7 +316,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -513,7 +511,6 @@ static const SubGhzProtocolEncoder enc_land_rover_v0_vt = {
     .yield = subghz_protocol_encoder_land_rover_v0_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_land_rover_v0 = {
     .name = LAND_ROVER_PROTOCOL_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

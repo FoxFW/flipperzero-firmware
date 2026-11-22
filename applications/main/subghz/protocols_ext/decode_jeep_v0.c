@@ -1,4 +1,4 @@
-/* decode_jeep_v0.fal : SD get_string for jeep_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/jeep_v0.h>
@@ -18,8 +18,8 @@ struct SubGhzProtocolDecoderJeepV0 {
     uint16_t preamble_count;
     ManchesterState manchester_state;
 
-    uint64_t data_lo; // first 64 demodulated bits (serial|btn|0x07|cnt), post-invert
-    uint32_t data_32; // last 32 demodulated bits (hop), post-invert
+    uint64_t data_lo;
+    uint32_t data_32;
     uint16_t bit_count;
 
     uint32_t serial;

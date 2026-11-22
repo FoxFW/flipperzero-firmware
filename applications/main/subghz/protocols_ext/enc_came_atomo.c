@@ -1,5 +1,5 @@
-/* enc_came_atomo.fal : SD encoder for came_atomo (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define atomo_decrypt enc_came_atomo__atomo_decrypt
 #define atomo_encrypt enc_came_atomo__atomo_encrypt
 #define subghz_protocol_came_atomo enc_came_atomo__subghz_protocol_came_atomo
@@ -39,7 +39,6 @@ static const SubGhzBlockConst subghz_protocol_came_atomo_const = {
     .min_count_bit_for_found = 62,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool bypass__bridge_ty;
 extern uint8_t came_atomo_counter_mode__bridge_ty;
 extern bool came_atomo_raw_replay__bridge_ty;
@@ -109,7 +108,7 @@ static void subghz_protocol_encoder_came_atomo_get_upload(
     if(came_atomo_counter_mode == 0 || bypass) {
 
         if(came_atomo_raw_replay) {
-            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+            bypass = false;
         } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF || bypass) {
             bypass = false;
 
@@ -384,7 +383,6 @@ static uint8_t subghz_protocol_came_atomo_get_btn_code(void) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -392,13 +390,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -417,7 +413,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -436,7 +431,10 @@ void* subghz_protocol_encoder_common_alloc(
 void* subghz_protocol_encoder_came_atomo_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return subghz_protocol_encoder_common_alloc(
-        sizeof(SubGhzProtocolEncoderCameAtomo), &subghz_protocol_came_atomo, 1, 900);
+        sizeof(SubGhzProtocolEncoderCameAtomo),
+        &subghz_protocol_came_atomo,
+        1,
+        1024);
 }
 
 SubGhzProtocolStatus
@@ -445,7 +443,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderCameAtomo* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         came_atomo_raw_replay = false;
         {
             uint32_t came_atomo_txraw = 0;
@@ -457,7 +455,10 @@ SubGhzProtocolStatus
             flipper_format_rewind(flipper_format);
         }
         if(SubGhzProtocolStatusOk !=
-           subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
+           subghz_block_generic_deserialize_check_count_bit(
+               &instance->generic,
+               flipper_format,
+               subghz_protocol_came_atomo_const.min_count_bit_for_found)) {
             FURI_LOG_E(TAG, "Deserialize error");
             break;
         }
@@ -550,7 +551,6 @@ static const SubGhzProtocolEncoder enc_came_atomo_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_came_atomo = {
     .name = SUBGHZ_PROTOCOL_CAME_ATOMO_NAME,
     .type = SubGhzProtocolTypeDynamic,

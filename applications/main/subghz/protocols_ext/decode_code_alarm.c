@@ -1,4 +1,4 @@
-/* decode_code_alarm.fal : SD get_string for code_alarm (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/code_alarm.h>
@@ -30,7 +30,7 @@ typedef struct SubGhzProtocolDecoderCodeAlarm {
 static const char* code_alarm_button_name(uint8_t button);
 
 static const char* code_alarm_button_name(uint8_t button) {
-    // Order matches the rtl_433 button_map: first match wins for shared codes.
+
     switch(button) {
     case 0x7:
         return "Multiple";
@@ -52,7 +52,6 @@ static const char* code_alarm_button_name(uint8_t button) {
 static void code_alarm_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderCodeAlarm* instance = input->decoder;
-
 
     uint32_t data_hi = (uint32_t)(instance->generic.data >> 32);
     uint32_t data_lo = (uint32_t)(instance->generic.data & 0xFFFFFFFF);

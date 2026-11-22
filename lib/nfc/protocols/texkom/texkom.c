@@ -12,31 +12,23 @@
 
 #define TEXKOM_FRAME_BITS (TEXKOM_FRAME_SIZE * 8)
 
-/** Raw bits a TK13-coded frame carries before pairs are collapsed. */
 #define TEXKOM_TK13_RAW_BITS (TEXKOM_FRAME_BITS * 2)
 
-/** Every variant opens the frame with FF FF. */
 #define TEXKOM_PREAMBLE_BITS (16U)
 
 typedef uint8_t (*TexkomCrcHandler)(const uint8_t* uid);
 
-/**
- * @brief Everything that varies between variants, in one place.
- *
- * The per-variant frame layout is the whole content of this protocol, so it lives in one table
- * rather than being re-derived at each use.
- */
 typedef struct {
     const char* full_name;
     const char* type_name;
     uint8_t uid_offset;
     uint8_t uid_size;
     TexkomCoding coding;
-    /** Value of frame[2] that names this variant. Zero for Unknown, which names none. */
+
     uint8_t type_byte;
-    /** NULL when the checksum algorithm is not known, which means it is left alone. */
+
     TexkomCrcHandler crc;
-    /** Part of the checksum byte this variant owns. MMBIT gets only the high nibble. */
+
     uint8_t crc_mask;
 } TexkomFeatures;
 
@@ -176,9 +168,6 @@ bool texkom_load(TexkomData* data, FlipperFormat* ff, uint32_t version) {
         uint8_t frame[TEXKOM_FRAME_SIZE];
         if(!flipper_format_read_hex(ff, TEXKOM_FRAME_KEY, frame, TEXKOM_FRAME_SIZE)) break;
 
-        // Everything downstream reads the variant off the type byte, so a hand-edited file must
-        // not be able to put the stored type and the frame out of step. TK13 and TK15 are
-        // indistinguishable here by design - same type byte, same coding, different timings.
         if(frame[0] != 0xFF || frame[1] != 0xFF) break;
         if(frame[2] != texkom_features[type].type_byte) break;
         if(type == TexkomTypeMmbit && frame[3] != 0xFF) break;
@@ -215,7 +204,7 @@ bool texkom_is_equal(const TexkomData* data, const TexkomData* other) {
     furi_check(data);
     furi_check(other);
 
-    return memcmp(data, other, sizeof(TexkomData)) == 0; //-V1103
+    return memcmp(data, other, sizeof(TexkomData)) == 0;
 }
 
 const char* texkom_get_device_name(const TexkomData* data, NfcDeviceNameType name_type) {
@@ -242,9 +231,6 @@ bool texkom_set_uid(TexkomData* data, const uint8_t* uid, size_t uid_len) {
     furi_check(data);
     furi_check(uid);
 
-    // The load path calls this before the frame is read, while the type is still Unknown: there
-    // is no way to place a UID without knowing the variant, and the frame read next replaces it
-    // anyway. Vet the length so a file with a nonsense UID still fails, and write nothing.
     if(data->type == TexkomTypeUnknown) {
         return uid_len == TEXKOM_UID_SIZE || uid_len == TEXKOM_MMBIT_UID_SIZE;
     }
@@ -253,7 +239,7 @@ bool texkom_set_uid(TexkomData* data, const uint8_t* uid, size_t uid_len) {
     if(uid_len != features->uid_size) return false;
 
     memcpy(&data->frame[features->uid_offset], uid, uid_len);
-    // A frame whose checksum disagrees with its UID is one a reader will not look at.
+
     texkom_update_crc(data);
 
     return true;
@@ -269,7 +255,7 @@ bool texkom_make_blank(TexkomData* data, TexkomType type) {
     data->frame[0] = 0xFF;
     data->frame[1] = 0xFF;
     data->frame[2] = texkom_features[type].type_byte;
-    // MMBIT spends the first UID byte on a second marker; everything else starts its UID there.
+
     if(type == TexkomTypeMmbit) {
         data->frame[3] = 0xFF;
     }
@@ -283,7 +269,6 @@ TexkomData* texkom_get_base_data(const TexkomData* data) {
     furi_crash("No base data");
 }
 
-/** CRC-8 over the 4 UID bytes: poly 0x31, zero init, MSB first. From PM3 TexcomTK13CRC. */
 static uint8_t texkom_crc_tk13(const uint8_t* uid) {
     uint8_t crc = 0;
 
@@ -297,18 +282,10 @@ static uint8_t texkom_crc_tk13(const uint8_t* uid) {
     return crc;
 }
 
-/**
- * Dallas CRC-8 over the UID, the same one the iButton code uses.
- *
- * PM3 hashes a 7-byte buffer holding three leading zeros then the UID. Those zeros cannot change
- * the result - this CRC is reflected and starts at zero, so a zero byte leaves the register
- * alone - so the UID alone gives the same byte.
- */
 static uint8_t texkom_crc_tk17(const uint8_t* uid) {
     return maxim_crc8(uid, TEXKOM_UID_SIZE, MAXIM_CRC8_INIT);
 }
 
-/** Nibble-wide XOR over the 3 UID bytes, inverted, aligned into the high nibble. */
 static uint8_t texkom_crc_mmbit(const uint8_t* uid) {
     uint8_t crc = 0x0F;
 
@@ -319,13 +296,6 @@ static uint8_t texkom_crc_mmbit(const uint8_t* uid) {
     return (crc & 0x0F) << 4;
 }
 
-/**
- * @brief What the frame's last byte should hold, as a whole byte.
- *
- * The one place the masking rule lives: what the variant does not own stays as it is stored, so
- * MMBIT keeps its payload low nibble. Checking, reporting and writing the checksum are then all
- * the same computation.
- */
 static bool texkom_crc_byte(const TexkomData* data, uint8_t* crc) {
     const TexkomFeatures* features = texkom_get_features(data);
     if(!features->crc) return false;
@@ -361,12 +331,6 @@ void texkom_update_crc(TexkomData* data) {
     }
 }
 
-/**
- * @brief Average length of the long and the short gap in a capture.
- *
- * Split the gaps at the midpoint between the extremes and average each half, so the thresholds
- * follow however fast this particular tag happens to be running.
- */
 static bool
     texkom_average_gaps(const uint8_t* intervals, size_t count, uint32_t* hi, uint32_t* low) {
     uint8_t max = 0;
@@ -398,15 +362,10 @@ static bool
     return *hi > *low;
 }
 
-/**
- * Written without abs() so a tolerance wider than the length cannot wrap the comparison. PM3
- * subtracts in unsigned and does wrap, though never for a real tag's timings.
- */
 static inline bool texkom_gap_matches(uint8_t interval, uint32_t length, uint32_t tolerance) {
     return (interval < length + tolerance) && (interval + tolerance > length);
 }
 
-/** Pack 64 one-per-byte bits, most significant first, into the frame. */
 static void texkom_pack_frame(const uint8_t* bits, uint8_t* frame) {
     memset(frame, 0, TEXKOM_FRAME_SIZE);
 
@@ -423,21 +382,12 @@ static bool texkom_preamble_valid(const uint8_t* bits) {
     return true;
 }
 
-/**
- * @brief TK13/TK15/MMBIT coding: two gaps per data bit, long then short for a one.
- *
- * Each gap is classified against the averages, which only holds while the tag keeps the two
- * lengths well apart. Tags that do not are handled by texkom_decode_tk15().
- */
 static bool texkom_decode_tk13(const uint8_t* intervals, size_t count, uint8_t* frame) {
-    // Guaranteed by the dispatch in texkom_decode_intervals(); the bounds below are
-    // belt-and-braces rather than live logic.
+
     furi_check(count == TEXKOM_TK13_INTERVALS);
     uint32_t hi = 0, low = 0;
     if(!texkom_average_gaps(intervals, count, &hi, &low)) return false;
 
-    // Empirical, straight from PM3: wide enough for a tag running off-nominal, narrow enough to
-    // keep the two gap lengths apart.
     const uint32_t tolerance = (hi - low) / 3 + 1;
 
     uint8_t raw[TEXKOM_TK13_RAW_BITS];
@@ -453,8 +403,6 @@ static bool texkom_decode_tk13(const uint8_t* intervals, size_t count, uint8_t* 
         }
     }
 
-    // The gap after the frame's final impulse falls in the pause between repetitions and is never
-    // measured, so the last bit arrives with only its first gap; its second is the complement.
     if(raw_count % 2 != 0 && raw_count < TEXKOM_TK13_RAW_BITS) {
         raw[raw_count] = !raw[raw_count - 1];
         raw_count++;
@@ -473,15 +421,8 @@ static bool texkom_decode_tk13(const uint8_t* intervals, size_t count, uint8_t* 
     return true;
 }
 
-/**
- * @brief Same coding as TK13, decoded by comparing each pair of gaps to each other.
- *
- * Older tags run the two gap lengths close enough together that absolute thresholds stop
- * separating them, but within a single bit the long gap is still the longer of the two.
- */
 static bool texkom_decode_tk15(const uint8_t* intervals, size_t count, uint8_t* frame) {
-    // Guaranteed by the dispatch in texkom_decode_intervals(); the bounds below are
-    // belt-and-braces rather than live logic.
+
     furi_check(count == TEXKOM_TK13_INTERVALS);
     uint8_t bits[TEXKOM_FRAME_BITS];
     size_t bit_count = 0;
@@ -491,8 +432,6 @@ static bool texkom_decode_tk15(const uint8_t* intervals, size_t count, uint8_t* 
         bits[bit_count++] = intervals[i] > intervals[i + 1];
     }
 
-    // As above, the last bit is one gap short. Decide it by which of the previous bit's two gaps
-    // the orphan resembles more closely.
     if(count > 2 && count % 2 != 0 && bit_count < TEXKOM_FRAME_BITS) {
         const int last = intervals[count - 1];
         const bool previous_bit = intervals[count - 3] > intervals[count - 2];
@@ -509,14 +448,8 @@ static bool texkom_decode_tk15(const uint8_t* intervals, size_t count, uint8_t* 
     return true;
 }
 
-/**
- * @brief TK17 coding: a pair of gaps carries two bits in how it splits a fixed total.
- *
- * The pair always spans the same time; which of four bands the split falls into is the payload.
- */
 static bool texkom_decode_tk17(const uint8_t* intervals, size_t count, uint8_t* frame) {
-    // Guaranteed by the dispatch in texkom_decode_intervals(); the bounds below are
-    // belt-and-braces rather than live logic.
+
     furi_check(count == TEXKOM_TK17_INTERVALS);
     uint8_t raw[TEXKOM_FRAME_BITS];
     size_t raw_count = 0;
@@ -526,10 +459,9 @@ static bool texkom_decode_tk17(const uint8_t* intervals, size_t count, uint8_t* 
         if(total == 0) return false;
 
         const uint32_t share = ((uint32_t)intervals[i + 1] * 100) / total;
-        // A split this lopsided is none of the four, so the pair is noise. Bounds from PM3.
+
         if(share < 10 || share > 90) return false;
 
-        // Bands, lowest share first: 00, 10, 01, 11.
         if(share < 30) {
             raw[raw_count++] = 0;
             raw[raw_count++] = 0;
@@ -547,7 +479,6 @@ static bool texkom_decode_tk17(const uint8_t* intervals, size_t count, uint8_t* 
 
     if(raw_count != TEXKOM_FRAME_BITS) return false;
 
-    // The tag sends each byte as four bit-pairs, least significant pair first; undo that.
     uint8_t bits[TEXKOM_FRAME_BITS];
     for(size_t byte = 0; byte < TEXKOM_FRAME_SIZE; byte++) {
         for(size_t pair = 0; pair < 4; pair++) {
@@ -561,12 +492,6 @@ static bool texkom_decode_tk17(const uint8_t* intervals, size_t count, uint8_t* 
     return true;
 }
 
-/**
- * @brief Variant a frame names, or Unknown if it names none that uses this coding.
- *
- * Requiring the two to agree is what lets the rest of the firmware read the variant off the type
- * byte alone, and it throws out noise that happened to survive the preamble check.
- */
 static TexkomType texkom_type_from_frame(const uint8_t* frame, TexkomCoding coding) {
     TexkomType type;
 
@@ -599,8 +524,7 @@ bool texkom_decode_intervals(TexkomData* data, const uint8_t* intervals, size_t 
             type = texkom_type_from_frame(frame, TexkomCodingTk13);
         } else if(texkom_decode_tk15(intervals, interval_count, frame)) {
             type = texkom_type_from_frame(frame, TexkomCodingTk13);
-            // TK13 and TK15 are the same coding and differ only in how far apart the two gap
-            // lengths run - which is exactly what made the thresholds above fail.
+
             if(type == TexkomTypeTk13) type = TexkomTypeTk15;
         }
     }

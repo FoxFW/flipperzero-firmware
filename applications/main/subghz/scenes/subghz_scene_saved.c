@@ -13,6 +13,11 @@ void subghz_scene_saved_on_enter(void* context) {
         &browser_options, SUBGHZ_APP_FILENAME_EXTENSION, &I_sub1_10px);
     browser_options.base_path = SUBGHZ_APP_FOLDER;
 
+    if(!furi_string_empty(subghz->saved_preselect)) {
+        furi_string_set(subghz->file_path, subghz->saved_preselect);
+        furi_string_reset(subghz->saved_preselect);
+    }
+
     bool picked = dialog_file_browser_show(
         subghz->dialogs, subghz->file_path, subghz->file_path, &browser_options);
 

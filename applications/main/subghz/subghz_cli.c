@@ -231,14 +231,14 @@ void subghz_cli_command_tx(PipeSide* pipe, FuriString* args, void* context) {
     Stream* stream = flipper_format_get_raw_stream(flipper_format);
     stream_clean(stream);
     stream_write_cstring(stream, furi_string_get_cstr(flipper_format_string));
-    furi_string_free(flipper_format_string); // copied into the stream; was previously leaked
+    furi_string_free(flipper_format_string);
 
     SubGhzEnvironment* environment = subghz_environment_alloc();
     subghz_environment_set_protocol_registry(environment, (void*)&subghz_protocol_registry);
 
     SubGhzTransmitter* transmitter = subghz_transmitter_alloc_init(environment, "Princeton");
     if(!transmitter) {
-        // Encoder lives on SD (FoxFW2.0 v2.1 split): no card / missing enc_princeton.fal.
+
         printf("Princeton encoder unavailable (SD card or enc_princeton.fal missing)\r\n");
         flipper_format_free(flipper_format);
         subghz_environment_free(environment);

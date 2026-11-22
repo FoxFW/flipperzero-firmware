@@ -1,4 +1,4 @@
-/* decode_fiat_v2.fal : SD get_string for fiat_v2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -77,7 +77,6 @@ static uint8_t fiat_v2_ui_selector(uint8_t custom_btn_id, uint8_t original_selec
 static void fiat_v2_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFiatV2* instance = input->decoder;
-
 
     if(instance->hitag2_key_valid) {
         subghz_custom_btn_set_max(3);

@@ -1,6 +1,7 @@
 #include "receiver.h"
 
 #include "registry.h"
+#include "protocols/common.h"
 
 #include <m-array.h>
 
@@ -113,16 +114,22 @@ void subghz_receiver_reset(SubGhzReceiver* instance) {
         }
 }
 
-// Reset every decoder EXCEPT the one named `keep_name`. Used when a generic
-// decoder fires on a signal that a more-specific superset decoder is still
-// accumulating: the normal post-fire subghz_receiver_reset() would wipe the
-// superset's in-progress frame before it can complete, so the generic core
-// always wins and the specific protocol never surfaces (e.g. the 88-bit
-// "Hitag-2" core completing first and clobbering the 102-bit "Fiat V1" frame
-// of the same burst). Keeping only the named superset alive lets it finish
-// while every other decoder is cleared exactly as a full reset would clear it,
-// so no additional cross-fire is unmasked. keep_name NULL falls back to a full
-// reset.
+void subghz_receiver_reset_decode_result(SubGhzReceiver* instance) {
+    furi_check(instance);
+    furi_check(instance->slots);
+
+    for
+        M_EACH(slot, instance->slots, SubGhzReceiverSlotArray_t) {
+            slot->base->protocol->decoder->reset(slot->base);
+            if(slot->base->protocol->flag & SubGhzProtocolFlag_Decodable) {
+                SubGhzProtocolDecoderCommon* common =
+                    (SubGhzProtocolDecoderCommon*)slot->base;
+                common->generic.data = 0;
+                common->generic.data_count_bit = 0;
+            }
+        }
+}
+
 void subghz_receiver_reset_except_by_name(SubGhzReceiver* instance, const char* keep_name) {
     furi_check(instance);
     furi_check(instance->slots);

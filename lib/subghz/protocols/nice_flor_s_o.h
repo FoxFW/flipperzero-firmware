@@ -1,12 +1,5 @@
 #pragma once
 
-/* Nice O-Code shared crypto + constants. Included by the detector (nice_flor_s.c) and by both
- * split plugins (decode_nice_flor_s.fal / enc_nice_flor_s.fal) so the cipher is defined once and
- * stays byte-identical across all three. Pure computation on a caller-supplied 32-byte rainbow
- * table buffer - no I/O, no persistent state. Host-verified in ocode_crypto_test.c (cnt_swap
- * involution; encrypt_ic<->decrypt_ic; make_key->nice_o_decrypt over 300k; cert_data). The
- * including TU must already provide subghz_protocol_blocks_get_bit_array() from the blocks headers. */
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,12 +16,9 @@
 #define NICE_O_CERT_PARCELS       10
 #define NICE_O_RELEASE_PARCELS    2
 
-/* An O-Code remote's k departs from the Nice One formula at parcels 8..B. */
 static const uint8_t nice_o_k[16] =
     {0x8F, 0x8E, 0x8D, 0x8C, 0x84, 0x85, 0x86, 0x87, 0x8F, 0x8C, 0x89, 0x8D, 0x8C, 0x8D, 0x8E, 0x8F};
 
-/* O-Code counter: base-8 odometer with octal digits swapped. Involution (same call both ways).
- * Applied only at the cipher, so generic.cnt / file / editor all hold the plain count. */
 static inline uint16_t nice_o_cnt_swap(uint16_t cnt) {
     uint16_t b = cnt & 0x2492;
     return cnt ^ (uint16_t)((b << 1) | ((b ^ 0x2492) >> 1));
@@ -61,7 +51,6 @@ static inline uint8_t nice_o_tbl(const uint8_t* buf, uint8_t address) {
     return buf[address];
 }
 
-/* flags: bit0 release marker, bit1 certificate frame, bit2 O-Code table (else Nice One formula). */
 static inline void nice_o_one_get_data(uint8_t* p, uint8_t num_parcel, uint8_t flags) {
     uint8_t k = 0;
     num_parcel &= 0x0F;
@@ -79,7 +68,6 @@ static inline void nice_o_one_get_data(uint8_t* p, uint8_t num_parcel, uint8_t f
     p[9] = crc << 4;
 }
 
-/* The 40 bits a cert frame adds after the 72-bit one. p must hold 15 bytes. */
 static inline void nice_o_cert_data(uint8_t* p, uint8_t index, uint32_t cert, uint64_t body) {
     const uint32_t v = (cert ^ (uint32_t)body) & 0xFFFFFF;
     p[9] |= 0x0E;
@@ -92,7 +80,6 @@ static inline void nice_o_cert_data(uint8_t* p, uint8_t index, uint32_t cert, ui
     p[14] = (uint8_t)(crc << 4);
 }
 
-/* IC-parameterized cipher. ic == 0xFFFF gives plain Nice Flor-S. Operate on a RAM buffer. */
 static inline uint64_t nice_o_encrypt_buf(uint64_t data, uint16_t ic, const uint8_t* buf) {
     uint8_t* p = (uint8_t*)&data;
     uint8_t k = 0;
@@ -132,7 +119,6 @@ static inline uint64_t nice_o_decrypt_buf(uint64_t data, uint16_t ic, const uint
     return data;
 }
 
-/* Per-parcel obfuscation mask. n = parcel 0..15. */
 static inline void nice_o_mask(uint8_t n, uint32_t* mask_32, uint16_t* mask_16) {
     const uint32_t a = (uint32_t)(0x0Eu - n) & 0x0Fu;
     const uint32_t b = (uint32_t)(n + 2u);
@@ -149,7 +135,6 @@ static inline uint8_t nice_o_get_parcel(uint64_t data) {
     return (uint8_t)((((data >> 48) & 0x0Fu) ^ ((data >> 44) & 0x0Fu)) ^ 0x0Fu);
 }
 
-/* Returns serial/cnt/btn from an O-Code frame against a RAM table. */
 static inline void nice_o_decode_frame(
     uint64_t data, uint16_t ic, const uint8_t* buf,
     uint32_t* serial, uint16_t* cnt, uint8_t* btn) {
@@ -162,7 +147,6 @@ static inline void nice_o_decode_frame(
     if(btn) *btn = (uint8_t)((data >> 48) & 0x0Fu);
 }
 
-/* Builds the 72-bit body for one parcel of an O-Code press. */
 static inline uint64_t nice_o_make_key(
     uint32_t serial, uint16_t cnt, uint8_t btn, uint8_t parcel, uint16_t ic, const uint8_t* buf) {
     parcel &= 0x0Fu;

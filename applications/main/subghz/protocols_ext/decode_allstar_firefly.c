@@ -1,4 +1,4 @@
-/* decode_allstar_firefly.fal : SD get_string for allstar_firefly (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/allstar_firefly.h>
@@ -33,7 +33,6 @@ struct SubGhzProtocolDecoderAllstarFirefly {
 static void allstar_firefly_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderAllstarFirefly* instance = input->decoder;
-
 
     uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
         instance->generic.data, instance->generic.data_count_bit);

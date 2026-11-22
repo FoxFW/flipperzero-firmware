@@ -1,4 +1,4 @@
-/* decode_holtek_ht12x.fal : SD get_string for holtek_ht12x (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/holtek_ht12x.h>

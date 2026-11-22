@@ -1,4 +1,4 @@
-/* decode_gm_rke.fal : SD get_string for gm_rke (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/gm_rke.h>
@@ -16,11 +16,10 @@ struct SubGhzProtocolDecoderGmRke {
     SubGhzBlockGeneric generic;
 
     uint16_t bit_count;
-    uint8_t bits[GM_RKE_MAX_BITS]; /* one 0/1 per PPM symbol, MSB-first order */
+    uint8_t bits[GM_RKE_MAX_BITS];
 
-    /* Live-only extras (not serialized; recovered on decode, 0 after load). */
-    uint8_t unknown_prefix; /* byte[1] */
-    uint32_t encrypted;     /* byte[10..12], 24-bit */
+    uint8_t unknown_prefix;
+    uint32_t encrypted;
 };
 
 static void subghz_protocol_gm_rke_check_remote_controller(SubGhzBlockGeneric* generic);
@@ -50,7 +49,6 @@ static const char* subghz_protocol_gm_rke_button_name(uint8_t btn) {
 static void gm_rke_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderGmRke* instance = input->decoder;
-
 
     subghz_protocol_gm_rke_check_remote_controller(&instance->generic);
 

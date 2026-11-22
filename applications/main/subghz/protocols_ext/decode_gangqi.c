@@ -1,4 +1,4 @@
-/* decode_gangqi.fal : SD get_string for gangqi (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/gangqi.h>
@@ -54,7 +54,6 @@ static const char* subghz_protocol_gangqi_get_button_name(uint8_t btn) {
 static void gangqi_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderGangQi* instance = input->decoder;
-
 
     subghz_protocol_gangqi_remote_controller(&instance->generic);
 

@@ -81,7 +81,7 @@ const SubGhzProtocolDecoder subghz_protocol_ford_v1_decoder = {
 
 static const SubGhzEncoderExternal subghz_protocol_ford_v1_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_ford_v1");
 
-const SubGhzProtocol ford_protocol_v1 = {
+const SubGhzProtocol subghz_protocol_ford_v1 = {
     .name = FORD_PROTOCOL_V1_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM |
@@ -417,7 +417,7 @@ void* subghz_protocol_decoder_ford_v1_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolDecoderFordV1* instance = calloc(1, sizeof(SubGhzProtocolDecoderFordV1));
     furi_check(instance);
-    instance->base.protocol = &ford_protocol_v1;
+    instance->base.protocol = &subghz_protocol_ford_v1;
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }

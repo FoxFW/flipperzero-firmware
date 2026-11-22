@@ -1,17 +1,7 @@
-/* FoxFW2.0 config-externalization Stage 2 (2026-10-31, fixed 2026-10-31).
- * Modulation-filter list config scene as an on-demand .fal. Reaches SubGhz state
- * only through SubGhzConfigHostApi; never includes subghz_i.h.
- *
- * NOTE: VariableItemList stores items in an M-lib ARRAY (by value); adding past
- * capacity reallocates and MOVES items, so a cached VariableItem* dangles. We
- * therefore reserve capacity up front (keeps the count item valid for the tick
- * handler) and re-fetch each modulation row via variable_item_list_get() in the
- * select-all/none path instead of caching pointers -- the same safe pattern the
- * resident Protocol List scene uses. Select is applied in the change callback so
- * it is automatic (matches Protocol List). */
+
 
 #include "../helpers/subghz_config_scene.h"
-#include "../subghz_modulation_filter.h" /* for SUBGHZ_MOD_FILTER_COUNT only */
+#include "../subghz_modulation_filter.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -20,7 +10,7 @@ static const SubGhzConfigHostApi* g_api = NULL;
 static const char* const mod_toggle_labels[] = {"OFF", "ON"};
 static const char* const mod_select_labels[] = {"All", "None"};
 #define MOD_SELECT_ROW 1u
-#define MOD_FIRST_ROW  2u /* row 0 = count, row 1 = Select, rows 2+ = modulations */
+#define MOD_FIRST_ROW  2u
 
 static VariableItem* g_mod_count_item = NULL;
 static bool g_mod_count_dirty = false;
@@ -59,7 +49,6 @@ static void mod_toggle_cb(VariableItem* item) {
     g_mod_count_dirty = true;
 }
 
-/* Apply All/None by RE-FETCHING each row (never cache VariableItem* across adds). */
 static void mod_select_apply(bool enable_all) {
     VariableItemList* list = g_api->get_item_list(g_api->ctx);
     SubGhzSetting* setting = g_api->get_setting(g_api->ctx);
@@ -79,7 +68,7 @@ static void mod_select_apply(bool enable_all) {
 static void mod_select_value_cb(VariableItem* item) {
     g_mod_select_choice = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, mod_select_labels[g_mod_select_choice]);
-    mod_select_apply(g_mod_select_choice == 0); /* automatic, like Protocol List */
+    mod_select_apply(g_mod_select_choice == 0);
 }
 
 static void mod_list_enter_cb(void* context, uint32_t index) {
@@ -94,7 +83,7 @@ static void mod_list_populate(void) {
     size_t total = subghz_setting_get_preset_count(setting);
 
     variable_item_list_reset(list);
-    variable_item_list_reserve(list, total + 2); /* no realloc during adds -> pointers stable */
+    variable_item_list_reserve(list, total + 2);
 
     char count_buf[16];
     build_mod_count_text(count_buf, sizeof(count_buf));

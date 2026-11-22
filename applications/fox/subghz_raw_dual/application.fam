@@ -1,0 +1,13 @@
+App(
+    appid="subghz_raw_dual",
+    name="RAW Int/Ext",
+    apptype=FlipperAppType.EXTERNAL,
+    targets=["f7"],
+    entry_point="subghz_raw_dual_app",
+    requires=["gui", "dialogs", "storage"],
+    stack_size=4 * 1024,
+    order=41,
+    fap_category="System/Includes",
+    fap_icon_assets="images",
+    fap_description="Dual-radio RAW capture (internal + external) on a shared DWT timebase.",
+)

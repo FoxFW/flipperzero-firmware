@@ -1,4 +1,4 @@
-/* decode_toyota_v0.fal : SD get_string for toyota_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/toyota_v0.h>
@@ -12,7 +12,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 
-#define TOYOTA_V0_FRAME_BITS      184   // 88 data + 8 zero-gap + 88 complement
+#define TOYOTA_V0_FRAME_BITS      184
 
 struct SubGhzProtocolDecoderToyotaV0 {
     SubGhzProtocolDecoderBase base;
@@ -24,18 +24,16 @@ struct SubGhzProtocolDecoderToyotaV0 {
     uint8_t all_bits[TOYOTA_V0_FRAME_BITS + 8];
     uint16_t bit_count;
 
-    uint32_t data_32; // bits 64-95 (last 4 bytes)
+    uint32_t data_32;
 };
 
 static void toyota_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderToyotaV0* instance = input->decoder;
 
-
     uint32_t key_hi = (uint32_t)(instance->generic.data >> 32);
     uint32_t key_lo = (uint32_t)(instance->generic.data & 0xFFFFFFFF);
 
-    // data_32 holds bits 64-87 left-aligned (top 24 bits used)
     furi_string_cat_printf(
         output,
         "%s %dbit\r\n"

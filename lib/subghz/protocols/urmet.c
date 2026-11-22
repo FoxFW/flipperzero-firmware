@@ -11,14 +11,12 @@
 
 #define TAG "SubGhzProtocolUrmet"
 
-// PPM/USART @ 2000 baud (fixed high = 1*te). Live lock: Manchester block →
-// ~34ms gap → PPM preamble H1 L1 H1 L11. Do not key off remote serial bytes.
 #define URMET_TE              500
 #define URMET_TE_DELTA        150
 #define URMET_SYNC_TE         11
 #define URMET_SYNC_DELTA_TE   3
 #define URMET_END_GAP_US      20000
-#define URMET_PAUSE_TE        68 // ~34 ms trailing low on TX
+#define URMET_PAUSE_TE        68
 #define URMET_MAN_EDGE_MIN_US 40
 #define URMET_MAN_EDGE_MAX_US 280
 #define URMET_MAN_MIN_EDGES   16
@@ -33,12 +31,12 @@
 
 typedef enum {
     UrmetStepReset = 0,
-    UrmetStepManchester, // collecting short (~100us) Manchester edges
-    UrmetStepArmed, // saw Manchester + inter-block gap; wait PPM preamble
-    UrmetStepPreambleLow1, // saw H~1te, expect L~1te
-    UrmetStepPreambleHigh2, // expect H~1te
-    UrmetStepPreambleSync, // expect L~11te sync
-    UrmetStepData, // locked: H~1te + variable low gaps
+    UrmetStepManchester,
+    UrmetStepArmed,
+    UrmetStepPreambleLow1,
+    UrmetStepPreambleHigh2,
+    UrmetStepPreambleSync,
+    UrmetStepData,
 } UrmetDecoderStep;
 
 struct SubGhzProtocolDecoderUrmet {
@@ -49,15 +47,13 @@ struct SubGhzProtocolDecoderUrmet {
 
     UrmetDecoderStep step;
     bool pending_high;
-    uint16_t man_edges; // Manchester short-edge count before arming
+    uint16_t man_edges;
     uint16_t bit_cnt;
     uint8_t bit_buf[URMET_BITBUF];
 
-    // In-progress collection (may be aborted).
     uint8_t rx_gap_count;
     uint8_t rx_gaps[URMET_MAX_GAPS];
 
-    // Last accepted frame (survives abort / serialize).
     uint8_t gap_count;
     uint8_t gaps[URMET_MAX_GAPS];
     uint8_t raw_bytes[URMET_MAX_BYTES];
@@ -101,8 +97,6 @@ const SubGhzProtocol subghz_protocol_urmet = {
     .decoder = &subghz_protocol_urmet_decoder,
     .encoder = &subghz_protocol_urmet_encoder_ext.vtable,
 };
-
-// ---------------------------------------------------------------- Shared helpers
 
 static bool urmet_is_manchester_edge(uint32_t duration) {
     return duration >= URMET_MAN_EDGE_MIN_US && duration <= URMET_MAN_EDGE_MAX_US;
@@ -152,8 +146,7 @@ static bool urmet_nibble_ok(uint8_t b) {
 
 static bool urmet_payload_plausible(const uint8_t* bytes, uint8_t count) {
     if(count < URMET_MIN_BYTES || count > URMET_MAX_BYTES) return false;
-    // Encoding alphabet only (5/7/D/F). Do not require sample-remote bytes
-    // (serial / header values differ between remotes).
+
     for(uint8_t i = 0; i < count; i++) {
         if(!urmet_nibble_ok(bytes[i])) return false;
     }
@@ -164,7 +157,6 @@ static bool urmet_byte_count_ok(uint8_t byte_count) {
     return byte_count >= URMET_MIN_BYTES && byte_count <= URMET_MAX_BYTES;
 }
 
-// Decode inverted USART 8N1 (idle low, start high, LSB first, wire-inverted data).
 static uint8_t
     urmet_decode_inv_usart(const uint8_t* bits, uint16_t bit_cnt, uint8_t* out, uint8_t out_max) {
     uint8_t n = 0;
@@ -209,20 +201,19 @@ static bool urmet_append_gap(uint8_t* gaps, uint8_t* gap_count, uint8_t gap_te) 
     return true;
 }
 
-// Build gap list from USART bytes (fallback when Gaps field missing).
 static uint8_t urmet_gaps_from_bytes(const uint8_t* bytes, uint8_t byte_count, uint8_t* gaps) {
-    // Bit stream -> RLE lows after each high run of 1*te (highs always split to 1).
+
     uint8_t tmp_bits[URMET_BITBUF];
     uint16_t bit_cnt = 0;
-    // Leading idle not stored as a gap; first edge is start high of byte 0.
+
     for(uint8_t bi = 0; bi < byte_count && bit_cnt + 10 < URMET_BITBUF; bi++) {
         uint8_t val = bytes[bi];
-        tmp_bits[bit_cnt++] = 1; // start
+        tmp_bits[bit_cnt++] = 1;
         for(uint8_t b = 0; b < 8; b++) {
             bool logical = (val >> b) & 1;
             tmp_bits[bit_cnt++] = logical ? 0 : 1;
         }
-        tmp_bits[bit_cnt++] = 0; // stop
+        tmp_bits[bit_cnt++] = 0;
     }
 
     uint8_t gap_count = 0;
@@ -232,7 +223,7 @@ static uint8_t urmet_gaps_from_bytes(const uint8_t* bytes, uint8_t byte_count, u
             i++;
             continue;
         }
-        // Consume exactly one high te (USART highs are 1).
+
         i++;
         uint8_t low = 0;
         while(i < bit_cnt && tmp_bits[i] == 0 && low < 20) {
@@ -301,8 +292,6 @@ static bool urmet_load_from_ff(
     return *gap_count >= 2;
 }
 
-// ---------------------------------------------------------------- Decoder
-
 void* subghz_protocol_decoder_urmet_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolDecoderUrmet* instance = malloc(sizeof(SubGhzProtocolDecoderUrmet));
@@ -334,7 +323,7 @@ void subghz_protocol_decoder_urmet_reset(void* context) {
     instance->pending_high = false;
     instance->man_edges = 0;
     instance->bit_cnt = 0;
-    // Keep last decoded raw_bytes / gaps for serialize after a successful read.
+
 }
 
 static void urmet_decoder_abort(SubGhzProtocolDecoderUrmet* instance) {
@@ -343,7 +332,7 @@ static void urmet_decoder_abort(SubGhzProtocolDecoderUrmet* instance) {
     instance->man_edges = 0;
     instance->bit_cnt = 0;
     instance->rx_gap_count = 0;
-    // Do not clear last accepted raw_bytes / gaps.
+
 }
 
 static void subghz_protocol_decoder_urmet_finish(SubGhzProtocolDecoderUrmet* instance) {
@@ -389,7 +378,6 @@ void subghz_protocol_decoder_urmet_feed(void* context, bool level, uint32_t dura
     furi_assert(context);
     SubGhzProtocolDecoderUrmet* instance = context;
 
-    // Long lows: end of PPM data, or Manchester→PPM inter-block gap.
     if(!level && duration >= URMET_END_GAP_US) {
         if(instance->step == UrmetStepData) {
             if(instance->bit_cnt < URMET_BITBUF) {
@@ -399,7 +387,7 @@ void subghz_protocol_decoder_urmet_feed(void* context, bool level, uint32_t dura
         } else if(
             instance->step == UrmetStepManchester && instance->man_edges >= URMET_MAN_MIN_EDGES &&
             duration <= URMET_MAN_GAP_MAX_US) {
-            // Manchester block done → arm for PPM preamble.
+
             instance->step = UrmetStepArmed;
             instance->man_edges = 0;
             instance->pending_high = false;
@@ -421,10 +409,10 @@ void subghz_protocol_decoder_urmet_feed(void* context, bool level, uint32_t dura
         if(urmet_is_manchester_edge(duration)) {
             if(instance->man_edges < 0xFFF0) instance->man_edges++;
         } else if(urmet_is_te1(duration)) {
-            // PPM-sized edge too early — not our sequence.
+
             urmet_decoder_abort(instance);
         } else {
-            // Ignore mild timing noise inside Manchester; abort on big outliers.
+
             if(duration > URMET_MAN_EDGE_MAX_US * 2 && duration < URMET_END_GAP_US) {
                 urmet_decoder_abort(instance);
             }
@@ -432,11 +420,11 @@ void subghz_protocol_decoder_urmet_feed(void* context, bool level, uint32_t dura
         break;
 
     case UrmetStepArmed:
-        // After Manchester+gap, only accept the PPM wake high.
+
         if(level && urmet_is_te1(duration)) {
             instance->step = UrmetStepPreambleLow1;
         } else if(urmet_is_manchester_edge(duration)) {
-            // Another Manchester burst instead of PPM.
+
             instance->step = UrmetStepManchester;
             instance->man_edges = 1;
         }
@@ -462,7 +450,7 @@ void subghz_protocol_decoder_urmet_feed(void* context, bool level, uint32_t dura
 
     case UrmetStepPreambleSync:
         if(!level && urmet_is_sync_low(duration)) {
-            // Locked. Seed bit/gap buffers with preamble H1 L1 H1 L11.
+
             instance->bit_cnt = 0;
             instance->rx_gap_count = 0;
             instance->pending_high = false;

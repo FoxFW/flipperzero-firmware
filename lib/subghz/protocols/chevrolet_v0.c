@@ -5,24 +5,9 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "ChevroletV0"
-
-// Chevrolet V0 -- ported from firmware chevrolet_v0.c via KeeLoq-RX arke_mazda_gm.py
-// (ChevroletV0 / ChevroletV0Gm). Standard Flipper (IEEE-802.3) Manchester, ts=120
-// tl=240 delta=71 (i.e. firmware's "<=70"). Framing: a 32-bit shift register locks
-// on the EXACT preamble 0xAAAAAAAB, then 96 data bits are collected. EVERY decoded
-// Manchester bit is inverted (IEEE-802.3). The top 64 of the 96 bits ("gdata") hold
-// Serial(24) | Button(4) | Hop(36); the low 32 bits are the encrypted "seed". There
-// is no cleartext counter (hop is fully encrypted) -> STRUCTURAL gate only:
-//   * exact 0xAAAAAAAB preamble, and
-//   * a non-degenerate 96-bit payload (gdata != 0 and != all-ones), and
-//   * button nibble in {Open 0xA, Close 0xB}.
-// Define CHEVROLET_V0_GM_ACCEPT_ANY to generalize to the whole GM 434 MHz remote
-// family (Buick/Cadillac/GMC/newer Chevrolet), whose fobs carry a per-remote
-// type/toggle nibble instead of Open/Close; that relaxes the button gate to
-// accept-any (keeping the exact-preamble + non-degenerate checks). Decode-only
-// (encrypted hop -> no clone); .encoder = NULL.
 
 #define CHEVROLET_V0_DATA_BITS     96
 #define CHEVROLET_V0_PREAMBLE_WORD 0xAAAAAAABUL
@@ -31,7 +16,7 @@
 static const SubGhzBlockConst subghz_protocol_chevrolet_v0_const = {
     .te_short = 120,
     .te_long = 240,
-    .te_delta = 71, // firmware uses "diff < 71", i.e. <= 70
+    .te_delta = 71,
     .min_count_bit_for_found = CHEVROLET_V0_DATA_BITS,
 };
 
@@ -41,17 +26,16 @@ struct SubGhzProtocolDecoderChevroletV0 {
     SubGhzBlockGeneric generic;
 
     ManchesterState manchester_state;
-    uint32_t data_header; // 32-bit preamble / high shift register
-    uint16_t bit_count; // preamble bit counter
-    uint16_t data_count; // collected data bits
+    uint32_t data_header;
+    uint16_t bit_count;
+    uint16_t data_count;
 
-    uint32_t serial; // 24-bit
-    uint8_t btn; // 4-bit
-    uint64_t hop; // 36-bit
-    uint32_t seed; // low 32 bits of payload
+    uint32_t serial;
+    uint8_t btn;
+    uint64_t hop;
+    uint32_t seed;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderChevroletV0);
-
 
 typedef enum {
     ChevroletV0StepReset = 0,
@@ -62,13 +46,12 @@ typedef enum {
 static bool chevrolet_v0_gate_ok(uint8_t btn) {
 #ifdef CHEVROLET_V0_GM_ACCEPT_ANY
     UNUSED(btn);
-    return true; // GM-family generalization: accept any non-degenerate frame
+    return true;
 #else
-    return (btn == 0xA) || (btn == 0xB); // faithful chevrolet_v0.c: Open/Close only
+    return (btn == 0xA) || (btn == 0xB);
 #endif
 }
 
-// Build the Manchester event exactly as the firmware/arke do.
 static ManchesterEvent chevrolet_v0_event(bool level, uint32_t duration) {
     uint32_t ts = subghz_protocol_chevrolet_v0_const.te_short;
     uint32_t tl = subghz_protocol_chevrolet_v0_const.te_long;
@@ -92,8 +75,6 @@ void* subghz_protocol_decoder_chevrolet_v0_alloc(SubGhzEnvironment* environment)
     instance->manchester_state = ManchesterStateMid1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_chevrolet_v0_reset(void* context) {
     furi_check(context);
@@ -120,7 +101,7 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
         instance->data_header = 0;
         instance->bit_count = 0;
         instance->decoder.parser_step = ChevroletV0StepPreamble;
-        st = ChevroletV0StepPreamble; // fall through, process this event as preamble
+        st = ChevroletV0StepPreamble;
     }
 
     if(st == ChevroletV0StepPreamble) {
@@ -131,7 +112,7 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
         bool mbit = false;
         if(manchester_advance(
                instance->manchester_state, event, &instance->manchester_state, &mbit)) {
-            uint8_t data = mbit ? 0 : 1; // invert (IEEE 802.3)
+            uint8_t data = mbit ? 0 : 1;
             instance->data_header = ((instance->data_header << 1) | data);
             instance->bit_count++;
             if(instance->bit_count >= CHEVROLET_V0_PREAMBLE_MIN &&
@@ -150,7 +131,7 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
         bool mbit = false;
         if(manchester_advance(
                instance->manchester_state, event, &instance->manchester_state, &mbit)) {
-            uint8_t data = mbit ? 0 : 1; // invert
+            uint8_t data = mbit ? 0 : 1;
             instance->data_header =
                 ((instance->data_header << 1) | ((instance->decoder.decode_data >> 63) & 1));
             instance->decoder.decode_data = (instance->decoder.decode_data << 1) | data;
@@ -167,7 +148,7 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
                     instance->decoder.parser_step = ChevroletV0StepReset;
                     return;
                 }
-                uint64_t hop = gdata & 0xFFFFFFFFFULL; // 36-bit encrypted hop
+                uint64_t hop = gdata & 0xFFFFFFFFFULL;
 
                 instance->serial = serial;
                 instance->btn = btn;
@@ -178,7 +159,7 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
                 instance->generic.data_count_bit = CHEVROLET_V0_DATA_BITS;
                 instance->generic.serial = serial;
                 instance->generic.btn = btn;
-                instance->generic.cnt = 0; // hop encrypted, no cleartext counter
+                instance->generic.cnt = 0;
                 instance->decoder.decode_count_bit = CHEVROLET_V0_DATA_BITS;
 
                 if(instance->base.callback)
@@ -189,8 +170,6 @@ void subghz_protocol_decoder_chevrolet_v0_feed(void* context, bool level, uint32
         }
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_chevrolet_v0_serialize(
     void* context,
@@ -204,7 +183,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_chevrolet_v0_serialize(
 
     uint32_t serial = instance->serial;
     uint32_t btn = instance->btn;
-    uint32_t hop_hi = (uint32_t)(instance->hop >> 32); // 4 high bits of 36-bit hop
+    uint32_t hop_hi = (uint32_t)(instance->hop >> 32);
     uint32_t hop_lo = (uint32_t)(instance->hop & 0xFFFFFFFFUL);
     uint32_t seed = instance->seed;
     if(!flipper_format_write_uint32(flipper_format, "Serial", &serial, 1) ||
@@ -212,6 +191,17 @@ SubGhzProtocolStatus subghz_protocol_decoder_chevrolet_v0_serialize(
        !flipper_format_write_uint32(flipper_format, "HopHi", &hop_hi, 1) ||
        !flipper_format_write_uint32(flipper_format, "HopLo", &hop_lo, 1) ||
        !flipper_format_write_uint32(flipper_format, "Seed", &seed, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[12];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    fdata[8] = (uint8_t)(instance->seed >> 24);
+    fdata[9] = (uint8_t)(instance->seed >> 16);
+    fdata[10] = (uint8_t)(instance->seed >> 8);
+    fdata[11] = (uint8_t)(instance->seed);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -259,11 +249,15 @@ const SubGhzProtocolDecoder subghz_protocol_chevrolet_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_chevrolet_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_chevrolet_v0 = {
     .name = CHEVROLET_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_chevrolet_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_chevrolet_v0_encoder_ext.vtable,
 };

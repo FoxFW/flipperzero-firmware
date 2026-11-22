@@ -16,6 +16,9 @@ static bool s_start_countdown_fired = false;
 
 static bool s_start_cancelled = false;
 
+#define SUBGHZ_RR_RSSI_MARGIN_DB 6.0f
+static float s_rr_floor = -90.0f;
+
 bool subghz_scene_read_raw_update_filename(SubGhz* subghz) {
     bool ret = false;
 
@@ -78,8 +81,6 @@ void subghz_scene_read_raw_callback_end_tx(void* context) {
         subghz->view_dispatcher, SubGhzCustomEventViewReadRAWSendStop);
 }
 
-#define ENVELOPE_PREVIEW_SAMPLES 2048u
-
 typedef struct {
     File*  file;
     uint8_t buf[128];
@@ -117,25 +118,23 @@ static const uint8_t ENVELOPE_ZOOM_WINDOW_PCT[5] = {100, 60, 36, 22, 13};
 
 static void subghz_scene_read_raw_load_envelope_ex(
     SubGhz* subghz, uint8_t zoom_level, uint8_t center_pct, uint64_t* out_total_us) {
+
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File*    file     = storage_file_alloc(storage);
 
     uint8_t  preview[100];
     memset(preview, 0, sizeof(preview));
-    uint32_t total_samples = 0;
-    bool     ok            = false;
-    uint64_t total_us      = 0;
+    bool     ok       = false;
+    uint64_t total_us = 0;
+    uint64_t active_start = 0, active_end = 0;
+    bool     seen_hi = false;
     if(out_total_us) *out_total_us = 0;
 
-    int32_t* buf = malloc(sizeof(int32_t) * ENVELOPE_PREVIEW_SAMPLES);
+    const char* path = furi_string_get_cstr(subghz->file_path);
 
-    if(buf && storage_file_open(
-                  file, furi_string_get_cstr(subghz->file_path),
-                  FSAM_READ, FSOM_OPEN_EXISTING)) {
-
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
         SubghzRawLineReader lr = {.file = file, .len = 0, .pos = 0, .eof = false};
         FuriString* line = furi_string_alloc();
-
         while(subghz_raw_lr_read_line(&lr, line)) {
             const char* s = furi_string_get_cstr(line);
             if(strncmp(s, "RAW_Data:", 9) == 0) {
@@ -149,48 +148,143 @@ static void subghz_scene_read_raw_load_envelope_ex(
                         continue;
                     }
                     p = end;
-
-                    total_us += (uint64_t)(v < 0 ? -(int64_t)v : (int64_t)v);
-
-                    if(total_samples < ENVELOPE_PREVIEW_SAMPLES)
-                        buf[total_samples++] = (int32_t)v;
+                    uint64_t dur = (uint64_t)(v < 0 ? -(int64_t)v : (int64_t)v);
+                    if(v > 0) {
+                        if(!seen_hi) {
+                            active_start = total_us;
+                            seen_hi = true;
+                        }
+                        active_end = total_us + dur;
+                    }
+                    total_us += dur;
                 }
             }
         }
+        furi_string_free(line);
+        storage_file_close(file);
+    }
 
+    if(total_us > 0 && seen_hi &&
+       storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        uint32_t coarse[100] = {0};
+        SubghzRawLineReader lr = {.file = file, .len = 0, .pos = 0, .eof = false};
+        FuriString* line = furi_string_alloc();
+        uint64_t t = 0;
+        while(subghz_raw_lr_read_line(&lr, line)) {
+            const char* s = furi_string_get_cstr(line);
+            if(strncmp(s, "RAW_Data:", 9) != 0) continue;
+            const char* p = s + 9;
+            char* end;
+            while(*p) {
+                long v = strtol(p, &end, 10);
+                if(end == p) {
+                    if(*p == '\0') break;
+                    p++;
+                    continue;
+                }
+                p = end;
+                uint64_t dur = (uint64_t)(v < 0 ? -(int64_t)v : (int64_t)v);
+                if(v > 0) {
+                    uint64_t s0 = t, e0 = t + dur;
+                    uint8_t b0 = (uint8_t)((s0 * 100) / total_us);
+                    uint8_t b1 = (uint8_t)((e0 * 100) / total_us);
+                    if(b0 > 99) b0 = 99;
+                    if(b1 > 99) b1 = 99;
+                    for(uint8_t b = b0; b <= b1; b++) {
+                        uint64_t bs = (uint64_t)b * total_us / 100;
+                        uint64_t be = (uint64_t)(b + 1) * total_us / 100;
+                        uint64_t ov_s = s0 > bs ? s0 : bs;
+                        uint64_t ov_e = e0 < be ? e0 : be;
+                        if(ov_e > ov_s) coarse[b] += (uint32_t)(ov_e - ov_s);
+                    }
+                }
+                t += dur;
+            }
+        }
         furi_string_free(line);
         storage_file_close(file);
 
-        if(total_samples > 0) {
-
-            if(out_total_us) *out_total_us = total_us;
-
-            if(total_us > 0) {
-
-                uint64_t disp_start = 0;
-                uint64_t disp_end   = total_us;
-                if(zoom_level > 0 && zoom_level < 5) {
-                    uint64_t window_span =
-                        (total_us * ENVELOPE_ZOOM_WINDOW_PCT[zoom_level]) / 100;
-                    if(window_span < 1) window_span = 1;
-                    uint64_t center = ((uint64_t)center_pct * total_us) / 100;
-                    uint64_t half   = window_span / 2;
-                    disp_start = (center > half) ? (center - half) : 0;
-                    disp_end   = disp_start + window_span;
-                    if(disp_end > total_us) {
-                        disp_end   = total_us;
-                        disp_start = (disp_end > window_span) ? (disp_end - window_span) : 0;
-                    }
+        uint64_t tot_on = 0;
+        for(uint8_t b = 0; b < 100; b++) tot_on += coarse[b];
+        if(tot_on > 0) {
+            uint64_t trim = tot_on / 100;
+            uint64_t acc  = 0;
+            int sb = 0, eb = 99;
+            for(int b = 0; b < 100; b++) {
+                acc += coarse[b];
+                if(acc >= trim) {
+                    sb = b;
+                    break;
                 }
-                uint64_t disp_span = (disp_end > disp_start) ? (disp_end - disp_start) : 1;
+            }
+            acc = 0;
+            for(int b = 99; b >= 0; b--) {
+                acc += coarse[b];
+                if(acc >= trim) {
+                    eb = b;
+                    break;
+                }
+            }
+            if(eb >= sb) {
+                active_start = (uint64_t)sb * total_us / 100;
+                active_end   = (uint64_t)(eb + 1) * total_us / 100;
+            }
+        }
+    }
 
-                uint32_t bucket_on_us[100] = {0};
-                uint64_t current_us = 0;
+    if(total_us > 0) {
+        if(out_total_us) *out_total_us = total_us;
 
-                for(uint32_t i = 0; i < total_samples; i++) {
-                    int32_t  val = buf[i];
-                    uint64_t dur = (uint64_t)(val < 0 ? -val : val);
-                    bool     hi  = (val > 0);
+        uint64_t base_start = 0;
+        uint64_t base_end   = total_us;
+        if(seen_hi && active_end > active_start) {
+            uint64_t aspan  = active_end - active_start;
+            uint64_t margin = aspan / 18;
+            if(margin < 1) margin = 1;
+            base_start = (active_start > margin) ? (active_start - margin) : 0;
+            base_end   = active_end + margin;
+        }
+        uint64_t base_span = (base_end > base_start) ? (base_end - base_start) : 1;
+
+        uint64_t disp_start = base_start;
+        uint64_t disp_end   = base_end;
+        if(zoom_level > 0 && zoom_level < 5) {
+            uint64_t window_span = (base_span * ENVELOPE_ZOOM_WINDOW_PCT[zoom_level]) / 100;
+            if(window_span < 1) window_span = 1;
+            uint64_t center = base_start + ((uint64_t)center_pct * base_span) / 100;
+            uint64_t half   = window_span / 2;
+            disp_start = (center > half) ? (center - half) : base_start;
+            if(disp_start < base_start) disp_start = base_start;
+            disp_end = disp_start + window_span;
+            if(disp_end > base_end) {
+                disp_end   = base_end;
+                disp_start = (base_end > window_span) ? (base_end - window_span) : base_start;
+                if(disp_start < base_start) disp_start = base_start;
+            }
+        }
+        uint64_t disp_span = (disp_end > disp_start) ? (disp_end - disp_start) : 1;
+
+        uint32_t bucket_on_us[100] = {0};
+        uint64_t current_us        = 0;
+        if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+            SubghzRawLineReader lr = {.file = file, .len = 0, .pos = 0, .eof = false};
+            FuriString* line = furi_string_alloc();
+            while(subghz_raw_lr_read_line(&lr, line)) {
+                const char* s = furi_string_get_cstr(line);
+                if(strncmp(s, "RAW_Data:", 9) != 0) continue;
+                const char* p = s + 9;
+                char* end;
+                while(*p) {
+                    long v = strtol(p, &end, 10);
+                    if(end == p) {
+                        if(*p == '\0') break;
+                        p++;
+                        continue;
+                    }
+                    p = end;
+
+                    uint64_t dur = (uint64_t)(v < 0 ? -(int64_t)v : (int64_t)v);
+                    bool     hi  = (v > 0);
                     uint64_t seg_start = current_us;
                     uint64_t seg_end   = current_us + dur;
                     current_us = seg_end;
@@ -212,22 +306,43 @@ static void subghz_scene_read_raw_load_envelope_ex(
                         if(ov_e > ov_s) bucket_on_us[b] += (uint32_t)(ov_e - ov_s);
                     }
                 }
-
-                for(uint8_t b = 0; b < 100; b++) {
-                    uint64_t bstart = disp_start + ((uint64_t)b * disp_span / 100);
-                    uint64_t bend   = disp_start + ((uint64_t)(b + 1) * disp_span / 100);
-                    uint64_t span   = (bend > bstart) ? (bend - bstart) : 1;
-                    uint32_t inten  = (uint32_t)((uint64_t)bucket_on_us[b] * 255 / span);
-                    preview[b] = (uint8_t)(inten > 255 ? 255 : inten);
-                }
-                ok = true;
             }
+            furi_string_free(line);
+            storage_file_close(file);
+
+            for(uint8_t b = 0; b < 100; b++) {
+                uint64_t bstart = disp_start + ((uint64_t)b * disp_span / 100);
+                uint64_t bend   = disp_start + ((uint64_t)(b + 1) * disp_span / 100);
+                uint64_t span   = (bend > bstart) ? (bend - bstart) : 1;
+                uint32_t inten  = (uint32_t)((uint64_t)bucket_on_us[b] * 255 / span);
+                preview[b] = (uint8_t)(inten > 255 ? 255 : inten);
+            }
+
+            {
+                const int GAP = 4;
+                int lo = -1, hi = -1;
+                for(int b = 0; b < 100; b++) {
+                    if(preview[b]) {
+                        if(lo < 0) lo = b;
+                        hi = b;
+                    }
+                }
+                if(lo >= 0 && hi >= lo) {
+                    int src_span = hi - lo + 1;
+                    int dst_span = 100 - 2 * GAP;
+                    uint8_t out[100] = {0};
+                    for(int b = 0; b < dst_span; b++) {
+                        int src = lo + (b * src_span) / dst_span;
+                        if(src > hi) src = hi;
+                        out[GAP + b] = preview[src];
+                    }
+                    memcpy(preview, out, sizeof(preview));
+                }
+            }
+            ok = true;
         }
-    } else if(file) {
-        storage_file_close(file);
     }
 
-    if(buf) free(buf);
     if(file) storage_file_free(file);
     furi_record_close(RECORD_STORAGE);
 
@@ -268,6 +383,8 @@ void subghz_scene_read_raw_on_enter(void* context) {
         subghz_read_raw_set_allow_new(subghz->subghz_read_raw, false);
 
         {
+
+            subghz_loading_cover_show(subghz, "LOADING");
             uint8_t zoom = (uint8_t)subghz->last_settings->raw_playback_zoom_level;
             subghz_read_raw_set_zoom_level(subghz->subghz_read_raw, zoom);
             if(zoom > 0) {
@@ -275,6 +392,7 @@ void subghz_scene_read_raw_on_enter(void* context) {
             } else {
                 subghz_scene_read_raw_load_envelope(subghz);
             }
+            subghz_loading_cover_hide(subghz);
         }
         break;
     case SubGhzRxKeyStateRAWSave:
@@ -286,6 +404,18 @@ void subghz_scene_read_raw_on_enter(void* context) {
             threshold_rssi);
 
         subghz_read_raw_set_allow_new(subghz->subghz_read_raw, true);
+
+        if(!furi_string_empty(subghz->file_path)) {
+            subghz_loading_cover_show(subghz, "LOADING");
+            uint8_t zoom = (uint8_t)subghz->last_settings->raw_playback_zoom_level;
+            subghz_read_raw_set_zoom_level(subghz->subghz_read_raw, zoom);
+            if(zoom > 0) {
+                subghz_scene_read_raw_load_envelope_zoomed(subghz, zoom, 0);
+            } else {
+                subghz_scene_read_raw_load_envelope(subghz);
+            }
+            subghz_loading_cover_hide(subghz);
+        }
         break;
     default:
         subghz_read_raw_set_status(
@@ -664,8 +794,18 @@ bool subghz_scene_read_raw_on_event(void* context, SceneManagerEvent event) {
             subghz_read_raw_update_sample_write(
                 subghz->subghz_read_raw, subghz_protocol_raw_get_sample_write(decoder_raw));
 
-            SubGhzThresholdRssiData ret_rssi = subghz_threshold_get_rssi_data(
-                subghz->threshold_rssi, subghz_txrx_radio_device_get_rssi(subghz->txrx));
+            float rr_raw = subghz_txrx_radio_device_get_rssi(subghz->txrx);
+            if(subghz->last_settings->readraw_rssi_adaptive) {
+                if(rr_raw < s_rr_floor) {
+                    s_rr_floor += (rr_raw - s_rr_floor) * 0.25f;
+                } else {
+                    s_rr_floor += 0.02f;
+                }
+                subghz_threshold_rssi_set(
+                    subghz->threshold_rssi, s_rr_floor + SUBGHZ_RR_RSSI_MARGIN_DB);
+            }
+            SubGhzThresholdRssiData ret_rssi =
+                subghz_threshold_get_rssi_data(subghz->threshold_rssi, rr_raw);
             subghz_read_raw_add_data_rssi(
                 subghz->subghz_read_raw, ret_rssi.rssi, true );
 
@@ -725,4 +865,9 @@ void subghz_scene_read_raw_on_exit(void* context) {
     notification_message(subghz->notifications, &sequence_reset_rgb);
 
     subghz_txrx_receiver_set_filter(subghz->txrx, subghz->filter);
+
+    if(subghz->last_settings->readraw_rssi_adaptive) {
+        subghz_threshold_rssi_set(subghz->threshold_rssi, subghz->last_settings->rssi);
+    }
+    s_rr_floor = -90.0f;
 }

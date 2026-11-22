@@ -1,10 +1,12 @@
 #include "prastel.h"
+#include "decode_plugin.h"
 
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/generic.h"
 #include "../blocks/math.h"
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "SubGhzProtocolPrastel"
 
@@ -53,14 +55,18 @@ const SubGhzProtocolEncoder subghz_protocol_prastel_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_prastel_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_prastel");
+
 const SubGhzProtocol subghz_protocol_prastel = {
     .name = SUBGHZ_PROTOCOL_PRASTEL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_prastel_decoder,
-    .encoder = &subghz_protocol_prastel_encoder,
+    .encoder = &subghz_protocol_prastel_encoder_ext.vtable,
 };
 
 static uint8_t subghz_protocol_prastel_reverse_byte(uint8_t v) {
@@ -228,17 +234,8 @@ void subghz_protocol_decoder_prastel_get_string(void* context, FuriString* outpu
     subghz_block_generic_global.current_btn = instance->generic.btn;
     subghz_block_generic_global.btn_length_bit = 4;
 
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%011llX\r\n"
-        "Sn:%08lX\r\n"
-        "Btn:%01X\r\n"
-        "Cnt:%04lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        instance->generic.data & 0x3FFFFFFFFFFULL,
-        instance->generic.serial,
-        instance->generic.btn,
-        instance->generic.cnt);
+        const SubGhzDecodeInput input = {
+        .generic = &instance->generic,
+    };
+    subghz_decode_plugin_get_string("Prastel", &input, output);
 }

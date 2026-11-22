@@ -1,32 +1,4 @@
-/*
- * opal.c - Parser for Opal card (Sydney, Australia).
- *
- * Copyright 2023 Michael Farrell <micolous+git@gmail.com>
- *
- * This will only read "standard" MIFARE DESFire-based Opal cards. Free travel
- * cards (including School Opal cards, veteran, vision-impaired persons and
- * TfNSW employees' cards) and single-trip tickets are MIFARE Ultralight C
- * cards and not supported.
- *
- * Reference: https://github.com/metrodroid/metrodroid/wiki/Opal
- *
- * Note: The card values are all little-endian (like Flipper), but the above
- * reference was originally written based on Java APIs, which are big-endian.
- * This implementation presumes a little-endian system.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+
 
 #include "nfc_supported_card_plugin.h"
 #include <flipper_application.h>

@@ -1,8 +1,4 @@
-/* On-demand decode-plugin loader (app side): feed stays internal; when a decoder
- * fires, the shared wrapper (lib common.c) dispatches by protocol name and this
- * loader pulls JUST that protocol's decode_<x>.fal from the SD, runs its get_string,
- * and caches it. One .fal resident at a time (small LRU). No SD / missing plugin ->
- * libsubghz writes a slim raw fallback. FoxFW2.0 2026-10-21 full split. */
+
 
 #include "subghz_decode_plugin_loader.h"
 #include "../protocols_ext/subghz_decode_plugin_desc.h"
@@ -35,6 +31,7 @@ static const SubGhzDecodeMap subghz_decode_map[] = {
     {.name = "Audiovox PRO", .fal = "decode_audiovox"},
     {.name = "BMW V2", .fal = "decode_bmw_v2"},
     {.name = "BMW/Mini V3", .fal = "decode_bmw_v3"},
+    {.name = "BMW V4", .fal = "decode_bmw_v4"},
     {.name = "Chevrolet V0", .fal = "decode_chevrolet_v0"},
     {.name = "Chrysler", .fal = "decode_chrysler"},
     {.name = "Compustar", .fal = "decode_compustar"},
@@ -125,7 +122,7 @@ static const SubGhzDecodeMap subghz_decode_map[] = {
     {.name = "Fiat Multi", .fal = "decode_fiat_v2_v3_v5"},
     {.name = "Ford V1", .fal = "decode_ford_v1"},
     {.name = "Hitag-2", .fal = "decode_renault_v1"},
-    /* 2026-10-22: remaining in-tree protocols brought live */
+
     {.name = "Alps FWB1U545", .fal = "decode_alps_rke"},
     {.name = "Alutech AT-4N", .fal = "decode_alutech_at_4n"},
     {.name = "Audi", .fal = "decode_audi"},
@@ -174,6 +171,19 @@ static const SubGhzDecodeMap subghz_decode_map[] = {
     {.name = "KeyFinder2", .fal = "decode_keyfinder2"},
     {.name = "Doorbell32", .fal = "decode_doorbell32"},
     {.name = "Opel V1", .fal = "decode_opel_v1"},
+    {.name = "STI-3353", .fal = "decode_sti3353"},
+    {.name = "RojaFlex", .fal = "decode_rojaflex"},
+    {.name = "Microchip-HCS362", .fal = "decode_hcs362"},
+    {.name = "Microchip-HCS361", .fal = "decode_hcs361"},
+    {.name = "Opel-Mokka", .fal = "decode_opel_mokka"},
+    {.name = "Datsun Lada", .fal = "decode_datsun_lada"},
+    {.name = "Subaru Liberty GT", .fal = "decode_subaru_liberty_gt"},
+    {.name = "Freezer", .fal = "decode_freezer"},
+    {.name = "Faac TM", .fal = "decode_faac_tm"},
+    {.name = "Cardin S508", .fal = "decode_cardin_s508"},
+    {.name = "Hormann BiSecur", .fal = "decode_hormann_bisecur"},
+    {.name = "Prastel", .fal = "decode_prastel"},
+    {.name = "Telecrane", .fal = "decode_telecrane"},
 };
 #define SUBGHZ_DECODE_MAP_COUNT (sizeof(subghz_decode_map) / sizeof(subghz_decode_map[0]))
 
@@ -204,7 +214,9 @@ static const SubGhzDecodeRegistry* subghz_decode_load(const char* fal) {
         }
     }
     subghz_decode_plugin_loader_flush();
-    if(memmgr_get_free_heap() < SUBGHZ_DECODE_MIN_FREE_HEAP) return NULL;
+    if(memmgr_get_free_heap() < SUBGHZ_DECODE_MIN_FREE_HEAP) {
+        return NULL;
+    }
     PluginManager* manager = plugin_manager_alloc(
         SUBGHZ_DECODE_PLUGIN_APP_ID, SUBGHZ_DECODE_PLUGIN_API_VERSION, firmware_api_interface);
     FuriString* path = furi_string_alloc();
@@ -242,9 +254,13 @@ static bool subghz_decode_loader_run(
             break;
         }
     }
-    if(!fal) return false;
+    if(!fal) {
+        return false;
+    }
     const SubGhzDecodeRegistry* reg = subghz_decode_load(fal);
-    if(!reg) return false;
+    if(!reg) {
+        return false;
+    }
     for(size_t i = 0; i < reg->size; i++) {
         if(reg->items[i].name && reg->items[i].get_string &&
            strcmp(reg->items[i].name, name) == 0) {

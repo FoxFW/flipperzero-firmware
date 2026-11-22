@@ -71,7 +71,6 @@ typedef struct SubGhzProtocolDecoderFordV3 {
     uint16_t counter;
 } SubGhzProtocolDecoderFordV3;
 
-
 static bool ford_v3_cell_frame_valid(const uint8_t* raw) {
     if(raw[0] != 0xFFU) {
         return false;
@@ -323,13 +322,11 @@ void* subghz_protocol_decoder_ford_v3_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderFordV3* instance = calloc(1, sizeof(SubGhzProtocolDecoderFordV3));
     furi_check(instance);
 
-    instance->base.protocol = &ford_protocol_v3;
+    instance->base.protocol = &subghz_protocol_ford_v3;
     instance->generic.protocol_name = instance->base.protocol->name;
 
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_ford_v3_reset(void* context) {
     furi_check(context);
@@ -450,7 +447,7 @@ typedef struct SubGhzProtocolEncoderFordV3 {
     SubGhzBlockGeneric generic;
 
     uint8_t raw_bytes[FORD_V3_DATA_BYTES];
-} 
+}
 SubGhzProtocolEncoderFordV3;
 
 const SubGhzProtocolDecoder subghz_protocol_ford_v3_decoder = {
@@ -466,7 +463,7 @@ const SubGhzProtocolDecoder subghz_protocol_ford_v3_decoder = {
 
 static const SubGhzEncoderExternal subghz_protocol_ford_v3_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_ford_v3");
 
-const SubGhzProtocol ford_protocol_v3 = {
+const SubGhzProtocol subghz_protocol_ford_v3 = {
     .name = FORD_PROTOCOL_V3_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
@@ -476,6 +473,4 @@ const SubGhzProtocol ford_protocol_v3 = {
     .encoder = &subghz_protocol_ford_v3_encoder_ext.vtable,
 };
 
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFordV3);

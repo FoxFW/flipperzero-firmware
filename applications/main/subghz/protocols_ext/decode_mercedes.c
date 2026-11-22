@@ -1,4 +1,4 @@
-/* decode_mercedes.fal : SD get_string for mercedes (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mercedes.h>
@@ -43,7 +43,6 @@ static uint8_t mercedes_checksum(const uint8_t raw[MERCEDES_WIRE_BYTES]) {
 static void mercedes_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderMercedes* instance = input->decoder;
-
 
     const uint8_t cs = instance->raw_data[7];
     const uint8_t cs_calc = mercedes_checksum(instance->raw_data);

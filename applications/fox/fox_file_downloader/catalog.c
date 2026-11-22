@@ -82,7 +82,7 @@ void catalog_open(App* app) {
     app->catalog_disclaimer_shown = true;
     app->menu_context = MenuContextCatalog;
     catalog_show_disclaimer(
-        app, "Firmware API is 88.2, most catalog apps are still 87.x - installs may fail for now.", false);
+        app, "Firmware API is 88.5, most catalog apps are still 87.x - installs may fail for now.", false);
 }
 
 void catalog_show_disclaimer(App* app, const char* text, bool is_mismatch) {

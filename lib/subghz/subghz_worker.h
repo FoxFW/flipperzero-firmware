@@ -28,6 +28,8 @@ void subghz_worker_set_pair_callback(SubGhzWorker* instance, SubGhzWorkerPairCal
 
 void subghz_worker_set_context(SubGhzWorker* instance, void* context);
 
+void subghz_worker_set_priority(SubGhzWorker* instance, FuriThreadPriority priority);
+
 void subghz_worker_start(SubGhzWorker* instance);
 
 void subghz_worker_stop(SubGhzWorker* instance);

@@ -1,5 +1,5 @@
-/* enc_tesla_charge.fal : SD encoder for tesla_charge (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_tesla_charge__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_tesla_charge__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_tesla_charge_alloc enc_tesla_charge__subghz_protocol_encoder_tesla_charge_alloc
@@ -32,23 +32,13 @@ struct SubGhzProtocolEncoderTeslaCharge {
 static const SubGhzBlockConst subghz_protocol_tesla_charge_const = {
     .te_short = 400,
     .te_long = 800,
-    .te_delta = 140, // ~35% of te_short
+    .te_delta = 140,
     .min_count_bit_for_found = 50,
 };
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderTeslaCharge instance
- * @return true On success
- */
 static bool
     subghz_protocol_encoder_tesla_charge_get_upload(SubGhzProtocolEncoderTeslaCharge* instance);
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderTeslaCharge instance
- * @return true On success
- */
 static bool
     subghz_protocol_encoder_tesla_charge_get_upload(SubGhzProtocolEncoderTeslaCharge* instance) {
     furi_assert(instance);
@@ -57,7 +47,6 @@ static bool
     size_t index = 0;
     const size_t cap = instance->encoder.size_upload;
 
-    // --- Preamble: 12 short high/low cells + a trailing short high ---
     for(uint8_t i = 0; i < 12; i++) {
         if(index + 2 > cap) return false;
         instance->encoder.upload[index++] = level_duration_make(true, te);
@@ -65,23 +54,18 @@ static bool
     }
     if(index + 2 > cap) return false;
     instance->encoder.upload[index++] = level_duration_make(true, te);
-    // --- Sync gap: ~3*te low ---
+
     instance->encoder.upload[index++] = level_duration_make(false, te * 3);
 
-    // --- Payload: biphase, MSB first ---
-    // Rule (verified bit-exact against captures & the manchester decoder):
-    //   first  half-bit level = !prev_second   (transition on every bit boundary)
-    //   second half-bit level = !bit
-    // Entering the payload the line is low (the sync gap), so prev_second = 0.
     uint8_t prev_second = 0;
     for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
         uint8_t bit = (instance->generic.data >> (i - 1)) & 1;
-        bool first = (prev_second == 0); // !prev_second -> high when prev was low
-        bool second = (bit == 0); // !bit
+        bool first = (prev_second == 0);
+        bool second = (bit == 0);
 
         if(index + 2 > cap) return false;
         if(first == second) {
-            // level held for the whole cell -> single 2*te pulse
+
             instance->encoder.upload[index++] = level_duration_make(first, te * 2);
         } else {
             instance->encoder.upload[index++] = level_duration_make(first, te);
@@ -90,7 +74,6 @@ static bool
         prev_second = second ? 1 : 0;
     }
 
-    // --- Inter-burst gap before the next repeat ---
     if(index + 1 > cap) return false;
     instance->encoder.upload[index++] = level_duration_make(false, te * 3);
 
@@ -98,7 +81,6 @@ static bool
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -106,7 +88,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -125,10 +106,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* ---------------------------------------------------------------------------
- * Encoder
- * ------------------------------------------------------------------------ */
-
 void* subghz_protocol_encoder_tesla_charge_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolEncoderTeslaCharge* instance =
@@ -138,7 +115,7 @@ void* subghz_protocol_encoder_tesla_charge_alloc(SubGhzEnvironment* environment)
     instance->generic.protocol_name = instance->base.protocol->name;
 
     instance->encoder.repeat = 5;
-    // preamble(26) + sync + payload(up to 100) + gap; 256 is comfortably safe
+
     instance->encoder.size_upload = 256;
     instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
     instance->encoder.is_running = false;
@@ -160,11 +137,11 @@ SubGhzProtocolStatus subghz_protocol_encoder_tesla_charge_deserialize(
         if(ret != SubGhzProtocolStatusOk) {
             break;
         }
-        // Optional TE (fixed protocol, default 400us)
+
         if(!flipper_format_read_uint32(flipper_format, "TE", (uint32_t*)&instance->te, 1)) {
             instance->te = TESLA_CHARGE_TE_DEFAULT;
         }
-        // Optional value
+
         flipper_format_read_uint32(
             flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
 
@@ -193,7 +170,6 @@ static const SubGhzProtocolEncoder enc_tesla_charge_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_tesla_charge = {
     .name = TESLA_CHARGE_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeStatic,

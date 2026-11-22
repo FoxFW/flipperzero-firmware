@@ -158,7 +158,7 @@ void subghz_scene_saved_menu_on_enter(void* context) {
     }
 #endif
 
-    if(has_counter) {
+    if(has_counter && is_transmittable) {
         submenu_add_item(
             subghz->submenu,
             "CounterBF",
@@ -206,8 +206,7 @@ bool subghz_scene_saved_menu_on_event(void* context, SceneManagerEvent event) {
                 furi_string_free(proto);
             }
             if(!needs_fiat_v1_key) {
-                /* Non-encodable (decode-only) protocol -> raw replay, like Send,
-                 * so the d-pad shows and SEND actually transmits. */
+
                 scene_manager_set_scene_state(
                     subghz->scene_manager, SubGhzSceneTransmitter,
                     subghz_txrx_protocol_is_transmittable(subghz->txrx, false) ? 0 : 1);

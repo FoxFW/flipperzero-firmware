@@ -11,12 +11,10 @@
 #include <flipper_format/flipper_format.h>
 #include <lib/toolbox/manchester_decoder.h>
 
-
 #define MIC6SC2_PROTOCOL_NAME "Microchip 6SC2"
 
 extern const SubGhzProtocol subghz_protocol_mic6sc2;
 
-// Decoder functions
 void* subghz_protocol_decoder_mic6sc2_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_mic6sc2_free(void* context);
 void subghz_protocol_decoder_mic6sc2_reset(void* context);

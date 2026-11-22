@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include "check.h"
@@ -10,6 +11,15 @@ extern "C" {
 #endif
 
 #define FURI_MEMMGR_GUARD 1
+
+/* Silent RAM Recovery one-shot flag. When set, the NEXT desktop RAM-defrag
+ * check is skipped entirely so an app can run its own fully controlled USB
+ * reseat without the desktop's settle-loop/reseat racing it. Set by the app
+ * immediately before its controlled exit; consumed (read-and-cleared) by the
+ * desktop defrag check. RAM-only, no storage I/O -- safe on a low/fragmented
+ * heap. Linked by every service (both set and consumer already call memmgr). */
+void memmgr_defrag_suppress_once(void);
+bool memmgr_defrag_suppress_consume(void);
 
 size_t memmgr_get_free_heap(void);
 

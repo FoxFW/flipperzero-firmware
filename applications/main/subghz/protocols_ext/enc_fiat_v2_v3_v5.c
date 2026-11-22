@@ -1,5 +1,5 @@
-/* enc_fiat_v2_v3_v5.fal : SD encoder for fiat_v2_v3_v5 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_fiat_alloc enc_fiat_v2_v3_v5__subghz_protocol_encoder_fiat_alloc
 #define subghz_protocol_encoder_fiat_deserialize enc_fiat_v2_v3_v5__subghz_protocol_encoder_fiat_deserialize
 #define subghz_protocol_encoder_fiat_free enc_fiat_v2_v3_v5__subghz_protocol_encoder_fiat_free
@@ -136,11 +136,6 @@ static const uint8_t fiat_v3_btns[] = {FIAT_V3_BTN_LOCK, FIAT_V3_BTN_UNLOCK, FIA
 
 static const uint8_t fiat_v5_btns[] = {FIAT_V5_BTN_CLOSE, FIAT_V5_BTN_OPEN, FIAT_V5_BTN_TRUNK};
 
-/* FoxFW: positional custom-button helpers. The applab source used map-less "_positional"
- * variants that FoxFW's custom_btn lib does not provide; defined file-local so nothing is
- * added to the core lib. Positional mode: btns[] is the selectable set, custom_id (1-based)
- * picks btns[custom_id-1] (custom_max == count); custom_id 0 / out-of-range falls back to the
- * decoded button. fill_labels is a no-op, matching lib/subghz/blocks/custom_btn.c. */
 static void subghz_custom_btn_apply_positional(
     uint8_t* btn,
     uint8_t original,
@@ -148,15 +143,8 @@ static void subghz_custom_btn_apply_positional(
     const uint8_t* btns,
     size_t btns_count);
 static const FiatVariantParams* fiat_get_params(FiatVariant v);
-// ============================================================================
-// UNIFIED BUTTON FUNCTIONS
-// ============================================================================
-
 
 static uint8_t fiat_get_btn_code(FiatVariant variant, uint8_t original_btn);
-// ============================================================================
-// V3 PACK / UNPACK helpers
-// ============================================================================
 
 static void fiat_v3_pack_generic(
     SubGhzBlockGeneric* generic,
@@ -164,9 +152,6 @@ static void fiat_v3_pack_generic(
     uint8_t btn,
     uint64_t hop,
     uint8_t* hop_low_out);
-// ============================================================================
-// V5 PACK / UNPACK helpers
-// ============================================================================
 
 static void fiat_v5_pack_generic(
     SubGhzBlockGeneric* generic,
@@ -178,23 +163,12 @@ static void fiat_v5_unpack_generic(
     const SubGhzBlockGeneric* generic,
     uint32_t* fix_out,
     uint32_t* hop_out);
-// ============================================================================
-// MANCHESTER ENCODER (shared, parametrized by te_short/te_long)
-// ============================================================================
 
 static size_t
     fiat_encode_bit(LevelDuration* buf, uint8_t* state, uint8_t bit, uint16_t te_s, uint16_t te_l);
-// ============================================================================
-// UNIFIED BUILD UPLOAD
-// ============================================================================
 
 static void fiat_build_upload(SubGhzProtocolEncoderFiat* enc);
 
-/* FoxFW: positional custom-button helpers. The applab source used map-less "_positional"
- * variants that FoxFW's custom_btn lib does not provide; defined file-local so nothing is
- * added to the core lib. Positional mode: btns[] is the selectable set, custom_id (1-based)
- * picks btns[custom_id-1] (custom_max == count); custom_id 0 / out-of-range falls back to the
- * decoded button. fill_labels is a no-op, matching lib/subghz/blocks/custom_btn.c. */
 static void subghz_custom_btn_apply_positional(
     uint8_t* btn,
     uint8_t original,
@@ -213,11 +187,6 @@ static const FiatVariantParams* fiat_get_params(FiatVariant v) {
     return &fiat_variant_params[FIAT_VARIANT_IDX(v)];
 }
 
-// ============================================================================
-// UNIFIED BUTTON FUNCTIONS
-// ============================================================================
-
-
 static uint8_t fiat_get_btn_code(FiatVariant variant, uint8_t original_btn) {
     uint8_t btn = original_btn;
     uint8_t custom_id = subghz_custom_btn_get();
@@ -234,10 +203,6 @@ static uint8_t fiat_get_btn_code(FiatVariant variant, uint8_t original_btn) {
     return btn;
 }
 
-// ============================================================================
-// V3 PACK / UNPACK helpers
-// ============================================================================
-
 static void fiat_v3_pack_generic(
     SubGhzBlockGeneric* generic,
     uint32_t fix,
@@ -252,10 +217,6 @@ static void fiat_v3_pack_generic(
     generic->cnt = 0;
     if(hop_low_out) *hop_low_out = hop & 0xF;
 }
-
-// ============================================================================
-// V5 PACK / UNPACK helpers
-// ============================================================================
 
 static void fiat_v5_pack_generic(
     SubGhzBlockGeneric* generic,
@@ -277,10 +238,6 @@ static void fiat_v5_unpack_generic(
     if(fix_out) *fix_out = (uint32_t)(generic->data >> 32);
     if(hop_out) *hop_out = (uint32_t)(generic->data & 0xFFFFFFFF);
 }
-
-// ============================================================================
-// MANCHESTER ENCODER (shared, parametrized by te_short/te_long)
-// ============================================================================
 
 static size_t
     fiat_encode_bit(LevelDuration* buf, uint8_t* state, uint8_t bit, uint16_t te_s, uint16_t te_l) {
@@ -335,10 +292,6 @@ static size_t
     return count;
 }
 
-// ============================================================================
-// UNIFIED BUILD UPLOAD
-// ============================================================================
-
 static void fiat_build_upload(SubGhzProtocolEncoderFiat* enc) {
     LevelDuration* buf = enc->encoder.upload;
     size_t idx = 0;
@@ -347,7 +300,6 @@ static void fiat_build_upload(SubGhzProtocolEncoderFiat* enc) {
     uint16_t te_s = params->block_const->te_short;
     uint16_t te_l = params->block_const->te_long;
 
-    // Preamble
     for(int i = 0; i < params->preamble_bits; i++) {
         idx += fiat_encode_bit(&buf[idx], &state, 1, te_s, te_l);
     }
@@ -406,17 +358,13 @@ static void fiat_build_upload(SubGhzProtocolEncoderFiat* enc) {
     enc->encoder.size_upload = idx;
 }
 
-// ============================================================================
-// ENCODER — ALLOC / FREE / STOP / YIELD
-// ============================================================================
-
 void* subghz_protocol_encoder_fiat_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
 
     SubGhzProtocolEncoderFiat* instance = malloc(sizeof(SubGhzProtocolEncoderFiat));
     instance->base.protocol = &subghz_protocol_fiat_v2_v3_v5;
     instance->generic.protocol_name = subghz_protocol_fiat_v2_v3_v5.name;
-    instance->variant = FiatVariantV3; // default, set during deserialize
+    instance->variant = FiatVariantV3;
     instance->encoder.repeat = 10;
     instance->encoder.size_upload = 768;
     instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
@@ -457,10 +405,6 @@ LevelDuration subghz_protocol_encoder_fiat_yield(void* context) {
     return ret;
 }
 
-// ============================================================================
-// ENCODER — DESERIALIZE
-// ============================================================================
-
 SubGhzProtocolStatus
     subghz_protocol_encoder_fiat_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
@@ -474,11 +418,10 @@ SubGhzProtocolStatus
     do {
         if(SubGhzProtocolStatusOk !=
            subghz_block_generic_deserialize(&enc->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "DE"); // Deserialize error
+            FURI_LOG_E(TAG, "DE");
             break;
         }
 
-        // Read variant — or auto-detect from Bit count
         uint32_t variant_temp = 0;
         if(flipper_format_read_uint32(flipper_format, "Variant", &variant_temp, 1)) {
             enc->variant = (FiatVariant)variant_temp;
@@ -492,12 +435,11 @@ SubGhzProtocolStatus
                 break;
             default:
                 FURI_LOG_E(
-                    TAG, "UVFBC %d", enc->generic.data_count_bit); // Unknown variant for bit count
+                    TAG, "UVFBC %d", enc->generic.data_count_bit);
                 break;
             }
         }
 
-        // Optional Repeat
         flipper_format_read_uint32(flipper_format, "Repeat", (uint32_t*)&enc->encoder.repeat, 1);
 
         switch(enc->variant) {
@@ -515,7 +457,6 @@ SubGhzProtocolStatus
             enc->extra.v3.hop_value = ((enc->generic.data & 0xFFFFFFFFFFULL) << 4) |
                                       (enc->extra.v3.hop_low & 0xF);
 
-            // Button handling
             subghz_custom_btn_set_original_if_unset(enc->extra.v3.btn);
             subghz_custom_btn_set_max(3);
 
@@ -569,7 +510,6 @@ SubGhzProtocolStatus
                 }
             }
 
-            // Button handling
             subghz_custom_btn_set_original_if_unset(enc->extra.v5.btn);
             subghz_custom_btn_set_max(3);
 
@@ -582,7 +522,6 @@ SubGhzProtocolStatus
                 enc->extra.v5.btn = btn;
             }
 
-            // Counter override (8-bit)
             {
                 uint32_t cnt32 = enc->extra.v5.cnt;
                 if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
@@ -610,9 +549,8 @@ SubGhzProtocolStatus
 
         fiat_build_upload(enc);
 
-        // Write updated Key back
         if(!flipper_format_rewind(flipper_format)) {
-            FURI_LOG_E(TAG, "RE"); // Rewind error
+            FURI_LOG_E(TAG, "RE");
             break;
         }
 
@@ -621,7 +559,7 @@ SubGhzProtocolStatus
             key_data[sizeof(uint64_t) - i - 1] = (enc->generic.data >> (i * 8)) & 0xFF;
         }
         if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
-            FURI_LOG_E(TAG, "UUK"); // Unable to update Key
+            FURI_LOG_E(TAG, "UUK");
             break;
         }
 
@@ -641,7 +579,6 @@ static const SubGhzProtocolEncoder enc_fiat_v2_v3_v5_vt = {
     .yield = subghz_protocol_encoder_fiat_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_fiat_v2_v3_v5 = {
     .name = SUBGHZ_PROTOCOL_FIAT_NAME,
     .type = SubGhzProtocolTypeDynamic,

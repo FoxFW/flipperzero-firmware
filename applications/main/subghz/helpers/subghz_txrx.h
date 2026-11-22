@@ -64,6 +64,7 @@ void subghz_txrx_hopper_unpause(SubGhzTxRx* instance);
 void subghz_txrx_hopper_pause(SubGhzTxRx* instance);
 
 void subghz_txrx_preset_hopper_update(SubGhzTxRx* instance, float stay_threshold);
+void subghz_txrx_preset_hopper_set_mode(SubGhzTxRx* instance, uint8_t mode);
 
 SubGhzPresetHopperState subghz_txrx_preset_hopper_get_state(SubGhzTxRx* instance);
 
@@ -171,21 +172,32 @@ void subghz_txrx_dual_set_ext_preset(
 SubGhzRadioPreset subghz_txrx_dual_get_ext_preset(SubGhzTxRx* instance);
 bool subghz_txrx_dual_is_ext_connected(SubGhzTxRx* instance);
 size_t subghz_txrx_dual_heap_needed(SubGhzTxRx* instance);
+
+void subghz_txrx_dual_set_jam(
+    SubGhzTxRx* instance,
+    bool int_jamming,
+    uint32_t int_jam_frequency,
+    uint8_t* int_jam_preset_data,
+    size_t int_jam_preset_data_size,
+    bool ext_jamming,
+    uint32_t ext_jam_frequency,
+    uint8_t* ext_jam_preset_data,
+    size_t ext_jam_preset_data_size);
+
 bool subghz_txrx_dual_rx_start(SubGhzTxRx* instance);
+void subghz_txrx_dual_set_rssi(
+    SubGhzTxRx* instance, uint8_t int_idx, uint8_t ext_idx, bool adaptive);
 void subghz_txrx_dual_rx_stop(SubGhzTxRx* instance, SubGhzRadioDeviceType main_device);
 bool subghz_txrx_dual_is_ext_receiver(SubGhzTxRx* instance, SubGhzReceiver* receiver);
 float subghz_txrx_dual_get_rssi_ext(SubGhzTxRx* instance);
 void subghz_txrx_dual_lock(SubGhzTxRx* instance);
 void subghz_txrx_dual_unlock(SubGhzTxRx* instance);
 
-/* Rolling capture (bounded ring of recent live-RX samples) for Unknown RAW. */
 void subghz_txrx_rx_ring_reset(SubGhzTxRx* instance);
 void subghz_txrx_rx_ring_set_wanted(SubGhzTxRx* instance, bool wanted);
-/* True when a real burst ended and its window is latched+frozen for capture.
- * Peek only; subghz_txrx_rx_ring_reset clears it (and unfreezes the ring). */
+
 bool subghz_txrx_burst_ready(SubGhzTxRx* instance);
-/* Build an in-memory RAW FlipperFormat from the latched burst window (same wire
- * format as a RAW .sub). Caller owns it (flipper_format_free). */
+
 FlipperFormat* subghz_txrx_rx_ring_build_raw_ff(SubGhzTxRx* instance);
 
 void subghz_txrx_set_default_preset(SubGhzTxRx* instance, uint32_t frequency);

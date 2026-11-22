@@ -1,4 +1,4 @@
-/* decode_renault_v2.fal : SD get_string for renault_v2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/renault_v2.h>
@@ -19,7 +19,7 @@ struct SubGhzProtocolDecoderRenaultV2 {
     uint8_t all_bits[RENAULT_V2_ARR_SIZE];
     uint16_t all_bit_count;
 
-    uint32_t data_tail; // low 18 bits of the 82-bit frame (bits 64..81)
+    uint32_t data_tail;
 };
 
 static void renault_v2_decode(const SubGhzDecodeInput* input, FuriString* output) {

@@ -23,6 +23,7 @@ static const SubGhzBlockConst subghz_protocol_psa_const = {
 #define PSA_TE_SHORT_125 0x7d
 #define PSA_TE_LONG_250 0xfa
 #define PSA_TE_END_1000 1000
+#define PSA_BURST_GAP_MAX_US 2000U
 #define PSA_TE_END_500 500
 #define PSA_TOLERANCE_99 99
 #define PSA_TOLERANCE_100 100
@@ -429,10 +430,6 @@ __attribute__((optimize("O3"))) static bool psa_brute_force_decrypt_bf2(SubGhzPr
         if((counter & 0xFFFFFF) == (dec_v0 >> 8)) {
             psa_unpack_tea_result_to_buffer(buffer, dec_v0, dec_v1);
 
-            // CRC-16/BUYPASS input is natural big-endian; the two middle dec_v0
-            // bytes must NOT be swapped. (Fix 2026-10-03: they were, so a genuine
-            // type-0x36 BF2 frame never validated. Confirmed against the
-            // Ghidra-reconstructed authoritative psa2.c and a host round-trip.)
             uint8_t crc_buffer[6] = {
                 (uint8_t)((dec_v0 >> 24) & 0xFF),
                 (uint8_t)((dec_v0 >> 16) & 0xFF),
@@ -585,16 +582,6 @@ void subghz_protocol_decoder_psa_reset(void* context) {
     instance->te_detected = 0;
 }
 
-/* Emit gate (v2.0.14, 2026-10-13): only fire when the signal's long-pulse
- * ratio is PSA-typical. am_long_count/am_pulse_count is the same metric the
- * "PSA-typ" vs "fast-OOK" label in get_string uses (>= PSA_AM_LONG_MIN_PCT).
- * A genuine PSA capture is long-pulse-rich; a foreign bi-phase OOK stream
- * (e.g. a Fiat Hitag2 remote) is long-pulse-poor and was being chopped into
- * ever-changing 128-bit "Unknown Signal" frames that showed up as a bogus
- * PSA result. Validated across the SD corpus: all 26 genuine PSA RAW captures
- * keep firing (recognized or PSA-typ), every fast-OOK-only latch (Fiat, GM,
- * Ford, Opel, ...) is suppressed. am_pulse_count==0 (FM path) stays PSA-like,
- * so FM PSA is unaffected. */
 #define PSA_FIRE_CALLBACK_IF_NEW(instance)                                          \
     do {                                                                             \
         bool _is_dup = ((instance)->key1_low  == (instance)->last_key1_low &&       \
@@ -750,6 +737,25 @@ static bool psa_am_complete(SubGhzProtocolDecoderPSA* instance) {
 void subghz_protocol_decoder_psa_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderPSA* instance = context;
+
+    if(instance->state != PSADecoderState0 && duration >= PSA_BURST_GAP_MAX_US) {
+        instance->state = PSADecoderState0;
+        instance->decode_data_low = 0;
+        instance->decode_data_high = 0;
+        instance->decode_count_bit = 0;
+        instance->pattern_counter = 0;
+        instance->am_bits_len = 0;
+        instance->am_await_high = 0;
+        instance->pre_glitch = 0;
+        instance->te_sum = 0;
+        instance->te_count = 0;
+        instance->te_detected = 0;
+        instance->prev_duration = 0;
+        manchester_advance(
+            instance->manchester_state, ManchesterEventReset, &instance->manchester_state, NULL);
+        return;
+    }
+
     if(instance->am_pulse_count < 0xFFFFU) instance->am_pulse_count++;
     if(duration >= PSA_AM_LONG_MIN && duration <= PSA_AM_LONG_MAX &&
        instance->am_long_count < 0xFFFFU)

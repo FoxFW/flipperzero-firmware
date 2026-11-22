@@ -178,7 +178,7 @@ These files put `generic` before `decoder`, or otherwise differ. They may use
 `common_free` (layout-independent) but **keep their own** hash/serialize/
 enc-free/stop/yield:
 `fiat_spa, fiat_v2_v3_v5, honda_static, honda_v1, honda_v2_v3, honeywell,
-mercedes_fob, porsche_cayenne, raw, vag`.
+porsche_cayenne, raw, vag`.
 When adding a protocol, verify your decoder struct is `base→decoder→generic`
 and encoder is `base→encoder` before pointing a layout slot at common; if not,
 keep that slot local (and do not add the assert, it would fail).

@@ -1,4 +1,4 @@
-/* decode_honda_v7.fal : SD get_string for honda_v7 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/honda_v7.h>
@@ -24,7 +24,7 @@ struct SubGhzProtocolDecoderHondaV7 {
     uint8_t mode;
     uint8_t crc;
     bool crc_ok;
-    uint32_t tail; // natural[8..10] (24 bits incl checksum)
+    uint32_t tail;
 };
 
 static const char* honda_v7_btn_name(uint8_t btn);

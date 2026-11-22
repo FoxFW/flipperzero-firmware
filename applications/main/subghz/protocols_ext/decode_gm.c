@@ -1,4 +1,4 @@
-/* decode_gm.fal : SD get_string for gm (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/gm.h>
@@ -61,7 +61,6 @@ static const char* gm_button_name(uint8_t button) {
 static void gm_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderGM* instance = input->decoder;
-
 
     const uint8_t full_ck = instance->raw_data[13];
     const bool full_ck_ok = ((gm_add_bytes(&instance->raw_data[1], 13U) & 0xFFU) == 0U);

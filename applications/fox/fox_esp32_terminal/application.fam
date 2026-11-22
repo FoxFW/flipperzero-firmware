@@ -2,7 +2,7 @@ App(
     appid="fox_esp32_terminal",
     name="Fox ESP32 Terminal",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     entry_point="fox_esp32_terminal_main",
     stack_size=8 * 1024,
     fap_category="Fox/ESP32",

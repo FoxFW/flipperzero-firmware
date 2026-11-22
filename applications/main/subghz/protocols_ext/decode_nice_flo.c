@@ -1,4 +1,4 @@
-/* decode_nice_flo.fal : SD get_string for nice_flo (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nice_flo.h>
@@ -18,7 +18,6 @@ struct SubGhzProtocolDecoderNiceFlo {
 static void nice_flo_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderNiceFlo* instance = input->decoder;
-
 
     uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
     uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(

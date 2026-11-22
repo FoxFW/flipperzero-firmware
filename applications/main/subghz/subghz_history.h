@@ -25,6 +25,13 @@ void subghz_history_reset(SubGhzHistory* instance);
 
 void subghz_history_delete_item(SubGhzHistory* instance, uint16_t idx);
 
+bool subghz_history_insert_item(
+    SubGhzHistory* instance,
+    uint16_t idx,
+    FlipperFormat* ff,
+    uint8_t type,
+    SubGhzRadioPreset* preset);
+
 SubGhzRadioPreset* subghz_history_get_radio_preset(SubGhzHistory* instance, uint16_t idx);
 
 uint16_t subghz_history_get_item(SubGhzHistory* instance);
@@ -68,6 +75,15 @@ int16_t subghz_history_dedup_last_fiat_hitag2(SubGhzHistory* instance);
 
 int16_t subghz_history_dedup_last_came_holtek(SubGhzHistory* instance);
 
+int16_t subghz_history_dedup_last_priority(SubGhzHistory* instance);
+
+void subghz_history_set_combine_repeats(SubGhzHistory* instance, bool enable);
+bool subghz_history_last_is_undecoded_psa(SubGhzHistory* instance);
+int16_t subghz_history_remove_last_if_undecoded_psa(SubGhzHistory* instance);
+int16_t subghz_history_remove_one_undecoded_psa_extra(
+    SubGhzHistory* instance,
+    bool drop_even_if_alone);
+
 int16_t subghz_history_find_identical(
     SubGhzHistory* instance,
     void* context,
@@ -83,5 +99,7 @@ bool subghz_history_copy_item_to_file(SubGhzHistory* instance, uint16_t idx, con
 void subghz_history_flush(SubGhzHistory* instance);
 
 void subghz_history_set_auto_save_pending(SubGhzHistory* instance, uint16_t idx, bool pending);
+void subghz_history_set_raw_end_us(SubGhzHistory* instance, uint16_t idx, uint32_t us);
+uint32_t subghz_history_get_raw_end_us(SubGhzHistory* instance, uint16_t idx);
 
 bool subghz_history_find_auto_save_pending(SubGhzHistory* instance, uint16_t* idx);

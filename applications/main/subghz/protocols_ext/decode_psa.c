@@ -1,4 +1,4 @@
-/* decode_psa.fal : SD get_string for psa (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/psa.h>
@@ -115,7 +115,6 @@ static void psa_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderPSA* instance = input->decoder;
 
-
     uint16_t key2_value = (uint16_t)(instance->key2_low & 0xFFFF);
 
     if(instance->decrypted == 0x50 && instance->decrypted_type != 0) {
@@ -168,7 +167,7 @@ static void psa_decode(const SubGhzDecodeInput* input, FuriString* output) {
             "%s %dbit\r\n"
             "Key1:%08lX%08lX\r\n"
             "Key2:%X",
-            "Unknown Signal",
+            "PSA (encrypted)",
             128,
             instance->key1_high,
             instance->key1_low,

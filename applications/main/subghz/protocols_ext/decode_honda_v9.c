@@ -1,4 +1,4 @@
-/* decode_honda_v9.fal : SD get_string for honda_v9 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -27,20 +27,16 @@ struct SubGhzProtocolDecoderHondaV9 {
     uint8_t crc;
     bool crc_ok;
     bool pol_inv;
-    uint64_t tail; // decoded[8..13] (48 bits)
+    uint64_t tail;
 };
 
 static const char* honda_v9_btn_name(uint8_t btn);
 
 static const char* honda_v9_btn_name(uint8_t btn) {
     switch(btn) {
-    case 0x0: return "Panic";
-    case 0x1: return "Lock";
-    case 0x2: return "Trunk";
-    case 0x4: return "Remote Start";
-    case 0x8: return "Unlock";
-    case 0x9: return "Unlock x2";
-    default: return "?";
+    case 0x42: return "Lock";
+    case 0x44: return "Unlock";
+    default: return "Cmd";
     }
 }
 
@@ -64,7 +60,7 @@ static void honda_v9_decode(const SubGhzDecodeInput* input, FuriString* output) 
         instance->cnt,
         (unsigned long)instance->fingerprint,
         instance->crc,
-        instance->crc_ok ? "OK" : "~1",
+        instance->crc_ok ? "OK" : "FAIL",
         instance->pol_inv ? "INV" : "NOR");
 }
 

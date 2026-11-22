@@ -175,8 +175,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_princeton_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
-    // common_serialize_te writes the generic block + the TE field; we only add
-    // princeton's extra Guard_time on top (the "common helper + custom tail" pattern).
+
     SubGhzProtocolDecoderPrinceton* instance = context;
     SubGhzProtocolStatus ret =
         subghz_protocol_decoder_common_serialize_te(context, flipper_format, preset);

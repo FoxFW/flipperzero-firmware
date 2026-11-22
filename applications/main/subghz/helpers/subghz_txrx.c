@@ -10,30 +10,9 @@
 
 #define TAG "SubGhzTxRx"
 
-/* Unknown-RAW rolling capture depth (LevelDuration pairs). */
-/* A single edge longer than this (us) is silence/gap, not part of a coherent
- * burst. Used to reset the burst counter so sparse NOISE never accumulates to
- * the Unknown-RAW burst trigger -- only a continuous real transmission does. 30 ms is
- * well above any intra-burst gap and below inter-signal silence. Tunable. */
 #define SUBGHZ_RX_BURST_GAP_US 30000u
-#define SUBGHZ_RX_BURST_MIN_PAIRS 128u /* min pairs for a real burst */
-#define SUBGHZ_RX_RING_CAP 1024u /* 4KB ring (LevelDuration=4B). Was 4096=16KB; shrunk for RX RAM headroom (free-heap guard is 20KB). Tunable: raise if Unknown RAW misses long captures, lower to 512 if RAM still tight. */
-
-#define FOX_CC1101_EXT_STATUS_PATH EXT_PATH("subghz/.cc1101_ext_status")
-
-static void fox_cc1101_ext_status_write(bool connected) {
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    File* file = storage_file_alloc(storage);
-    if(storage_file_open(file, FOX_CC1101_EXT_STATUS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        char c = connected ? '1' : '0';
-        storage_file_write(file, &c, 1);
-        storage_file_close(file);
-    } else {
-        FURI_LOG_W(TAG, "Couldn't write %s", FOX_CC1101_EXT_STATUS_PATH);
-    }
-    storage_file_free(file);
-    furi_record_close(RECORD_STORAGE);
-}
+#define SUBGHZ_RX_BURST_MIN_PAIRS 128u
+#define SUBGHZ_RX_RING_CAP 1024u
 
 static void subghz_txrx_radio_device_power_on(SubGhzTxRx* instance) {
     UNUSED(instance);
@@ -50,17 +29,62 @@ static void subghz_txrx_radio_device_power_off(SubGhzTxRx* instance) {
     if(furi_hal_power_is_otg_enabled()) furi_hal_power_disable_otg();
 }
 
+#define SUBGHZ_DUAL_GATE_OPEN_DB   10
+#define SUBGHZ_DUAL_GATE_CLOSE_DB  6
+#define SUBGHZ_DUAL_GATE_POLL_SHUT 5
+#define SUBGHZ_DUAL_GATE_POLL_OPEN 50
+#define SUBGHZ_DUAL_RSSI_COUNT 12
+static const int16_t subghz_dual_rssi_dbm[SUBGHZ_DUAL_RSSI_COUNT] =
+    {-100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45};
+
+static bool subghz_txrx_dual_gate_pass(const SubGhzDevice* radio, SubGhzRssiGate* g) {
+    if(!radio) return true;
+    uint32_t now = furi_get_tick();
+    uint32_t period =
+        furi_ms_to_ticks(g->open ? SUBGHZ_DUAL_GATE_POLL_OPEN : SUBGHZ_DUAL_GATE_POLL_SHUT);
+    if((uint32_t)(now - g->last_tick) >= period) {
+        g->last_tick = now;
+        float rssi = subghz_devices_get_rssi(radio);
+        if(rssi > -127.0f) {
+            int db = (int)rssi;
+            if(!g->adaptive) {
+                g->floor_db = g->manual_floor;
+                g->floor_valid = true;
+            } else {
+                if(!g->floor_valid) {
+                    g->floor_db = (int16_t)db;
+                    g->floor_valid = true;
+                } else if(db < g->floor_db) {
+                    g->floor_db = (int16_t)db;
+                }
+                if(g->floor_db < g->manual_floor) g->floor_db = g->manual_floor;
+            }
+            if(!g->open) {
+                if(db > g->floor_db + SUBGHZ_DUAL_GATE_OPEN_DB) {
+                    g->open = true;
+                    g->low_hits = 0;
+                }
+            } else if(db < g->floor_db + SUBGHZ_DUAL_GATE_CLOSE_DB) {
+                if(g->low_hits < 2) g->low_hits++;
+                if(g->low_hits >= 2) {
+                    g->open = false;
+                    g->low_hits = 0;
+                }
+            } else {
+                g->low_hits = 0;
+            }
+        }
+    }
+    return g->open;
+}
+
 static void subghz_txrx_rx_pair_tee(void* context, bool level, uint32_t duration) {
     SubGhzTxRx* instance = context;
     if(instance->rx_ring && !instance->rx_burst_ready) {
         instance->rx_ring[instance->rx_ring_head] = level_duration_make(level, duration);
         instance->rx_ring_head = (instance->rx_ring_head + 1) % instance->rx_ring_cap;
         if(duration > SUBGHZ_RX_BURST_GAP_US) {
-            /* Silence/gap -> end of (or no) burst: reset so noise can't pile up.
-             * If the burst was long enough to be a real signal, latch its window
-             * and freeze the ring (rx_burst_ready) so the receiver-scene tick can
-             * grab it as an Unknown RAW before new edges overwrite it. Live decode
-             * (subghz_receiver_decode below) keeps running while frozen. */
+
             if(instance->rx_ring_count >= SUBGHZ_RX_BURST_MIN_PAIRS) {
                 instance->rx_burst_head =
                     (instance->rx_ring_head + instance->rx_ring_cap - 1) % instance->rx_ring_cap;
@@ -73,6 +97,10 @@ static void subghz_txrx_rx_pair_tee(void* context, bool level, uint32_t duration
         }
     }
     if(instance->receiver) {
+
+        if(instance->dual_receiver &&
+           !subghz_txrx_dual_gate_pass(instance->radio_device, &instance->dual_gate_main))
+            return;
         if(instance->dual_mutex) furi_mutex_acquire(instance->dual_mutex, FuriWaitForever);
         subghz_receiver_decode(instance->receiver, level, duration);
         if(instance->dual_mutex) furi_mutex_release(instance->dual_mutex);
@@ -90,6 +118,8 @@ static void subghz_txrx_rx_overrun_tee(void* context) {
 
 static void subghz_txrx_dual_pair(void* context, bool level, uint32_t duration) {
     SubGhzTxRx* instance = context;
+
+    if(!subghz_txrx_dual_gate_pass(instance->dual_device, &instance->dual_gate_ext)) return;
     furi_mutex_acquire(instance->dual_mutex, FuriWaitForever);
     subghz_receiver_decode(instance->dual_receiver, level, duration);
     furi_mutex_release(instance->dual_mutex);
@@ -265,6 +295,9 @@ SubGhzTxRx* subghz_txrx_alloc(void) {
     subghz_txrx_preset_hopper_set_state(instance, SubGhzPresetHopperStateOFF);
     instance->preset_hopper_idx = 0;
     instance->preset_hopper_timeout = 0;
+    instance->preset_hopper_mode = SubGhzPresetHopperModeStandard;
+    instance->preset_hopper_group = 0;
+    instance->preset_hopper_group_tick = 0;
     subghz_txrx_speaker_set_state(instance, SubGhzSpeakerStateDisable);
     subghz_txrx_set_debug_pin_state(instance, false);
 
@@ -303,6 +336,17 @@ SubGhzTxRx* subghz_txrx_alloc(void) {
     instance->dual_ext_frequency = 0;
     instance->dual_ext_preset_data = NULL;
     instance->dual_ext_preset_data_size = 0;
+    instance->dual_int_jamming = false;
+    instance->dual_ext_jamming = false;
+    instance->dual_int_jam_frequency = 0;
+    instance->dual_int_jam_preset_data = NULL;
+    instance->dual_int_jam_preset_data_size = 0;
+    instance->dual_ext_jam_frequency = 0;
+    instance->dual_ext_jam_preset_data = NULL;
+    instance->dual_ext_jam_preset_data_size = 0;
+    instance->dual_int_jam_active = false;
+    instance->dual_ext_jam_active = false;
+    instance->dual_jam_level = false;
     instance->receiver_filter_set = false;
     instance->receiver_rx_callback = NULL;
     instance->receiver_rx_context = NULL;
@@ -758,6 +802,62 @@ void subghz_txrx_hopper_pause(SubGhzTxRx* instance) {
     }
 }
 
+static size_t subghz_txrx_gcd(size_t a, size_t b) {
+    while(b) {
+        size_t t = b;
+        b = a % b;
+        a = t;
+    }
+    return a ? a : 1;
+}
+
+static size_t subghz_txrx_preset_hopper_active_count(SubGhzTxRx* instance, bool* use_group2) {
+    size_t c1 = subghz_setting_get_hopper_preset_count(instance->setting);
+    size_t c2 = subghz_setting_get_hopper_preset2_count(instance->setting);
+    bool g2;
+    switch(instance->preset_hopper_mode) {
+    case SubGhzPresetHopperModeExtended:
+        g2 = true;
+        break;
+    case SubGhzPresetHopperModeBoth:
+        g2 = (instance->preset_hopper_group == 1);
+        break;
+    default:
+        g2 = false;
+        break;
+    }
+    if(g2 && c2 == 0) g2 = false;
+    if(!g2 && c1 == 0 && c2 > 0) g2 = true;
+    *use_group2 = g2;
+    return g2 ? c2 : c1;
+}
+
+static void subghz_txrx_preset_hopper_apply(SubGhzTxRx* instance, size_t actual_preset_idx) {
+    if(instance->txrx_state == SubGhzTxRxStateRx) {
+        subghz_txrx_rx_end(instance);
+    }
+    if(instance->txrx_state == SubGhzTxRxStateIDLE) {
+        const char* old_preset_name = furi_string_get_cstr(instance->preset->name);
+        const char* preset_name =
+            subghz_setting_get_preset_name(instance->setting, actual_preset_idx);
+
+        bool old_is_am = (strstr(old_preset_name, "AM") != NULL);
+        bool new_is_am = (strstr(preset_name, "AM") != NULL);
+        bool modulation_changed = (old_is_am != new_is_am);
+
+        subghz_txrx_set_preset_internal(
+            instance, instance->preset->frequency, actual_preset_idx, 0);
+
+        if(modulation_changed) {
+            subghz_devices_reset(instance->radio_device);
+        }
+        subghz_devices_load_preset(
+            instance->radio_device, FuriHalSubGhzPresetCustom, instance->preset->data);
+
+        subghz_txrx_rx(instance, instance->preset->frequency);
+    }
+}
+
 void subghz_txrx_preset_hopper_update(SubGhzTxRx* instance, float stay_threshold) {
     furi_assert(instance);
 
@@ -787,87 +887,43 @@ void subghz_txrx_preset_hopper_update(SubGhzTxRx* instance, float stay_threshold
         instance->preset_hopper_state = SubGhzPresetHopperStateRunning;
     }
 
-    size_t hopper_preset_count = subghz_setting_get_hopper_preset_count(instance->setting);
+    bool use_group2 = false;
+    size_t active_count = subghz_txrx_preset_hopper_active_count(instance, &use_group2);
 
-    if(hopper_preset_count > 0) {
-        if(instance->preset_hopper_idx < hopper_preset_count - 1) {
-            instance->preset_hopper_idx++;
-        } else {
-            instance->preset_hopper_idx = 0;
-        }
+    if(active_count == 0) {
 
-        size_t actual_preset_idx = subghz_setting_get_hopper_preset_index(
-            instance->setting, instance->preset_hopper_idx);
-
-        if(instance->txrx_state == SubGhzTxRxStateRx) {
-            subghz_txrx_rx_end(instance);
-        }
-        if(instance->txrx_state == SubGhzTxRxStateIDLE) {
-            const char* old_preset_name = furi_string_get_cstr(instance->preset->name);
-
-            const char* preset_name =
-                subghz_setting_get_preset_name(instance->setting, actual_preset_idx);
-            subghz_txrx_set_preset_internal(
-                instance, instance->preset->frequency, actual_preset_idx, 0);
-
-            bool old_is_am = (strstr(old_preset_name, "AM") != NULL);
-            bool new_is_am = (strstr(preset_name, "AM") != NULL);
-            bool modulation_changed = (old_is_am != new_is_am);
-
-            if(modulation_changed) {
-                subghz_devices_reset(instance->radio_device);
-                subghz_devices_load_preset(
-                    instance->radio_device,
-                    FuriHalSubGhzPresetCustom,
-                    instance->preset->data);
-            } else {
-                subghz_devices_load_preset(
-                    instance->radio_device,
-                    FuriHalSubGhzPresetCustom,
-                    instance->preset->data);
-            }
-
-            subghz_txrx_rx(instance, instance->preset->frequency);
-        }
-    } else {
         size_t preset_count = subghz_setting_get_preset_count(instance->setting);
-        if(instance->preset_hopper_idx < preset_count - 1) {
-            instance->preset_hopper_idx++;
-        } else {
-            instance->preset_hopper_idx = 0;
-        }
+        if(preset_count == 0) return;
+        instance->preset_hopper_idx =
+            (instance->preset_hopper_idx < preset_count - 1) ? instance->preset_hopper_idx + 1 : 0;
+        subghz_txrx_preset_hopper_apply(instance, instance->preset_hopper_idx);
+        return;
+    }
 
-        if(instance->txrx_state == SubGhzTxRxStateRx) {
-            subghz_txrx_rx_end(instance);
-        }
-        if(instance->txrx_state == SubGhzTxRxStateIDLE) {
-            const char* old_preset_name = furi_string_get_cstr(instance->preset->name);
-
-            const char* preset_name =
-                subghz_setting_get_preset_name(instance->setting, instance->preset_hopper_idx);
-            subghz_txrx_set_preset_internal(
-                instance, instance->preset->frequency, instance->preset_hopper_idx, 0);
-
-            bool old_is_am = (strstr(old_preset_name, "AM") != NULL);
-            bool new_is_am = (strstr(preset_name, "AM") != NULL);
-            bool modulation_changed = (old_is_am != new_is_am);
-
-            if(modulation_changed) {
-                subghz_devices_reset(instance->radio_device);
-                subghz_devices_load_preset(
-                    instance->radio_device,
-                    FuriHalSubGhzPresetCustom,
-                    instance->preset->data);
-            } else {
-                subghz_devices_load_preset(
-                    instance->radio_device,
-                    FuriHalSubGhzPresetCustom,
-                    instance->preset->data);
-            }
-
-            subghz_txrx_rx(instance, instance->preset->frequency);
+    if(instance->preset_hopper_mode == SubGhzPresetHopperModeBoth) {
+        size_t fcount = subghz_setting_get_hopper_frequency_count(instance->setting);
+        if(fcount == 0) fcount = 1;
+        size_t dwell = (active_count / subghz_txrx_gcd(active_count, fcount)) * fcount;
+        instance->preset_hopper_group_tick++;
+        if(instance->preset_hopper_group_tick >= dwell) {
+            instance->preset_hopper_group_tick = 0;
+            instance->preset_hopper_group ^= 1;
+            active_count = subghz_txrx_preset_hopper_active_count(instance, &use_group2);
+            if(active_count == 0) return;
+            instance->preset_hopper_idx = active_count - 1;
         }
     }
+
+    instance->preset_hopper_idx =
+        (instance->preset_hopper_idx < active_count - 1) ? instance->preset_hopper_idx + 1 : 0;
+
+    size_t actual_preset_idx =
+        use_group2 ? subghz_setting_get_hopper_preset2_index(
+                         instance->setting, instance->preset_hopper_idx) :
+                     subghz_setting_get_hopper_preset_index(
+                         instance->setting, instance->preset_hopper_idx);
+
+    subghz_txrx_preset_hopper_apply(instance, actual_preset_idx);
 }
 
 SubGhzPresetHopperState subghz_txrx_preset_hopper_get_state(SubGhzTxRx* instance) {
@@ -886,6 +942,15 @@ void subghz_txrx_preset_hopper_set_state(SubGhzTxRx* instance, SubGhzPresetHoppe
             FuriHalSubGhzPresetCustom,
             instance->preset->data);
     }
+}
+
+void subghz_txrx_preset_hopper_set_mode(SubGhzTxRx* instance, uint8_t mode) {
+    furi_assert(instance);
+    if(mode > SubGhzPresetHopperModeBoth) mode = SubGhzPresetHopperModeStandard;
+    instance->preset_hopper_mode = mode;
+    instance->preset_hopper_group = 0;
+    instance->preset_hopper_group_tick = 0;
+    instance->preset_hopper_idx = 0;
 }
 
 void subghz_txrx_preset_hopper_unpause(SubGhzTxRx* instance) {
@@ -1109,7 +1174,6 @@ SubGhzRadioDeviceType
         instance->radio_device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_EXT_NAME);
         subghz_devices_begin(instance->radio_device);
         instance->radio_device_type = SubGhzRadioDeviceTypeExternalCC1101;
-        fox_cc1101_ext_status_write(true);
     } else {
         subghz_txrx_radio_device_power_off(instance);
         if(instance->radio_device_type != SubGhzRadioDeviceTypeInternal) {
@@ -1117,10 +1181,6 @@ SubGhzRadioDeviceType
         }
         instance->radio_device = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
         instance->radio_device_type = SubGhzRadioDeviceTypeInternal;
-        if(radio_device_type == SubGhzRadioDeviceTypeExternalCC1101) {
-
-            fox_cc1101_ext_status_write(false);
-        }
     }
 
     return instance->radio_device_type;
@@ -1258,7 +1318,7 @@ void subghz_txrx_rx_ring_reset(SubGhzTxRx* instance) {
     furi_assert(instance);
     instance->rx_ring_head = 0;
     instance->rx_ring_count = 0;
-    instance->rx_burst_ready = false; /* unfreeze */
+    instance->rx_burst_ready = false;
 }
 
 void subghz_txrx_rx_ring_set_wanted(SubGhzTxRx* instance, bool wanted) {
@@ -1269,14 +1329,12 @@ void subghz_txrx_rx_ring_set_wanted(SubGhzTxRx* instance, bool wanted) {
 
 bool subghz_txrx_burst_ready(SubGhzTxRx* instance) {
     furi_assert(instance);
-    return instance->rx_burst_ready; /* peek; cleared by subghz_txrx_rx_ring_reset */
+    return instance->rx_burst_ready;
 }
 
 FlipperFormat* subghz_txrx_rx_ring_build_raw_ff(SubGhzTxRx* instance) {
     furi_assert(instance);
-    /* Build from the LATCHED burst window (rx_burst_head/count), which the ring
-     * freeze keeps intact. Standard RAW .sub wire format,
-     * in-memory (no Storage). Caller owns the returned ff. NULL if nothing latched. */
+
     if(!instance->rx_ring || instance->rx_burst_count == 0) return NULL;
     FlipperFormat* ff = flipper_format_string_alloc();
     int32_t* chunk = NULL;
@@ -1322,6 +1380,33 @@ FlipperFormat* subghz_txrx_rx_ring_build_raw_ff(SubGhzTxRx* instance) {
         return NULL;
     }
     return ff;
+}
+
+static LevelDuration subghz_txrx_dual_jam_yield(void* context) {
+    SubGhzTxRx* instance = context;
+    instance->dual_jam_level = !instance->dual_jam_level;
+    return level_duration_make(instance->dual_jam_level, 200);
+}
+
+void subghz_txrx_dual_set_jam(
+    SubGhzTxRx* instance,
+    bool int_jamming,
+    uint32_t int_jam_frequency,
+    uint8_t* int_jam_preset_data,
+    size_t int_jam_preset_data_size,
+    bool ext_jamming,
+    uint32_t ext_jam_frequency,
+    uint8_t* ext_jam_preset_data,
+    size_t ext_jam_preset_data_size) {
+    furi_assert(instance);
+    instance->dual_int_jamming = int_jamming;
+    instance->dual_int_jam_frequency = int_jam_frequency;
+    instance->dual_int_jam_preset_data = int_jam_preset_data;
+    instance->dual_int_jam_preset_data_size = int_jam_preset_data_size;
+    instance->dual_ext_jamming = ext_jamming;
+    instance->dual_ext_jam_frequency = ext_jam_frequency;
+    instance->dual_ext_jam_preset_data = ext_jam_preset_data;
+    instance->dual_ext_jam_preset_data_size = ext_jam_preset_data_size;
 }
 
 void subghz_txrx_dual_set_ext_preset(
@@ -1373,16 +1458,33 @@ size_t subghz_txrx_dual_heap_needed(SubGhzTxRx* instance) {
 
 static void subghz_txrx_dual_ext_end(SubGhzTxRx* instance) {
     if(subghz_worker_is_running(instance->dual_worker)) {
-        subghz_worker_stop(instance->dual_worker);
+
         subghz_devices_stop_async_rx(instance->dual_device);
+        subghz_worker_stop(instance->dual_worker);
     }
     subghz_devices_idle(instance->dual_device);
+}
+
+void subghz_txrx_dual_set_rssi(
+    SubGhzTxRx* instance, uint8_t int_idx, uint8_t ext_idx, bool adaptive) {
+    furi_assert(instance);
+    if(int_idx >= SUBGHZ_DUAL_RSSI_COUNT) int_idx = SUBGHZ_DUAL_RSSI_COUNT - 1;
+    if(ext_idx >= SUBGHZ_DUAL_RSSI_COUNT) ext_idx = SUBGHZ_DUAL_RSSI_COUNT - 1;
+    instance->dual_int_floor_db = subghz_dual_rssi_dbm[int_idx];
+    instance->dual_ext_floor_db = subghz_dual_rssi_dbm[ext_idx];
+    instance->dual_rssi_adaptive = adaptive;
 }
 
 bool subghz_txrx_dual_rx_start(SubGhzTxRx* instance) {
     furi_assert(instance);
     if(!instance->dual_ext_preset_data) return false;
     subghz_txrx_stop(instance);
+    instance->dual_gate_main = (SubGhzRssiGate){0};
+    instance->dual_gate_ext = (SubGhzRssiGate){0};
+    instance->dual_gate_main.manual_floor = instance->dual_int_floor_db;
+    instance->dual_gate_main.adaptive = instance->dual_rssi_adaptive;
+    instance->dual_gate_ext.manual_floor = instance->dual_ext_floor_db;
+    instance->dual_gate_ext.adaptive = instance->dual_rssi_adaptive;
 
     if(!instance->dual_worker) {
         const SubGhzDevice* ext = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_EXT_NAME);
@@ -1402,6 +1504,10 @@ bool subghz_txrx_dual_rx_start(SubGhzTxRx* instance) {
         instance->dual_device = ext;
         instance->dual_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
         instance->dual_worker = subghz_worker_alloc_ex(SUBGHZ_TXRX_DUAL_STREAM_SAMPLES);
+
+        subghz_worker_set_priority(instance->dual_worker, FuriThreadPriorityLow);
+
+        subghz_worker_set_priority(instance->worker, FuriThreadPriorityLow);
         subghz_worker_set_overrun_callback(instance->dual_worker, subghz_txrx_dual_overrun);
         subghz_worker_set_pair_callback(instance->dual_worker, subghz_txrx_dual_pair);
         subghz_worker_set_context(instance->dual_worker, instance);
@@ -1421,26 +1527,59 @@ bool subghz_txrx_dual_rx_start(SubGhzTxRx* instance) {
     subghz_receiver_set_modulation_filter(instance->dual_receiver, ext_modulation);
     subghz_receiver_reset(instance->dual_receiver);
 
-    subghz_txrx_begin(
-        instance,
-        subghz_setting_get_preset_data_by_name(
-            instance->setting, furi_string_get_cstr(instance->preset->name)));
-    subghz_txrx_rx(instance, instance->preset->frequency);
+    if(instance->dual_int_jamming && instance->dual_int_jam_preset_data) {
+        subghz_txrx_begin(instance, instance->dual_int_jam_preset_data);
+        subghz_devices_idle(instance->radio_device);
+        subghz_devices_set_frequency(
+            instance->radio_device,
+            (uint32_t)((int64_t)instance->dual_int_jam_frequency + instance->frequency_offset));
+        subghz_devices_start_async_tx(
+            instance->radio_device, subghz_txrx_dual_jam_yield, instance);
+        instance->dual_int_jam_active = true;
+    } else {
+        subghz_txrx_begin(
+            instance,
+            subghz_setting_get_preset_data_by_name(
+                instance->setting, furi_string_get_cstr(instance->preset->name)));
+        subghz_txrx_rx(instance, instance->preset->frequency);
+    }
 
     const SubGhzDevice* ext = instance->dual_device;
     subghz_devices_reset(ext);
     subghz_devices_idle(ext);
-    subghz_devices_load_preset(ext, FuriHalSubGhzPresetCustom, instance->dual_ext_preset_data);
-    subghz_devices_set_frequency(ext, instance->dual_ext_frequency);
-    subghz_devices_flush_rx(ext);
-    subghz_devices_start_async_rx(ext, subghz_worker_rx_callback, instance->dual_worker);
-    subghz_worker_start(instance->dual_worker);
+    if(instance->dual_ext_jamming && instance->dual_ext_jam_preset_data) {
+        subghz_devices_load_preset(
+            ext, FuriHalSubGhzPresetCustom, instance->dual_ext_jam_preset_data);
+        subghz_devices_set_frequency(ext, instance->dual_ext_jam_frequency);
+        subghz_devices_start_async_tx(ext, subghz_txrx_dual_jam_yield, instance);
+        instance->dual_ext_jam_active = true;
+    } else {
+        subghz_devices_load_preset(
+            ext, FuriHalSubGhzPresetCustom, instance->dual_ext_preset_data);
+        subghz_devices_set_frequency(ext, instance->dual_ext_frequency);
+        subghz_devices_flush_rx(ext);
+        subghz_devices_start_async_rx(ext, subghz_worker_rx_callback, instance->dual_worker);
+        subghz_worker_start(instance->dual_worker);
+    }
     return true;
 }
 
 void subghz_txrx_dual_rx_stop(SubGhzTxRx* instance, SubGhzRadioDeviceType main_device) {
     furi_assert(instance);
     if(!instance->dual_worker) return;
+
+    subghz_txrx_set_rx_callback(instance, NULL, NULL);
+
+    if(instance->dual_ext_jam_active) {
+        subghz_devices_stop_async_tx(instance->dual_device);
+        subghz_devices_idle(instance->dual_device);
+        instance->dual_ext_jam_active = false;
+    }
+    if(instance->dual_int_jam_active) {
+        subghz_devices_stop_async_tx(instance->radio_device);
+        subghz_devices_idle(instance->radio_device);
+        instance->dual_int_jam_active = false;
+    }
 
     subghz_txrx_dual_ext_end(instance);
     subghz_txrx_stop(instance);
@@ -1463,6 +1602,8 @@ void subghz_txrx_dual_rx_stop(SubGhzTxRx* instance, SubGhzRadioDeviceType main_d
         subghz_txrx_radio_device_power_off(instance);
     }
     instance->dual_device = NULL;
+
+    subghz_worker_set_priority(instance->worker, FuriThreadPriorityNormal);
 }
 
 bool subghz_txrx_dual_is_ext_receiver(SubGhzTxRx* instance, SubGhzReceiver* receiver) {

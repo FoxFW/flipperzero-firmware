@@ -2,11 +2,7 @@ App(
     appid="csight",
     name="CSIght (Fox Edition)",
     apptype=FlipperAppType.EXTERNAL,
-    # 14x14 home-screen Apps-menu icon. Inert for an EXTERNAL app today -
-    # only a MENUEXTERNAL app's FLIPPER_EXTERNAL_APPS entry actually reads
-    # this field - but set on every Fox app now so none of them shows the
-    # generic fallback icon if it's ever added to that menu. See
-    # assets/icons/Fox/fox_generic_14x14.png.
+
     icon="I_fox_generic_14x14",
     entry_point="csight_app",
     requires=[

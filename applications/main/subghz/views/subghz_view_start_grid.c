@@ -18,6 +18,7 @@ extern const Icon I_subratt_10x10;
 extern const Icon I_rf_jammer_10x10;
 extern const Icon I_btn_tpms_10x10;
 extern const Icon I_External_ant_1_9x11;
+extern const Icon I_btn_grabber_10x10;
 
 #define BTN_H        26
 #define BTN_R         5
@@ -47,24 +48,33 @@ typedef struct {
 
 static const SubGhzGridBtnDef k_btns[SGRID_BTN_COUNT] = {
 
-    {0, 0, false,"Read",               10, {12, 14, NN,  2}, &I_btn_read_10x10},
-    {0, 2, false,"Saved",              11, {14,  4, NN,  3}, &I_btn_saved_10x10},
-    {1, 0, false,"Read Raw",           15, {13, 14,  0, NN}, &I_btn_readraw_10x10},
-    {1, 2, false,"Add Manual",         12, {14,  4,  1, NN}, &I_btn_addmanually_10x10},
-    {0, 3, true, "Radio Settings",     16, { 1,  5, NN, NN}, &I_btn_radiosettings_10x10},
-    {0, 4, true, "Frequency Analyzer", 13, { 4,  6, NN, NN}, &I_btn_frequencyanalyzer_10x10},
-    {0, 5, true, "Modulation Analyzer",14, { 5,  7, NN, NN}, &I_btn_modulationanalyzer_10x10},
-    {0, 6, true, "RF Jammer",          23, { 6,  8, NN, NN}, &I_rf_jammer_10x10},
-    {0, 7, true, "SubRATT",            25, { 7,  9, NN, NN}, &I_subratt_10x10},
-    {0, 8, true, "TPMS Reader",        24, { 8, 10, NN, NN}, &I_btn_tpms_10x10},
-    {0, 9, false,"Protocols",          17, { 9, 12, NN, 11}, &I_btn_protocols_10x10},
-    {1, 9, false,"Modulations",        18, { 9, 13, 10, NN}, &I_btn_modulation_10x10},
-    {0,10, false,"KeeLoq Keys",        20, {10,  0, NN, 13}, &I_btn_keyloqkeys_10x10},
-    {1,10, false,"KeeLoq BF",          21, {11,  2, 12, NN}, &I_btn_keyloqbf_10x10},
-    {0, 1, true, "Read Int/Ext",       26, { 0,  1, NN, NN}, &I_External_ant_1_9x11},
+    {0, 0, false,"Read",               10, {15,  2, NN,  1}, &I_btn_read_10x10},
+    {1, 0, false,"Read Raw",           15, {16,  3,  0, NN}, &I_btn_readraw_10x10},
+
+    {0, 1, false,"Read Int/Ext",       26, { 0,  4, NN,  3}, &I_External_ant_1_9x11},
+    {1, 1, false,"RAW Int/Ext",        27, { 1,  5,  2, NN}, &I_btn_readraw_10x10},
+
+    {0, 2, false,"Saved",              11, { 2,  6, NN,  5}, &I_btn_saved_10x10},
+    {1, 2, false,"Add Manual",         12, { 3,  6,  4, NN}, &I_btn_addmanually_10x10},
+
+    {0, 3, true, "Radio Settings",     16, { 4,  7, NN, NN}, &I_btn_radiosettings_10x10},
+
+    {0, 4, true, "Signal Grabber",     28, { 6,  8, NN, NN}, &I_btn_grabber_10x10},
+    {0, 5, true, "Frequency Analyzer", 13, { 7,  9, NN, NN}, &I_btn_frequencyanalyzer_10x10},
+    {0, 6, true, "Modulation Analyzer",14, { 8, 10, NN, NN}, &I_btn_modulationanalyzer_10x10},
+
+    {0, 7, true, "RF Jammer",          23, { 9, 11, NN, NN}, &I_rf_jammer_10x10},
+    {0, 8, true, "SubRATT",            25, {10, 12, NN, NN}, &I_subratt_10x10},
+    {0, 9, true, "TPMS Reader",        24, {11, 13, NN, NN}, &I_btn_tpms_10x10},
+
+    {0,10, false,"Protocols",          17, {12, 15, NN, 14}, &I_btn_protocols_10x10},
+    {1,10, false,"Modulations",        18, {12, 16, 13, NN}, &I_btn_modulation_10x10},
+
+    {0,11, false,"KeeLoq Keys",        20, {13,  0, NN, 16}, &I_btn_keyloqkeys_10x10},
+    {1,11, false,"KeeLoq BF",          21, {14,  1, 15, NN}, &I_btn_keyloqbf_10x10},
 };
 
-#define TOTAL_ROWS 11
+#define TOTAL_ROWS 12
 
 typedef struct {
     uint8_t selected;
@@ -109,12 +119,7 @@ static void draw_btn(Canvas* canvas, uint8_t idx, uint8_t screen_y,
 
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str_aligned(
-        canvas,
-        x + w / 2,
-        screen_y + TEXT_Y_OFF,
-        AlignCenter,
-        AlignCenter,
-        b->label);
+        canvas, x + w / 2, screen_y + TEXT_Y_OFF, AlignCenter, AlignCenter, b->label);
 
     if(selected) canvas_set_color(canvas, ColorBlack);
 }

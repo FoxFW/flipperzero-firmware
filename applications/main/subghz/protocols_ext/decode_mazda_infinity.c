@@ -1,4 +1,4 @@
-/* decode_mazda_infinity.fal : SD get_string for mazda_infinity (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mazda_infinity.h>
@@ -28,7 +28,7 @@ struct SubGhzProtocolDecoderMazdaInfinity {
     uint8_t cells[MAZDA_INF_WINDOW_CELLS];
     uint16_t cell_count;
 
-    uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]; // de-whitened logical payload
+    uint8_t logical[MAZDA_INF_PAYLOAD_BYTES];
     uint8_t last_logical[MAZDA_INF_PAYLOAD_BYTES];
     bool last_valid;
     bool checksum_ok;
@@ -52,7 +52,6 @@ static const char* mazda_inf_button_name(uint8_t btn) {
 static void mazda_infinity_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderMazdaInfinity* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

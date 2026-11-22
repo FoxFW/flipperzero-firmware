@@ -1,4 +1,5 @@
 #include "subaru.h"
+#include "decode_plugin.h"
 
 #include "common.h"
 #include "../encode_plugin.h"
@@ -58,10 +59,6 @@ typedef enum {
     SubaruDecoderStepSaveDuration,
 } SubaruDecoderStep;
 
-static const char* subaru_get_button_name(uint8_t btn) {
-    static const char* const names[4] = {"Lock", "Unlock", "Trunk", "Panic"};
-    return names[btn & 0x03];
-}
 
 static void subaru_u64_to_bytes_be(uint64_t data, uint8_t bytes[8]) {
     for(size_t i = 0; i < 8; i++) {
@@ -331,16 +328,8 @@ void subghz_protocol_decoder_subaru_get_string(void* context, FuriString* output
     instance->generic.btn = instance->btn;
     instance->generic.cnt = instance->cnt;
 
-    furi_string_cat_printf(
-        output,
-        "%s %dbit\r\n"
-        "Key:%016llX\r\n"
-        "Sn:%06lX Btn:%02X [%s]\r\nCnt:%04lX\r\n",
-        instance->generic.protocol_name,
-        instance->generic.data_count_bit,
-        (unsigned long long)instance->generic.data,
-        (unsigned long)instance->serial,
-        instance->btn,
-        subaru_get_button_name(instance->btn),
-        (unsigned long)instance->cnt);
+    const SubGhzDecodeInput input = {
+        .generic = &instance->generic,
+    };
+    subghz_decode_plugin_get_string("SUBARU", &input, output);
 }

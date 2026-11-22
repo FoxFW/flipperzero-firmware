@@ -1,5 +1,5 @@
-/* enc_audi_v1.fal : SD encoder for audi_v1 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_audi_v1 enc_audi_v1__subghz_protocol_audi_v1
 #define subghz_protocol_encoder_audi_v1_alloc enc_audi_v1__subghz_protocol_encoder_audi_v1_alloc
 #define subghz_protocol_encoder_audi_v1_deserialize enc_audi_v1__subghz_protocol_encoder_audi_v1_deserialize
@@ -48,307 +48,278 @@ static const SubGhzBlockConst subghz_protocol_audi_v1_const = {
 };
 
 static const uint64_t AUDI_V1_HOP_PREDICT[256] = {
-    0x0374560849F1ULL, // ctr=0
-    0x05545A2AC979ULL, // ctr=1
-    0x0B5ECBE721C9ULL, // ctr=2
-    0x0D7EC2268187ULL, // ctr=3
-    0x13544B1069E4ULL, // ctr=4
-    0x1574C01AE5CFULL, // ctr=5
-    0x1B7CDB6E0D4EULL, // ctr=6
-    0x1D5C5F2D41E3ULL, // ctr=7
-    0x23744E49A564ULL, // ctr=8
-    0x2554406C61ADULL, // ctr=9
-    0x2B5ED97B0543ULL, // ctr=10
-    0x2D7ED87AF595ULL, // ctr=11
-    0x33545CDA4D3DULL, // ctr=12
-    0x3574D8DA4597ULL, // ctr=13
-    0x3B74CC3C153BULL, // ctr=14
-    0x3D546F2C79C2ULL, // ctr=15
-    0x4354C81B0154ULL, // ctr=16
-    0x45744A10956FULL, // ctr=17
-    0x4B7C59CE0938ULL, // ctr=18
-    0x4D5CDC84C911ULL, // ctr=19
-    0x537442A9015CULL, // ctr=20
-    0x5554EEA08D53ULL, // ctr=21
-    0x5B5EDE4F0D08ULL, // ctr=22
-    0x5D7E7726F112ULL, // ctr=23
-    0x6354DA5A5573ULL, // ctr=24
-    0x65747E52218DULL, // ctr=25
-    0x6B7449866D2CULL, // ctr=26
-    0x6D54CB96996CULL, // ctr=27
-    0x737458CC9597ULL, // ctr=28
-    0x7554D7EC31BAULL, // ctr=29
-    0x7B5ECE5B0120ULL, // ctr=30
-    0x7D7E4F72A906ULL, // ctr=31
-    0x8375D71C05A9ULL, // ctr=32
-    0x8575D22FE975ULL, // ctr=33
-    0x8B5F5F85AD32ULL, // ctr=34
-    0x8D5F7A240518ULL, // ctr=35
-    0x93555D00F5FFULL, // ctr=36
-    0x95555B4A6D2DULL, // ctr=37
-    0x9B7DDC0CE542ULL, // ctr=38
-    0x9D7DDC0EA506ULL, // ctr=39
-    0xA355CE696DADULL, // ctr=40
-    0xA555C97AFD2FULL, // ctr=41
-    0xAB7E4F40115AULL, // ctr=42
-    0xAD7E4A68CDADULL, // ctr=43
-    0xB37546C2AD7EULL, // ctr=44
-    0xB5756FC8798FULL, // ctr=45
-    0xBB54CF4CA954ULL, // ctr=46
-    0xBD54E01C61E5ULL, // ctr=47
-    0xC355480AC580ULL, // ctr=48
-    0xC555CE42810CULL, // ctr=49
-    0xCB7DCAAC3D7CULL, // ctr=50
-    0xCD7D4BA4A16FULL, // ctr=51
-    0xD3755A8515FDULL, // ctr=52
-    0xD57576B68170ULL, // ctr=53
-    0xDB5FDE2E896CULL, // ctr=54
-    0xDD5FD726698BULL, // ctr=55
-    0xE375544AB9A0ULL, // ctr=56
-    0xE575D44A45DAULL, // ctr=57
-    0xEB54DCF6DDD9ULL, // ctr=58
-    0xED5452A48957ULL, // ctr=59
-    0xF3554AD8C96CULL, // ctr=60
-    0xF5554CE021BCULL, // ctr=61
-    0xFB7ECC6B9D2EULL, // ctr=62
-    0xFD7ECD6A6DD8ULL, // ctr=63
-    0x03155B91EDA1ULL, // ctr=64
-    0x0535D0B9ED24ULL, // ctr=65
-    0x0B3DDB2D1949ULL, // ctr=66
-    0x0D1D5F2DFD0FULL, // ctr=67
-    0x1375422C65FDULL, // ctr=68
-    0x1555462DC972ULL, // ctr=69
-    0x1B5FCF278DB1ULL, // ctr=70
-    0x1D7FEE264973ULL, // ctr=71
-    0x2315425A7DC3ULL, // ctr=72
-    0x2535CE7299A5ULL, // ctr=73
-    0x2B34CA7E053EULL, // ctr=74
-    0x2D14412C5195ULL, // ctr=75
-    0x33755A682DC9ULL, // ctr=76
-    0x35555C6AB177ULL, // ctr=77
-    0x3B1D4D016997ULL, // ctr=78
-    0x3D1CC629E9B3ULL, // ctr=79
-    0x4314480121ABULL, // ctr=80
-    0x4514C26B6D01ULL, // ctr=81
-    0x4B1CD8CD39EFULL, // ctr=82
-    0x4D1C5DADF9CCULL, // ctr=83
-    0x535450A82942ULL, // ctr=84
-    0x55547CADA9EDULL, // ctr=85
-    0x5B5CC6221D6AULL, // ctr=86
-    0x5D5CEF2BD988ULL, // ctr=87
-    0x631450523DDCULL, // ctr=88
-    0x6514D476B1F6ULL, // ctr=89
-    0x6B15CA8949E0ULL, // ctr=90
-    0x6D1460ABE9CFULL, // ctr=91
-    0x735448FC2522ULL, // ctr=92
-    0x75544EFCB1B6ULL, // ctr=93
-    0x7B5CDE6FC9CBULL, // ctr=94
-    0x7D5CDF7F2D38ULL, // ctr=95
-    0x835C5C359DBFULL, // ctr=96
-    0x855C71250910ULL, // ctr=97
-    0x8B54DD7A3DD1ULL, // ctr=98
-    0x8D54DA32A104ULL, // ctr=99
-    0x931D45890DDBULL, // ctr=100
-    0x951CCBB1CDAAULL, // ctr=101
-    0x9B14CF0DD900ULL, // ctr=102
-    0x9D144727D9A4ULL, // ctr=103
-    0xA35D4E680945ULL, // ctr=104
-    0xA55C4061E9A5ULL, // ctr=105
-    0xAB54CD7A01DDULL, // ctr=106
-    0xAD54C8E3ADEBULL, // ctr=107
-    0xB31C5C4BF9D5ULL, // ctr=108
-    0xB51CFD6BB912ULL, // ctr=109
-    0xBB1CDE4D8121ULL, // ctr=110
-    0xBD1C79250960ULL, // ctr=111
-    0xC31550138D8CULL, // ctr=112
-    0xC51456299DA7ULL, // ctr=113
-    0xCB1CD38DF1ECULL, // ctr=114
-    0xCD1CD2AD556FULL, // ctr=115
-    0xD354DBAFA9CEULL, // ctr=116
-    0xD554D7BD7D02ULL, // ctr=117
-    0xDB5C5E706D50ULL, // ctr=118
-    0xDD5C7F39E1B2ULL, // ctr=119
-    0xE3144E40BDD0ULL, // ctr=120
-    0xE5144E6B3D7DULL, // ctr=121
-    0xEB14CFCFE982ULL, // ctr=122
-    0xED14C9AC4149ULL, // ctr=123
-    0xF355CAEAADBFULL, // ctr=124
-    0xF554C5E86D75ULL, // ctr=125
-    0xFB5C4C6DC5D7ULL, // ctr=126
-    0xFD5C4D7D6560ULL, // ctr=127
-    0x035CD4CAE137ULL, // ctr=128
-    0x055C5EE02151ULL, // ctr=129
-    0x0B74484805EDULL, // ctr=130
-    0x0D74C0412D42ULL, // ctr=131
-    0x137CD6471D74ULL, // ctr=132
-    0x157CF375D5ADULL, // ctr=133
-    0x1B544A08D14BULL, // ctr=134
-    0x1D54632131ADULL, // ctr=135
-    0x237CC64D692AULL, // ctr=136
-    0x257C4E4E4D83ULL, // ctr=137
-    0x2B5D565A4DA0ULL, // ctr=138
-    0x2D5CF14185D3ULL, // ctr=139
-    0x335CCE1FD1F8ULL, // ctr=140
-    0x355CC9245142ULL, // ctr=141
-    0x3B74528CB5B3ULL, // ctr=142
-    0x3D74533D15A5ULL, // ctr=143
-    0x437C42DD7542ULL, // ctr=144
-    0x457C46E8B9B9ULL, // ctr=145
-    0x4B56DF22FD8AULL, // ctr=146
-    0x4D56D623750CULL, // ctr=147
-    0x535CC541B9A5ULL, // ctr=148
-    0x555CC36A81B6ULL, // ctr=149
-    0x5B7447C8DDEAULL, // ctr=150
-    0x5D7446CA4D7FULL, // ctr=151
-    0x635C528DDDAAULL, // ctr=152
-    0x655C5DBD7937ULL, // ctr=153
-    0x6B76C5369DE4ULL, // ctr=154
-    0x6D76CC2F553AULL, // ctr=155
-    0x737CC4464953ULL, // ctr=156
-    0x757CED62E5F4ULL, // ctr=157
-    0x7B5D54C8F5D8ULL, // ctr=158
-    0x7D5C52DBC1FEULL, // ctr=159
-    0x835D5EDE5198ULL, // ctr=160
-    0x857CD8F01D5BULL, // ctr=161
-    0x8B74D34A8D7CULL, // ctr=162
-    0x8D545F417929ULL, // ctr=163
-    0x937CCA421DEDULL, // ctr=164
-    0x955C4E63F586ULL, // ctr=165
-    0x9B5546683146ULL, // ctr=166
-    0x9D74E7239923ULL, // ctr=167
-    0xA35C4C5BE996ULL, // ctr=168
-    0xA57CC4721DE5ULL, // ctr=169
-    0xAB7DC15269BBULL, // ctr=170
-    0xAD5C4A48D9BDULL, // ctr=171
-    0xB37DDA0DF57BULL, // ctr=172
-    0xB55C5426111DULL, // ctr=173
-    0xBB545CAC7DF5ULL, // ctr=174
-    0xBD74DD36DD68ULL, // ctr=175
-    0xC37CC6C9B196ULL, // ctr=176
-    0xC55CEAE8515DULL, // ctr=177
-    0xCB574342D5DFULL, // ctr=178
-    0xCD764A2A511DULL, // ctr=179
-    0xD35DCD550180ULL, // ctr=180
-    0xD57C4A5EB59FULL, // ctr=181
-    0xDB7440C81DADULL, // ctr=182
-    0xDD54CDC95943ULL, // ctr=183
-    0xE37DDC8CF1A8ULL, // ctr=184
-    0xE55CD2AD5D0CULL, // ctr=185
-    0xEB565B1E5D32ULL, // ctr=186
-    0xED765A2FF58CULL, // ctr=187
-    0xF35CCE5A05A9ULL, // ctr=188
-    0xF57C6A72696FULL, // ctr=189
-    0xFB7D5DC835B1ULL, // ctr=190
-    0xFD5CFFDB5547ULL, // ctr=191
-    0x031CDC4BD5CBULL, // ctr=192
-    0x051C52699125ULL, // ctr=193
-    0x0B145E475DCDULL, // ctr=194
-    0x0D14DE6D1925ULL, // ctr=195
-    0x135DD87E651BULL, // ctr=196
-    0x155CDD75F98EULL, // ctr=197
-    0x1B5454641DF4ULL, // ctr=198
-    0x1D5477AD8D88ULL, // ctr=199
-    0x231DC4C1913CULL, // ctr=200
-    0x251C6CE1D5F7ULL, // ctr=201
-    0x2B1C4E5DF94BULL, // ctr=202
-    0x2D1CE17DD5EEULL, // ctr=203
-    0x335CCA2BB9A1ULL, // ctr=204
-    0x355CCD716122ULL, // ctr=205
-    0x3B544C2355C3ULL, // ctr=206
-    0x3D544D30BD3FULL, // ctr=207
-    0x435556F5D5F6ULL, // ctr=208
-    0x45547AF53139ULL, // ctr=209
-    0x4B5CD36EEDD1ULL, // ctr=210
-    0x4D5CDA2E6516ULL, // ctr=211
-    0x5314CD41B1ECULL, // ctr=212
-    0x5514C7617908ULL, // ctr=213
-    0x5B1C4BC5D58AULL, // ctr=214
-    0x5D1C4AE75D27ULL, // ctr=215
-    0x63544EB1EDB3ULL, // ctr=216
-    0x655449E00907ULL, // ctr=217
-    0x6B5CC9322D77ULL, // ctr=218
-    0x6D5CC82291DCULL, // ctr=219
-    0x7315C642B1C5ULL, // ctr=220
-    0x7514C76299CBULL, // ctr=221
-    0x7B145ED4F586ULL, // ctr=222
-    0x7D1450F65900ULL, // ctr=223
-    0x831C465D5143ULL, // ctr=224
-    0x851CC87919A7ULL, // ctr=225
-    0x8B14D94375E6ULL, // ctr=226
-    0x8D145569F9CAULL, // ctr=227
-    0x935CDE686D82ULL, // ctr=228
-    0x955C5263E58BULL, // ctr=229
-    0x9B54482189B9ULL, // ctr=230
-    0x9D54CBAA152BULL, // ctr=231
-    0xA31C5ED575D7ULL, // ctr=232
-    0xA51CDAF5BDBDULL, // ctr=233
-    0xAB1CCD4BF95EULL, // ctr=234
-    0xAD1C6E69D9F9ULL, // ctr=235
-    0xB35CCE2635A4ULL, // ctr=236
-    0xB55C4027B1A9ULL, // ctr=237
-    0xBB555A3C253BULL, // ctr=238
-    0xBD54DB26C547ULL, // ctr=239
-    0xC354C8E0B59CULL, // ctr=240
-    0xC554E4E1292BULL, // ctr=241
-    0xCB5C5F2B3540ULL, // ctr=242
-    0xCD5C7E2AF5A6ULL, // ctr=243
-    0xD314C55535F4ULL, // ctr=244
-    0xD51442757D1DULL, // ctr=245
-    0xDB1C50C135F5ULL, // ctr=246
-    0xDD1CD5E37110ULL, // ctr=247
-    0xE354D8A5E1BDULL, // ctr=248
-    0xE554D6AE1D42ULL, // ctr=249
-    0xEB5D4F26F5BCULL, // ctr=250
-    0xED5C4E372D73ULL, // ctr=251
-    0xF314CC52DD32ULL, // ctr=252
-    0xF5146C73B9D1ULL, // ctr=253
-    0xFB144BC035C7ULL, // ctr=254
-    0xFD14C9E0194FULL, // ctr=255
+    0x0374560849F1ULL,
+    0x05545A2AC979ULL,
+    0x0B5ECBE721C9ULL,
+    0x0D7EC2268187ULL,
+    0x13544B1069E4ULL,
+    0x1574C01AE5CFULL,
+    0x1B7CDB6E0D4EULL,
+    0x1D5C5F2D41E3ULL,
+    0x23744E49A564ULL,
+    0x2554406C61ADULL,
+    0x2B5ED97B0543ULL,
+    0x2D7ED87AF595ULL,
+    0x33545CDA4D3DULL,
+    0x3574D8DA4597ULL,
+    0x3B74CC3C153BULL,
+    0x3D546F2C79C2ULL,
+    0x4354C81B0154ULL,
+    0x45744A10956FULL,
+    0x4B7C59CE0938ULL,
+    0x4D5CDC84C911ULL,
+    0x537442A9015CULL,
+    0x5554EEA08D53ULL,
+    0x5B5EDE4F0D08ULL,
+    0x5D7E7726F112ULL,
+    0x6354DA5A5573ULL,
+    0x65747E52218DULL,
+    0x6B7449866D2CULL,
+    0x6D54CB96996CULL,
+    0x737458CC9597ULL,
+    0x7554D7EC31BAULL,
+    0x7B5ECE5B0120ULL,
+    0x7D7E4F72A906ULL,
+    0x8375D71C05A9ULL,
+    0x8575D22FE975ULL,
+    0x8B5F5F85AD32ULL,
+    0x8D5F7A240518ULL,
+    0x93555D00F5FFULL,
+    0x95555B4A6D2DULL,
+    0x9B7DDC0CE542ULL,
+    0x9D7DDC0EA506ULL,
+    0xA355CE696DADULL,
+    0xA555C97AFD2FULL,
+    0xAB7E4F40115AULL,
+    0xAD7E4A68CDADULL,
+    0xB37546C2AD7EULL,
+    0xB5756FC8798FULL,
+    0xBB54CF4CA954ULL,
+    0xBD54E01C61E5ULL,
+    0xC355480AC580ULL,
+    0xC555CE42810CULL,
+    0xCB7DCAAC3D7CULL,
+    0xCD7D4BA4A16FULL,
+    0xD3755A8515FDULL,
+    0xD57576B68170ULL,
+    0xDB5FDE2E896CULL,
+    0xDD5FD726698BULL,
+    0xE375544AB9A0ULL,
+    0xE575D44A45DAULL,
+    0xEB54DCF6DDD9ULL,
+    0xED5452A48957ULL,
+    0xF3554AD8C96CULL,
+    0xF5554CE021BCULL,
+    0xFB7ECC6B9D2EULL,
+    0xFD7ECD6A6DD8ULL,
+    0x03155B91EDA1ULL,
+    0x0535D0B9ED24ULL,
+    0x0B3DDB2D1949ULL,
+    0x0D1D5F2DFD0FULL,
+    0x1375422C65FDULL,
+    0x1555462DC972ULL,
+    0x1B5FCF278DB1ULL,
+    0x1D7FEE264973ULL,
+    0x2315425A7DC3ULL,
+    0x2535CE7299A5ULL,
+    0x2B34CA7E053EULL,
+    0x2D14412C5195ULL,
+    0x33755A682DC9ULL,
+    0x35555C6AB177ULL,
+    0x3B1D4D016997ULL,
+    0x3D1CC629E9B3ULL,
+    0x4314480121ABULL,
+    0x4514C26B6D01ULL,
+    0x4B1CD8CD39EFULL,
+    0x4D1C5DADF9CCULL,
+    0x535450A82942ULL,
+    0x55547CADA9EDULL,
+    0x5B5CC6221D6AULL,
+    0x5D5CEF2BD988ULL,
+    0x631450523DDCULL,
+    0x6514D476B1F6ULL,
+    0x6B15CA8949E0ULL,
+    0x6D1460ABE9CFULL,
+    0x735448FC2522ULL,
+    0x75544EFCB1B6ULL,
+    0x7B5CDE6FC9CBULL,
+    0x7D5CDF7F2D38ULL,
+    0x835C5C359DBFULL,
+    0x855C71250910ULL,
+    0x8B54DD7A3DD1ULL,
+    0x8D54DA32A104ULL,
+    0x931D45890DDBULL,
+    0x951CCBB1CDAAULL,
+    0x9B14CF0DD900ULL,
+    0x9D144727D9A4ULL,
+    0xA35D4E680945ULL,
+    0xA55C4061E9A5ULL,
+    0xAB54CD7A01DDULL,
+    0xAD54C8E3ADEBULL,
+    0xB31C5C4BF9D5ULL,
+    0xB51CFD6BB912ULL,
+    0xBB1CDE4D8121ULL,
+    0xBD1C79250960ULL,
+    0xC31550138D8CULL,
+    0xC51456299DA7ULL,
+    0xCB1CD38DF1ECULL,
+    0xCD1CD2AD556FULL,
+    0xD354DBAFA9CEULL,
+    0xD554D7BD7D02ULL,
+    0xDB5C5E706D50ULL,
+    0xDD5C7F39E1B2ULL,
+    0xE3144E40BDD0ULL,
+    0xE5144E6B3D7DULL,
+    0xEB14CFCFE982ULL,
+    0xED14C9AC4149ULL,
+    0xF355CAEAADBFULL,
+    0xF554C5E86D75ULL,
+    0xFB5C4C6DC5D7ULL,
+    0xFD5C4D7D6560ULL,
+    0x035CD4CAE137ULL,
+    0x055C5EE02151ULL,
+    0x0B74484805EDULL,
+    0x0D74C0412D42ULL,
+    0x137CD6471D74ULL,
+    0x157CF375D5ADULL,
+    0x1B544A08D14BULL,
+    0x1D54632131ADULL,
+    0x237CC64D692AULL,
+    0x257C4E4E4D83ULL,
+    0x2B5D565A4DA0ULL,
+    0x2D5CF14185D3ULL,
+    0x335CCE1FD1F8ULL,
+    0x355CC9245142ULL,
+    0x3B74528CB5B3ULL,
+    0x3D74533D15A5ULL,
+    0x437C42DD7542ULL,
+    0x457C46E8B9B9ULL,
+    0x4B56DF22FD8AULL,
+    0x4D56D623750CULL,
+    0x535CC541B9A5ULL,
+    0x555CC36A81B6ULL,
+    0x5B7447C8DDEAULL,
+    0x5D7446CA4D7FULL,
+    0x635C528DDDAAULL,
+    0x655C5DBD7937ULL,
+    0x6B76C5369DE4ULL,
+    0x6D76CC2F553AULL,
+    0x737CC4464953ULL,
+    0x757CED62E5F4ULL,
+    0x7B5D54C8F5D8ULL,
+    0x7D5C52DBC1FEULL,
+    0x835D5EDE5198ULL,
+    0x857CD8F01D5BULL,
+    0x8B74D34A8D7CULL,
+    0x8D545F417929ULL,
+    0x937CCA421DEDULL,
+    0x955C4E63F586ULL,
+    0x9B5546683146ULL,
+    0x9D74E7239923ULL,
+    0xA35C4C5BE996ULL,
+    0xA57CC4721DE5ULL,
+    0xAB7DC15269BBULL,
+    0xAD5C4A48D9BDULL,
+    0xB37DDA0DF57BULL,
+    0xB55C5426111DULL,
+    0xBB545CAC7DF5ULL,
+    0xBD74DD36DD68ULL,
+    0xC37CC6C9B196ULL,
+    0xC55CEAE8515DULL,
+    0xCB574342D5DFULL,
+    0xCD764A2A511DULL,
+    0xD35DCD550180ULL,
+    0xD57C4A5EB59FULL,
+    0xDB7440C81DADULL,
+    0xDD54CDC95943ULL,
+    0xE37DDC8CF1A8ULL,
+    0xE55CD2AD5D0CULL,
+    0xEB565B1E5D32ULL,
+    0xED765A2FF58CULL,
+    0xF35CCE5A05A9ULL,
+    0xF57C6A72696FULL,
+    0xFB7D5DC835B1ULL,
+    0xFD5CFFDB5547ULL,
+    0x031CDC4BD5CBULL,
+    0x051C52699125ULL,
+    0x0B145E475DCDULL,
+    0x0D14DE6D1925ULL,
+    0x135DD87E651BULL,
+    0x155CDD75F98EULL,
+    0x1B5454641DF4ULL,
+    0x1D5477AD8D88ULL,
+    0x231DC4C1913CULL,
+    0x251C6CE1D5F7ULL,
+    0x2B1C4E5DF94BULL,
+    0x2D1CE17DD5EEULL,
+    0x335CCA2BB9A1ULL,
+    0x355CCD716122ULL,
+    0x3B544C2355C3ULL,
+    0x3D544D30BD3FULL,
+    0x435556F5D5F6ULL,
+    0x45547AF53139ULL,
+    0x4B5CD36EEDD1ULL,
+    0x4D5CDA2E6516ULL,
+    0x5314CD41B1ECULL,
+    0x5514C7617908ULL,
+    0x5B1C4BC5D58AULL,
+    0x5D1C4AE75D27ULL,
+    0x63544EB1EDB3ULL,
+    0x655449E00907ULL,
+    0x6B5CC9322D77ULL,
+    0x6D5CC82291DCULL,
+    0x7315C642B1C5ULL,
+    0x7514C76299CBULL,
+    0x7B145ED4F586ULL,
+    0x7D1450F65900ULL,
+    0x831C465D5143ULL,
+    0x851CC87919A7ULL,
+    0x8B14D94375E6ULL,
+    0x8D145569F9CAULL,
+    0x935CDE686D82ULL,
+    0x955C5263E58BULL,
+    0x9B54482189B9ULL,
+    0x9D54CBAA152BULL,
+    0xA31C5ED575D7ULL,
+    0xA51CDAF5BDBDULL,
+    0xAB1CCD4BF95EULL,
+    0xAD1C6E69D9F9ULL,
+    0xB35CCE2635A4ULL,
+    0xB55C4027B1A9ULL,
+    0xBB555A3C253BULL,
+    0xBD54DB26C547ULL,
+    0xC354C8E0B59CULL,
+    0xC554E4E1292BULL,
+    0xCB5C5F2B3540ULL,
+    0xCD5C7E2AF5A6ULL,
+    0xD314C55535F4ULL,
+    0xD51442757D1DULL,
+    0xDB1C50C135F5ULL,
+    0xDD1CD5E37110ULL,
+    0xE354D8A5E1BDULL,
+    0xE554D6AE1D42ULL,
+    0xEB5D4F26F5BCULL,
+    0xED5C4E372D73ULL,
+    0xF314CC52DD32ULL,
+    0xF5146C73B9D1ULL,
+    0xFB144BC035C7ULL,
+    0xFD14C9E0194FULL,
 };
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-/**
- * Extract full 8-bit counter from hop code + button byte lower nibble.
- */
 static uint8_t audi_v1_extract_counter(uint64_t hop, uint8_t btn_byte);
-/**
- * Get button code based on D-Pad selection (custom button support).
- * OK=original, UP=Unlock(0xB), DOWN=Lock(0xE)
- */
+
 static uint8_t audi_v1_get_btn_code(uint8_t original_btn_id);
-/**
- * Roundtrip: compute new hop for a different counter value.
- * new_hop = actual_hop XOR TABLE[ctr_from] XOR TABLE[ctr_to]
- * Only valid within the same 256-press epoch as the predict table.
- */
+
 static uint64_t audi_v1_roundtrip(uint64_t actual_hop, uint8_t ctr_from, uint8_t ctr_to);
-/**
- * Build one complete frame into the upload buffer.
- * Signal: [SYNC -3000us][HEADER +2000us][15x SHORT pairs][TRIGGER LONG]
- *         [Manchester 88 data bits][END GAP]
- */
+
 static void subghz_protocol_encoder_audi_v1_get_upload(SubGhzProtocolEncoderAudiV1* instance);
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-/**
- * Extract full 8-bit counter from hop code + button byte lower nibble.
- */
 static uint8_t audi_v1_extract_counter(uint64_t hop, uint8_t btn_byte) {
     uint8_t hop_bits = (hop >> 42) & 0x3F;
     uint8_t btn_lo = btn_byte & 0x03;
     return hop_bits | (btn_lo << 6);
 }
 
-/**
- * Get button code based on D-Pad selection (custom button support).
- * OK=original, UP=Unlock(0xB), DOWN=Lock(0xE)
- */
 static uint8_t audi_v1_get_btn_code(uint8_t original_btn_id) {
     uint8_t custom_btn = subghz_custom_btn_get();
 
@@ -364,36 +335,23 @@ static uint8_t audi_v1_get_btn_code(uint8_t original_btn_id) {
     }
 }
 
-/**
- * Roundtrip: compute new hop for a different counter value.
- * new_hop = actual_hop XOR TABLE[ctr_from] XOR TABLE[ctr_to]
- * Only valid within the same 256-press epoch as the predict table.
- */
 static uint64_t audi_v1_roundtrip(uint64_t actual_hop, uint8_t ctr_from, uint8_t ctr_to) {
     uint64_t mask = AUDI_V1_HOP_PREDICT[ctr_from] ^ AUDI_V1_HOP_PREDICT[ctr_to];
     return (actual_hop ^ mask) & 0xFFFFFFFFFFFFULL;
 }
 
-/**
- * Build one complete frame into the upload buffer.
- * Signal: [SYNC -3000us][HEADER +2000us][15x SHORT pairs][TRIGGER LONG]
- *         [Manchester 88 data bits][END GAP]
- */
 static void subghz_protocol_encoder_audi_v1_get_upload(SubGhzProtocolEncoderAudiV1* instance) {
     furi_assert(instance);
     size_t index = 0;
 
-    // Button handling: global override first, then D-pad
     uint8_t original_btn_id = (instance->btn_byte >> 4) & 0x0F;
     uint8_t target_btn_id = original_btn_id;
     if(!subghz_block_generic_global_button_override_get(&target_btn_id)) {
         target_btn_id = audi_v1_get_btn_code(original_btn_id);
     }
 
-    // Extract current counter
     uint8_t current_ctr = audi_v1_extract_counter(instance->hop, instance->btn_byte);
 
-    // Counter handling: rolling_counter_mult or default decrement
     uint32_t cnt32 = current_ctr;
     if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
         if(!subghz_block_generic_global_counter_override_get(&cnt32)) {
@@ -405,37 +363,28 @@ static void subghz_protocol_encoder_audi_v1_get_upload(SubGhzProtocolEncoderAudi
     }
     uint8_t next_ctr = cnt32 & 0xFF;
 
-    // Roundtrip: compute new hop for next counter
     uint64_t new_hop = audi_v1_roundtrip(instance->hop, current_ctr, next_ctr);
 
-    // Update btn_byte: upper nibble = button ID, lower nibble bits {0,1} = counter bits {6,7}
     uint8_t btn_lo_preserved = instance->btn_byte & 0x0C;
     uint8_t btn_lo_counter = (next_ctr >> 6) & 0x03;
     uint8_t new_btn_byte = (target_btn_id << 4) | ((btn_lo_preserved | btn_lo_counter) & 0x0F);
 
     FURI_LOG_I(TAG, "Roundtrip: ctr %d->%d, btn 0x%02X", current_ctr, next_ctr, new_btn_byte);
 
-    // Update instance state
     instance->hop = new_hop;
     instance->btn_byte = new_btn_byte;
     instance->generic.cnt = next_ctr;
     instance->generic.btn = target_btn_id;
     instance->generic.serial = instance->serial;
 
-    // Rebuild generic.data: serial[32] + btn_byte[8] + hop_upper24[24]
     instance->generic.data = ((uint64_t)instance->serial << 32) | ((uint64_t)new_btn_byte << 24) |
                              ((new_hop >> 24) & 0xFFFFFF);
     instance->generic.data_count_bit = AUDI_V1_DATA_BITS;
 
-    // === BUILD UPLOAD ===
-
-    // SYNC: LOW 3000us
     instance->encoder.upload[index++] = level_duration_make(false, (uint32_t)AUDI_V1_TE_SYNC);
 
-    // HEADER: HIGH 2000us
     instance->encoder.upload[index++] = level_duration_make(true, (uint32_t)AUDI_V1_TE_HEADER);
 
-    // PREAMBLE: 15 SHORT pairs (LOW-HIGH)
     for(int p = 0; p < 15; p++) {
         instance->encoder.upload[index++] =
             level_duration_make(false, (uint32_t)subghz_protocol_audi_v1_const.te_short);
@@ -443,21 +392,18 @@ static void subghz_protocol_encoder_audi_v1_get_upload(SubGhzProtocolEncoderAudi
             level_duration_make(true, (uint32_t)subghz_protocol_audi_v1_const.te_short);
     }
 
-    // TRIGGER: LONG LOW (follows naturally after last preamble HIGH)
     instance->encoder.upload[index++] =
         level_duration_make(false, (uint32_t)subghz_protocol_audi_v1_const.te_long);
 
-    // MANCHESTER DATA: 88 bits
-    // After trigger LONG LOW, start Mid1 so first emission is HIGH (no merge with trigger LOW)
     uint8_t manchester_state = ManchesterStateMid1;
 
     for(int i = 87; i >= 0; i--) {
         bool b;
         if(i >= 24) {
-            // Bits 87..24: from generic.data (bits 63..0)
+
             b = (instance->generic.data >> (i - 24)) & 1;
         } else {
-            // Bits 23..0: from hop lower 24 bits
+
             b = (new_hop >> i) & 1;
         }
 
@@ -494,16 +440,12 @@ static void subghz_protocol_encoder_audi_v1_get_upload(SubGhzProtocolEncoderAudi
         }
     }
 
-    // END GAP - use opposite level to prevent merging with last Manchester emission
-    // Mid0 → last emission was HIGH, so gap must be LOW
-    // Mid1 → last emission was LOW, so gap must be HIGH
     bool end_level = (manchester_state == ManchesterStateMid1);
     instance->encoder.upload[index++] = level_duration_make(end_level, (uint32_t)6000);
 
     instance->encoder.size_upload = index;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -511,13 +453,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -535,14 +475,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
 
     return ret;
 }
-
-// ============================================================================
-// DISPLAY
-// ============================================================================
-
-// ============================================================================
-// ENCODER IMPLEMENTATION
-// ============================================================================
 
 void* subghz_protocol_encoder_audi_v1_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -577,7 +509,6 @@ SubGhzProtocolStatus
             break;
         }
 
-        // Read full 48-bit hop
         uint8_t hop_data[6] = {0};
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
@@ -589,7 +520,7 @@ SubGhzProtocolStatus
                 instance->hop = (instance->hop << 8) | hop_data[i];
             }
         } else {
-            // Backward compatible
+
             FURI_LOG_W(TAG, "Hop field missing, reconstructing from Key");
             instance->hop = (instance->generic.data & 0xFFFFFFULL) << 24;
         }
@@ -597,7 +528,6 @@ SubGhzProtocolStatus
         instance->btn_byte = (instance->generic.data >> 24) & 0xFF;
         instance->serial = (uint32_t)(instance->generic.data >> 32);
 
-        // Set up custom button support
         uint8_t original_btn_id = (instance->btn_byte >> 4) & 0x0F;
         if(subghz_custom_btn_get_original() == 0) {
             subghz_custom_btn_set_original(original_btn_id);
@@ -605,14 +535,11 @@ SubGhzProtocolStatus
         subghz_custom_btn_set_max(2);
         subghz_block_generic_global.btn_length_bit = 4;
 
-        // Optional repeat parameter
         flipper_format_read_uint32(
             flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
 
-        // Build upload (handles counter increment + roundtrip internally)
         subghz_protocol_encoder_audi_v1_get_upload(instance);
 
-        // Write back updated Key
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
             break;
@@ -626,7 +553,6 @@ SubGhzProtocolStatus
             break;
         }
 
-        // Write back updated Hop
         uint8_t new_hop_data[6];
         for(size_t i = 0; i < 6; i++) {
             new_hop_data[5 - i] = (instance->hop >> (i * 8)) & 0xFF;
@@ -650,7 +576,6 @@ static const SubGhzProtocolEncoder enc_audi_v1_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_audi_v1 = {
     .name = SUBGHZ_PROTOCOL_AUDI_V1_NAME,
     .type = SubGhzProtocolTypeDynamic,

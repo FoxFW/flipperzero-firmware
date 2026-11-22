@@ -1,4 +1,4 @@
-/* decode_land_rover_v0.fal : SD get_string for land_rover_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/land_rover_v0.h>
@@ -45,7 +45,6 @@ static const char* land_rover_v0_button_name(uint8_t button) {
 static void land_rover_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderLandRoverV0* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

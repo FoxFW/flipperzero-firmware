@@ -1,4 +1,4 @@
-/* decode_faac_slh.fal : SD get_string for faac_slh (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/faac_slh.h>
@@ -21,9 +21,6 @@ struct SubGhzProtocolDecoderFaacSLH {
     SubGhzKeystore* keystore;
     const char* manufacture_name;
 
-    // Genius mechanism (ported from Unleashed 2026-10-03): optional manufacturer
-    // named by the .sub ("Manufacture:" field) so a FAAC-SLH-family signal can be
-    // pinned to the right type-5 key instead of last-wins.
     FuriString* manufacture_from_file;
 };
 
@@ -31,14 +28,11 @@ static void faac_slh_decode(const SubGhzDecodeInput* input, FuriString* output) 
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFaacSLH* instance = input->decoder;
 
-    /* KeeLoq/FAAC derivation done internally */
     const bool prog_mode_on = (input->extra_count > 0) && input->extra[0];
     const bool zero_seed_ok = (input->extra_count > 1) && input->extra[1];
     uint32_t code_fix = instance->generic.data >> 32;
     uint32_t code_hop = instance->generic.data & 0xFFFFFFFF;
 
-    // Name the manufacturer when it is not the default one, so a Genius remote does
-    // not read as a Faac one. FAAC_SLH keeps the protocol name it has always shown.
     const char* display_name = instance->generic.protocol_name;
     if(instance->manufacture_name && (strcmp(instance->manufacture_name, "FAAC_SLH") != 0)) {
         display_name = instance->manufacture_name;

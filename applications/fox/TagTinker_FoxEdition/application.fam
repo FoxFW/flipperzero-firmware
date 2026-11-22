@@ -2,7 +2,7 @@ App(
     appid="tagtinker",
     name="TagTinker (Fox Edition)",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     entry_point="tagtinker_app_main",
     requires=["gui", "notification", "dialogs", "storage", "bt", "nfc", "expansion"],
     stack_size=12 * 1024,

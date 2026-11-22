@@ -1,5 +1,5 @@
-/* enc_porsche_cayenne.fal : SD encoder for porsche_cayenne (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_porsche_cayenne_alloc enc_porsche_cayenne__subghz_protocol_encoder_porsche_cayenne_alloc
 #define subghz_protocol_encoder_porsche_cayenne_deserialize enc_porsche_cayenne__subghz_protocol_encoder_porsche_cayenne_deserialize
 #define subghz_protocol_encoder_porsche_cayenne_free enc_porsche_cayenne__subghz_protocol_encoder_porsche_cayenne_free
@@ -322,7 +322,6 @@ static const SubGhzProtocolEncoder enc_porsche_cayenne_vt = {
     .yield = subghz_protocol_encoder_porsche_cayenne_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_porsche_cayenne = {
     .name = SUBGHZ_PROTOCOL_PORSCHE_CAYENNE_NAME,
     .type = SubGhzProtocolTypeDynamic,

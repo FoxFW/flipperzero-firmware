@@ -1,9 +1,4 @@
-/* decode_g1.fal : SD-resident decode/format for a batch of generic-only Sub-GHz
- * protocols whose get_string reads only the shared SubGhzBlockGeneric capture
- * block. Loaded on demand by helpers/subghz_decode_plugin_loader.c and dispatched
- * by protocol name; the internal decoders point vtable .get_string at the shared
- * subghz_protocol_decoder_common_get_string wrapper (lib common.c), which passes
- * &generic with no extras. FoxFW2.0 2026-10-21 split detect/decode rollout. */
+
 
 #include "subghz_decode_plugin_desc.h"
 

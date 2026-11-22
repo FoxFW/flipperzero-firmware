@@ -1,4 +1,4 @@
-/* decode_mitsubishi_v0a.fal : SD get_string for mitsubishi_v0a (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mitsubishi_v0a.h>
@@ -68,7 +68,6 @@ static const char* subghz_protocol_mitsubishi_v0a_get_name_button(uint8_t btn) {
 static void mitsubishi_v0a_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderMitsubishiV0a* instance = input->decoder;
-
 
     subghz_protocol_mitsubishi_v0a_check_remote_controller(&instance->generic);
     uint32_t code_found_hi = instance->generic.data >> 32;

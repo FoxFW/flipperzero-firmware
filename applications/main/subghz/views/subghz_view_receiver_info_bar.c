@@ -7,8 +7,6 @@
 #include <string.h>
 #include <assets_icons.h>
 
-/* play / right-triangle glyph: shared Common icon I_ButtonRightSmall_3x5 (via assets_icons.h) */
-
 #define RIB_BTN_H      14
 #define RIB_BTN_PAD_X  4
 #define RIB_BTN_MARGIN 2
@@ -18,9 +16,6 @@
 #define RIB_ICON_H     5
 #define RIB_ICON_GAP   2
 
-/* Horizontal marquee cadence for overflowing info lines (e.g. a long "CRC:..."
- * line). Mirrors the Princeton-style scroll used by subghz_view_protocol_groups.c
- * (elements_scrollable_text_line_str driven by a periodic counter). */
 #define RIB_SCROLL_TIMER_PERIOD_MS 333
 
 typedef struct {
@@ -59,8 +54,6 @@ static void subghz_receiver_info_bar_draw_cb(Canvas* canvas, void* _model) {
     uint8_t visible = (line_h > 0) ? (uint8_t)(info_bottom / line_h) : 1;
     if(visible == 0) visible = 1;
 
-    /* Baseline offset for canvas_draw_str (helper uses AlignBottom); matches the
-     * multiline text convention of top + font height (see gui/elements.c). */
     const CanvasFontParameters* rib_fp = canvas_get_font_params(canvas, FontSecondary);
     uint8_t ascent = rib_fp ? rib_fp->height : (uint8_t)((line_h > 2) ? (line_h - 2) : line_h);
 
@@ -85,8 +78,7 @@ static void subghz_receiver_info_bar_draw_cb(Canvas* canvas, void* _model) {
             uint8_t avail = (idx == 0 && m->freq[0]) ?
                                 76 :
                                 (uint8_t)((nlines > visible) ? 124 : 128);
-            /* A line wider than its column scrolls horizontally (marquee) instead
-             * of overrunning the heading / freq column; short lines draw verbatim. */
+
             elements_scrollable_text_line_str(
                 canvas, 0, (uint8_t)(y + ascent), avail, line, m->scroll_x, false, false);
             if(idx == 0) {
@@ -113,7 +105,6 @@ static void subghz_receiver_info_bar_draw_cb(Canvas* canvas, void* _model) {
 
     if(m->count == 0) return;
 
-    /* measure each pill, lay them out centered along the bottom */
     uint16_t bw[SUBGHZ_RIB_MAX_BTN];
     uint16_t total = 0;
     for(uint8_t i = 0; i < m->count; i++) {
@@ -212,7 +203,7 @@ static bool subghz_receiver_info_bar_input_cb(InputEvent* event, void* context) 
             },
             false);
         if(er != 0) {
-            /* press/hold button (Send): start on press, stop on release */
+
             if(event->type == InputTypePress) {
                 if(instance->callback) instance->callback(instance->context, ep);
                 consumed = true;

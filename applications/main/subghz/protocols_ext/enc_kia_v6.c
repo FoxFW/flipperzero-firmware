@@ -1,5 +1,5 @@
-/* enc_kia_v6.fal : SD encoder for kia_v6 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_stop enc_kia_v6__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_kia_v6_alloc enc_kia_v6__subghz_protocol_encoder_kia_v6_alloc
 #define subghz_protocol_encoder_kia_v6_deserialize enc_kia_v6__subghz_protocol_encoder_kia_v6_deserialize
@@ -542,7 +542,6 @@ static void kia_v6_encoder_build_upload(SubGhzProtocolEncoderKiaV6* instance) {
     instance->encoder.front = 0;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -699,7 +698,6 @@ static const SubGhzProtocolEncoder enc_kia_v6_vt = {
     .yield = subghz_protocol_encoder_kia_v6_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_kia_v6 = {
     .name = SUBGHZ_PROTOCOL_KIA_V6_NAME,
     .type = SubGhzProtocolTypeDynamic,

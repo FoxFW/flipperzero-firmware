@@ -13,7 +13,7 @@
 
 #define TAG "SubGhzProtocolPhoenixV2"
 
-static bool phoenix_v2_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool phoenix_v2_raw_replay = false;
 
 static bool bypass = false;
 static uint8_t v2_phoenix_counter_mode = 0;
@@ -62,7 +62,6 @@ const SubGhzProtocolDecoder subghz_protocol_phoenix_v2_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* bypass;
     void* phoenix_v2_raw_replay;

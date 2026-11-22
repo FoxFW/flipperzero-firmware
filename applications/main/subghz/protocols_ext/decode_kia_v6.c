@@ -1,4 +1,4 @@
-/* decode_kia_v6.fal : SD get_string for kia_v6 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/kia_v6.h>
@@ -302,7 +302,6 @@ static bool kia_v6_decrypt(SubGhzProtocolDecoderKiaV6* instance) {
 static void kia_v6_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderKiaV6* instance = input->decoder;
-
 
     kia_v6_decrypt(instance);
 

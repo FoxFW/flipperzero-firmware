@@ -54,8 +54,7 @@ uint8_t subghz_protocol_decoder_common_get_hash_data(void* context) {
 uint8_t subghz_protocol_decoder_common_get_hash_data_serial(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderCommon* instance = context;
-    /* The mini counter inside each parcel changes while the button is held; the serial
-     * and press counter do not, and still separate one remote from another. */
+
     uint32_t id = instance->generic.serial ^ instance->generic.cnt;
     return (uint8_t)((id * 2654435761u) >> 24);
 }

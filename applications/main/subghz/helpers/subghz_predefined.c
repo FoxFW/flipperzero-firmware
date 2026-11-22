@@ -35,7 +35,7 @@ bool subghz_predefined_get_by_index(
 
     switch(index) {
     case 0:
-        break; /* None */
+        break;
     default: {
         if(!flipper_format_file_open_existing(ff, SUBGHZ_PREDEFINED_FILE)) {
             FURI_LOG_I(TAG, "predefined.txt not found");

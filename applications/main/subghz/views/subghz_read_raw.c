@@ -12,9 +12,6 @@
 
 #define SEEK_STEP_PCT 5u
 
-#define REVEAL_TIMER_MS      15u
-#define REVEAL_COLS_PER_TICK 4u
-
 #define SCENE_TICK_PERIOD_US 100000u
 
 #define ZOOM_LEVEL_COUNT 5u
@@ -23,7 +20,6 @@ struct SubGhzReadRAW {
     View*                  view;
     SubGhzReadRAWCallback  callback;
     void*                  context;
-    FuriTimer*             reveal_timer;
 };
 
 typedef struct {
@@ -54,6 +50,8 @@ typedef struct {
     uint8_t  zoom_level;
     uint32_t recording_ticks;
     uint8_t  start_countdown_sec;
+    uint8_t  btn_sel;
+    SubGhzReadRAWStatus prev_btn_status;
 } SubGhzReadRAWModel;
 
 void subghz_read_raw_set_callback(
@@ -100,7 +98,6 @@ void subghz_read_raw_set_start_countdown(SubGhzReadRAW* instance, uint8_t second
         { model->start_countdown_sec = seconds_left; },
         true);
 }
-
 
 SubGhzReadRAWStatus subghz_read_raw_get_status(SubGhzReadRAW* instance) {
     furi_assert(instance);
@@ -262,29 +259,6 @@ bool subghz_read_raw_is_playback_overdue(SubGhzReadRAW* instance) {
     return overdue;
 }
 
-static void reveal_timer_cb(void* ctx) {
-    SubGhzReadRAW* instance = ctx;
-    bool done = false;
-    with_view_model(
-        instance->view,
-        SubGhzReadRAWModel * model,
-        {
-            if(model->reveal_count < SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE) {
-                uint8_t next = (uint8_t)(model->reveal_count + REVEAL_COLS_PER_TICK);
-                if(next > SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE)
-                    next = SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE;
-                for(uint8_t i = model->reveal_count; i < next; i++) {
-                    model->shown_envelope[i] = model->has_envelope ? model->target_envelope[i] : 0;
-                }
-                model->reveal_count = next;
-            }
-            done = model->reveal_count >= SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE;
-        },
-        true);
-
-    if(done) furi_timer_stop(instance->reveal_timer);
-}
-
 void subghz_read_raw_set_envelope(
     SubGhzReadRAW* instance,
     const uint8_t* envelope,
@@ -301,8 +275,16 @@ void subghz_read_raw_set_envelope(
                 memset(model->target_envelope, 0, SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE);
                 model->has_envelope = false;
             }
-            memset(model->shown_envelope, 0, SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE);
-            model->reveal_count   = 0;
+
+            if(model->has_envelope) {
+                memcpy(
+                    model->shown_envelope,
+                    model->target_envelope,
+                    SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE);
+            } else {
+                memset(model->shown_envelope, 0, SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE);
+            }
+            model->reveal_count   = SUBGHZ_READ_RAW_RSSI_HISTORY_SIZE;
             model->play_pct       = 0;
             model->seek_pct       = 0;
             model->tx_tick        = 0;
@@ -311,8 +293,6 @@ void subghz_read_raw_set_envelope(
             model->tx_total_ticks = (ticks > 0) ? ticks : 1;
         },
         true);
-
-    furi_timer_start(instance->reveal_timer, REVEAL_TIMER_MS);
 }
 
 void subghz_read_raw_tick_tx(SubGhzReadRAW* instance) {
@@ -492,52 +472,64 @@ static void subghz_read_raw_draw_legacy_bargraph(Canvas* canvas, SubGhzReadRAWMo
     }
 }
 
-#define SUBGHZ_READ_RAW_COUNTDOWN_BTN_X_NUDGE 7
-static void subghz_read_raw_draw_button_center_nudged(Canvas* canvas, const char* str) {
-    const size_t button_height = 12;
-    const size_t vertical_offset = 3;
-    const size_t horizontal_offset = 1;
-    const size_t string_width = canvas_string_width(canvas, str);
-    const Icon* icon = &I_ButtonCenter_7x7;
-    const int32_t icon_h_offset = 3;
-    const int32_t icon_width_with_offset = icon_get_width(icon) + icon_h_offset;
-    const int32_t icon_v_offset = icon_get_height(icon) + vertical_offset;
-    const size_t button_width = string_width + horizontal_offset * 2 + icon_width_with_offset;
-
-    const int32_t x =
-        (canvas_width(canvas) - button_width) / 2 + SUBGHZ_READ_RAW_COUNTDOWN_BTN_X_NUDGE;
-    const int32_t y = canvas_height(canvas);
-
-    canvas_draw_box(canvas, x, y - button_height, button_width, button_height);
-
-    canvas_draw_line(canvas, x - 1, y, x - 1, y - button_height + 0);
-    canvas_draw_line(canvas, x - 2, y, x - 2, y - button_height + 1);
-    canvas_draw_line(canvas, x - 3, y, x - 3, y - button_height + 2);
-
-    canvas_draw_line(canvas, x + button_width + 0, y, x + button_width + 0, y - button_height + 0);
-    canvas_draw_line(canvas, x + button_width + 1, y, x + button_width + 1, y - button_height + 1);
-    canvas_draw_line(canvas, x + button_width + 2, y, x + button_width + 2, y - button_height + 2);
-
-    canvas_invert_color(canvas);
-    canvas_draw_icon(canvas, x + horizontal_offset, y - icon_v_offset, &I_ButtonCenter_7x7);
-    canvas_draw_str(
-        canvas, x + horizontal_offset + icon_width_with_offset, y - vertical_offset, str);
-    canvas_invert_color(canvas);
+static void subghz_read_raw_draw_button_row(
+    Canvas* canvas, const char* const* labels, uint8_t n, uint8_t sel) {
+    const int32_t H = 12, R = 3, GAP = 3, PADX = 4;
+    if(sel >= n) sel = n - 1;
+    int32_t w[3];
+    int32_t total = 0;
+    for(uint8_t i = 0; i < n; i++) {
+        w[i] = canvas_string_width(canvas, labels[i]) + PADX * 2;
+        total += w[i];
+    }
+    total += GAP * (n - 1);
+    int32_t x = (canvas_width(canvas) - total) / 2;
+    const int32_t y = canvas_height(canvas) - H;
+    for(uint8_t i = 0; i < n; i++) {
+        canvas_set_color(canvas, ColorBlack);
+        if(i == sel)
+            canvas_draw_rbox(canvas, x, y, w[i], H, R);
+        else
+            canvas_draw_rframe(canvas, x, y, w[i], H, R);
+        if(i == sel) canvas_invert_color(canvas);
+        canvas_draw_str(canvas, x + PADX, y + H - 3, labels[i]);
+        if(i == sel) canvas_invert_color(canvas);
+        x += w[i] + GAP;
+    }
+    canvas_set_color(canvas, ColorBlack);
 }
 
 void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
 
+    if(model->status != model->prev_btn_status) {
+        model->prev_btn_status = model->status;
+        if(model->status == SubGhzReadRAWStatusStart ||
+           model->status == SubGhzReadRAWStatusIDLE) {
+            model->btn_sel = 1;
+        } else if(model->status == SubGhzReadRAWStatusLoadKeyIDLE) {
+            model->btn_sel = model->allow_new ? 1 : 0;
+        } else {
+            model->btn_sel = 0;
+        }
+    }
+
     canvas_draw_str(canvas, 0, 7, furi_string_get_cstr(model->frequency_str));
     canvas_draw_str(canvas, 35, 7, furi_string_get_cstr(model->preset_str));
 
-    if(model->not_showing_samples) {
-        canvas_draw_str(canvas, 77, 7,
-            (model->device_type == SubGhzRadioDeviceTypeInternal) ? "R: Int" : "R: Ext");
-    } else {
-        canvas_draw_str(canvas, 70, 7,
-            (model->device_type == SubGhzRadioDeviceTypeInternal) ? "I" : "E");
+    bool raw_file_mode = (model->status == SubGhzReadRAWStatusLoadKeyIDLE ||
+                          model->status == SubGhzReadRAWStatusLoadKeyTX ||
+                          model->status == SubGhzReadRAWStatusLoadKeyTXRepeat ||
+                          model->status == SubGhzReadRAWStatusLoadKeyTXPaused);
+    if(!raw_file_mode) {
+        if(model->not_showing_samples) {
+            canvas_draw_str(canvas, 77, 7,
+                (model->device_type == SubGhzRadioDeviceTypeInternal) ? "R: Int" : "R: Ext");
+        } else {
+            canvas_draw_str(canvas, 70, 7,
+                (model->device_type == SubGhzRadioDeviceTypeInternal) ? "I" : "E");
+        }
     }
 
     canvas_draw_str_aligned(canvas, 126, 0, AlignRight, AlignTop,
@@ -550,21 +542,21 @@ void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
     uint8_t signal_mode = 1;
 
     switch(model->status) {
-    case SubGhzReadRAWStatusIDLE:
-        elements_button_left(canvas, "Erase");
-        elements_button_center(canvas, "Send");
-        elements_button_right(canvas, "Save");
+    case SubGhzReadRAWStatusIDLE: {
+        const char* lbl[3] = {"Erase", "Send", "Save"};
+        subghz_read_raw_draw_button_row(canvas, lbl, 3, model->btn_sel);
         break;
+    }
 
     case SubGhzReadRAWStatusLoadKeyIDLE: {
-
         signal_mode = 2;
         if(model->allow_new) {
-            elements_button_left(canvas, "New");
+            const char* lbl[3] = {"New", "Send", "More"};
+            subghz_read_raw_draw_button_row(canvas, lbl, 3, model->btn_sel);
+        } else {
+            const char* lbl[2] = {"Send", "More"};
+            subghz_read_raw_draw_button_row(canvas, lbl, 2, model->btn_sel);
         }
-        elements_button_right(canvas, "More");
-        elements_button_center(canvas, "Send");
-
         break;
     }
 
@@ -592,17 +584,17 @@ void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
         elements_button_center(canvas, "Hold to repeat");
         break;
 
-    case SubGhzReadRAWStatusStart:
-        elements_button_left(canvas, "Config");
-        if(model->start_countdown_sec > 0) {
-            char rec_label[16];
+    case SubGhzReadRAWStatusStart: {
+        char rec_label[16];
+        if(model->start_countdown_sec > 0)
             snprintf(rec_label, sizeof(rec_label), "REC (%u)", model->start_countdown_sec);
-            subghz_read_raw_draw_button_center_nudged(canvas, rec_label);
-        } else {
-            elements_button_center(canvas, "REC");
-        }
+        else
+            snprintf(rec_label, sizeof(rec_label), "REC");
+        const char* lbl[2] = {"Config", rec_label};
+        subghz_read_raw_draw_button_row(canvas, lbl, 2, model->btn_sel);
         signal_mode = 3;
         break;
+    }
 
     default:
         elements_button_center(canvas, "Stop");
@@ -666,23 +658,29 @@ bool subghz_read_raw_input(InputEvent* event, void* context) {
         with_view_model(instance->view, SubGhzReadRAWModel * model, {
             switch(model->status) {
             case SubGhzReadRAWStatusIDLE:
-                instance->callback(SubGhzCustomEventViewReadRAWSendStart, instance->context);
-                model->status   = SubGhzReadRAWStatusTXRepeat;
-                model->play_pct = 0;
-                model->tx_tick  = 0;
-                ret = true;
+                if(model->btn_sel == 1) {
+                    instance->callback(
+                        SubGhzCustomEventViewReadRAWSendStart, instance->context);
+                    model->status   = SubGhzReadRAWStatusTXRepeat;
+                    model->play_pct = 0;
+                    model->tx_tick  = 0;
+                    ret = true;
+                }
                 break;
             case SubGhzReadRAWStatusTX:
                 model->status = SubGhzReadRAWStatusTXRepeat;
                 break;
 
             case SubGhzReadRAWStatusLoadKeyIDLE:
-                instance->callback(SubGhzCustomEventViewReadRAWSendStart, instance->context);
-                model->status   = SubGhzReadRAWStatusLoadKeyTX;
-                model->play_pct = 0;
-                model->seek_pct = 0;
-                model->tx_tick  = 0;
-                ret = true;
+                if(model->btn_sel == (model->allow_new ? 1 : 0)) {
+                    instance->callback(
+                        SubGhzCustomEventViewReadRAWSendStart, instance->context);
+                    model->status   = SubGhzReadRAWStatusLoadKeyTX;
+                    model->play_pct = 0;
+                    model->seek_pct = 0;
+                    model->tx_tick  = 0;
+                    ret = true;
+                }
                 break;
             case SubGhzReadRAWStatusLoadKeyTX:
                 instance->callback(SubGhzCustomEventViewReadRAWTXPause, instance->context);
@@ -742,37 +740,17 @@ bool subghz_read_raw_input(InputEvent* event, void* context) {
 
         if(event->key == InputKeyLeft &&
        (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
-        bool fire_erase = false;
         with_view_model(instance->view, SubGhzReadRAWModel * model, {
             if(model->status == SubGhzReadRAWStatusLoadKeyTXPaused) {
                 if(model->seek_pct >= SEEK_STEP_PCT) model->seek_pct -= SEEK_STEP_PCT;
                 else model->seek_pct = 0;
-            } else if(!model->raw_send_only) {
-                if(model->status == SubGhzReadRAWStatusStart) {
-                    instance->callback(SubGhzCustomEventViewReadRAWConfig, instance->context);
-                } else if(model->status == SubGhzReadRAWStatusIDLE) {
-                    model->status = SubGhzReadRAWStatusStart;
-                    model->rssi_history_end = false;
-                    model->ind_write = 0;
-                    model->not_showing_samples = true;
-                    model->recording_ticks = 0;
-                    furi_string_set(model->sample_write, "0 spl.");
-                    furi_string_reset(model->file_name);
-                    fire_erase = true;
-                } else if(model->status == SubGhzReadRAWStatusLoadKeyIDLE && model->allow_new) {
-                    model->status = SubGhzReadRAWStatusStart;
-                    model->rssi_history_end = false;
-                    model->ind_write = 0;
-                    model->not_showing_samples = true;
-                    model->recording_ticks = 0;
-                    furi_string_set(model->sample_write, "0 spl.");
-                    furi_string_reset(model->file_name);
-                    fire_erase = true;
-                }
-
+            } else if(
+                model->status == SubGhzReadRAWStatusStart ||
+                model->status == SubGhzReadRAWStatusIDLE ||
+                model->status == SubGhzReadRAWStatusLoadKeyIDLE) {
+                if(model->btn_sel > 0) model->btn_sel--;
             }
         }, true);
-        if(fire_erase) instance->callback(SubGhzCustomEventViewReadRAWErase, instance->context);
         return true;
     }
 
@@ -782,11 +760,13 @@ bool subghz_read_raw_input(InputEvent* event, void* context) {
             if(model->status == SubGhzReadRAWStatusLoadKeyTXPaused) {
                 if(model->seek_pct + SEEK_STEP_PCT <= 95) model->seek_pct += SEEK_STEP_PCT;
                 else model->seek_pct = 95;
-            } else if(model->status == SubGhzReadRAWStatusIDLE && !model->raw_send_only) {
-                instance->callback(SubGhzCustomEventViewReadRAWSave, instance->context);
+            } else if(model->status == SubGhzReadRAWStatusStart) {
+                if(model->btn_sel < 1) model->btn_sel++;
+            } else if(model->status == SubGhzReadRAWStatusIDLE) {
+                if(model->btn_sel < 2) model->btn_sel++;
             } else if(model->status == SubGhzReadRAWStatusLoadKeyIDLE) {
-
-                instance->callback(SubGhzCustomEventViewReadRAWMore, instance->context);
+                uint8_t maxsel = model->allow_new ? 2 : 1;
+                if(model->btn_sel < maxsel) model->btn_sel++;
             }
         }, true);
         return true;
@@ -815,18 +795,52 @@ bool subghz_read_raw_input(InputEvent* event, void* context) {
     }
 
     if(event->key == InputKeyOk && event->type == InputTypeShort) {
+        bool fire_erase = false;
         with_view_model(instance->view, SubGhzReadRAWModel * model, {
             if(model->status == SubGhzReadRAWStatusStart) {
-                instance->callback(SubGhzCustomEventViewReadRAWREC, instance->context);
-                model->status = SubGhzReadRAWStatusREC;
-                model->ind_write = 0;
-                model->rssi_history_end = false;
-                model->recording_ticks = 0;
+                if(model->btn_sel == 0) {
+                    if(!model->raw_send_only)
+                        instance->callback(
+                            SubGhzCustomEventViewReadRAWConfig, instance->context);
+                } else {
+                    instance->callback(SubGhzCustomEventViewReadRAWREC, instance->context);
+                    model->status = SubGhzReadRAWStatusREC;
+                    model->ind_write = 0;
+                    model->rssi_history_end = false;
+                    model->recording_ticks = 0;
+                }
             } else if(model->status == SubGhzReadRAWStatusREC) {
                 instance->callback(SubGhzCustomEventViewReadRAWIDLE, instance->context);
                 model->status = SubGhzReadRAWStatusIDLE;
+            } else if(model->status == SubGhzReadRAWStatusIDLE && !model->raw_send_only) {
+                if(model->btn_sel == 0) {
+                    model->status = SubGhzReadRAWStatusStart;
+                    model->rssi_history_end = false;
+                    model->ind_write = 0;
+                    model->not_showing_samples = true;
+                    model->recording_ticks = 0;
+                    furi_string_set(model->sample_write, "0 spl.");
+                    furi_string_reset(model->file_name);
+                    fire_erase = true;
+                } else if(model->btn_sel == 2) {
+                    instance->callback(SubGhzCustomEventViewReadRAWSave, instance->context);
+                }
+            } else if(model->status == SubGhzReadRAWStatusLoadKeyIDLE) {
+                if(model->allow_new && model->btn_sel == 0 && !model->raw_send_only) {
+                    model->status = SubGhzReadRAWStatusStart;
+                    model->rssi_history_end = false;
+                    model->ind_write = 0;
+                    model->not_showing_samples = true;
+                    model->recording_ticks = 0;
+                    furi_string_set(model->sample_write, "0 spl.");
+                    furi_string_reset(model->file_name);
+                    fire_erase = true;
+                } else if(model->btn_sel == (model->allow_new ? 2 : 1)) {
+                    instance->callback(SubGhzCustomEventViewReadRAWMore, instance->context);
+                }
             }
         }, true);
+        if(fire_erase) instance->callback(SubGhzCustomEventViewReadRAWErase, instance->context);
         return true;
     }
 
@@ -938,17 +952,15 @@ SubGhzReadRAW* subghz_read_raw_alloc(bool raw_send_only) {
         model->tx_tick        = 0;
         model->tx_total_ticks = 1;
         model->zoom_level     = 0;
+        model->btn_sel         = 1;
+        model->prev_btn_status = (SubGhzReadRAWStatus)0xFF;
     }, true);
-
-    instance->reveal_timer = furi_timer_alloc(reveal_timer_cb, FuriTimerTypePeriodic, instance);
 
     return instance;
 }
 
 void subghz_read_raw_free(SubGhzReadRAW* instance) {
     furi_assert(instance);
-    furi_timer_stop(instance->reveal_timer);
-    furi_timer_free(instance->reveal_timer);
     with_view_model(instance->view, SubGhzReadRAWModel * model, {
         furi_string_free(model->frequency_str);
         furi_string_free(model->preset_str);

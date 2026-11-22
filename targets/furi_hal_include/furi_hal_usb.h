@@ -95,6 +95,16 @@ void furi_hal_usb_boot_gate_arm(void);
  * permanent allocations are placed; also fired by an 8 s safety timeout). */
 void furi_hal_usb_boot_gate_release(void);
 
+/** FoxFW: hold the first-boot USB gate past the 8 s safety while the Fox Setup
+ * wizard runs, so qFlipper enumerates only after the wizard exits. The gate
+ * stays armed; the safety timeout is re-armed to a longer backstop. */
+void furi_hal_usb_boot_gate_hold(void);
+
+/** FoxFW: has a USB host enumerated since the last reset of this flag? Lets the
+ * first-boot wizard ordering tell "PC present" from "no PC to wait for". */
+bool furi_hal_usb_host_seen(void);
+void furi_hal_usb_host_seen_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

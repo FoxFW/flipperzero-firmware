@@ -1,4 +1,4 @@
-/* decode_alutech_at_4n.fal : SD get_string for alutech_at_4n (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/alutech_at_4n.h>

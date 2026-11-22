@@ -18,7 +18,6 @@
 
 #define TAG "SubGhz"
 
-
 static const char* subghz_protopirate_name_alias(const char* name) {
     static const struct {
         const char* pp;
@@ -35,6 +34,7 @@ static const char* subghz_protopirate_name_alias(const char* name) {
         {"Kia V5", "KIA/HYU V5"},
         {"Kia V6", "KIA/HYU V6"},
         {"PSA", "PSA GROUP"},
+        {"Porsche Touareg", "Porsche AG"},
         {"Subaru", "SUBARU"},
         {"VAG", "VAG GROUP"},
     };
@@ -141,29 +141,108 @@ static void subghz_key_load_convert_psa(FlipperFormat* fff_data) {
 
 void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx);
 
+static const int8_t subghz_spin_dx[8] = {0, 8, 11, 8, 0, -8, -11, -8};
+static const int8_t subghz_spin_dy[8] = {-11, -8, 0, 8, 11, 8, 0, -8};
+
+static void subghz_cover_draw_spinner(Canvas* canvas, uint8_t frame, int32_t cy) {
+    for(uint8_t i = 0; i < 8; i++) {
+        int32_t x = 64 + subghz_spin_dx[i];
+        int32_t y = cy + subghz_spin_dy[i];
+        uint8_t age = (uint8_t)((8u + (frame & 7u) - i) % 8u);
+        if(age == 0)
+            canvas_draw_disc(canvas, x, y, 3);
+        else if(age == 1)
+            canvas_draw_disc(canvas, x, y, 2);
+        else if(age == 2)
+            canvas_draw_disc(canvas, x, y, 1);
+        else
+            canvas_draw_dot(canvas, x, y);
+    }
+}
+
 static void subghz_loading_cover_draw_cb(Canvas* canvas, void* ctx) {
     SubGhz* subghz = ctx;
     canvas_clear(canvas);
+    canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontPrimary);
     const char* text = (subghz && subghz->loading_cover_text) ? subghz->loading_cover_text : "LOADING";
-    canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, text);
+    canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignCenter, text);
+    subghz_cover_draw_spinner(canvas, subghz ? subghz->loading_cover_frame : 0, 42);
+}
+
+static void subghz_loading_cover_tick(void* ctx) {
+    SubGhz* subghz = ctx;
+    subghz->loading_cover_frame++;
+    if(subghz->loading_cover_viewport) view_port_update(subghz->loading_cover_viewport);
 }
 
 void subghz_loading_cover_show(SubGhz* subghz, const char* text) {
     subghz->loading_cover_text = text ? text : "LOADING";
     if(subghz->loading_cover_viewport) return;
+    subghz->loading_cover_frame = 0;
     subghz->loading_cover_viewport = view_port_alloc();
     view_port_draw_callback_set(
         subghz->loading_cover_viewport, subghz_loading_cover_draw_cb, subghz);
     gui_add_view_port(subghz->gui, subghz->loading_cover_viewport, GuiLayerFullscreen);
+    subghz->loading_cover_timer =
+        furi_timer_alloc(subghz_loading_cover_tick, FuriTimerTypePeriodic, subghz);
+    furi_timer_start(subghz->loading_cover_timer, furi_ms_to_ticks(50));
     view_port_update(subghz->loading_cover_viewport);
 }
 
 void subghz_loading_cover_hide(SubGhz* subghz) {
+    if(subghz->loading_cover_timer) {
+        furi_timer_stop(subghz->loading_cover_timer);
+        furi_timer_free(subghz->loading_cover_timer);
+        subghz->loading_cover_timer = NULL;
+    }
     if(!subghz->loading_cover_viewport) return;
     gui_remove_view_port(subghz->gui, subghz->loading_cover_viewport);
     view_port_free(subghz->loading_cover_viewport);
     subghz->loading_cover_viewport = NULL;
+}
+
+static void subghz_recheck_cover_draw_cb(Canvas* canvas, void* ctx) {
+    SubGhz* subghz = ctx;
+    canvas_clear(canvas);
+    canvas_set_color(canvas, ColorBlack);
+    canvas_set_font(canvas, FontPrimary);
+    const char* proto = (subghz && subghz->recheck_cover_proto) ? subghz->recheck_cover_proto : "";
+    canvas_draw_str_aligned(canvas, 64, 9, AlignCenter, AlignCenter, proto);
+    canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignCenter, "Re-Check!");
+    subghz_cover_draw_spinner(canvas, subghz ? subghz->recheck_cover_frame : 0, 45);
+}
+
+static void subghz_recheck_cover_tick(void* ctx) {
+    SubGhz* subghz = ctx;
+    subghz->recheck_cover_frame++;
+    if(subghz->recheck_cover_viewport) view_port_update(subghz->recheck_cover_viewport);
+}
+
+void subghz_recheck_cover_show(SubGhz* subghz, const char* proto) {
+    subghz->recheck_cover_proto = proto ? proto : "";
+    subghz->recheck_cover_frame = 0;
+    if(subghz->recheck_cover_viewport) return;
+    subghz->recheck_cover_viewport = view_port_alloc();
+    view_port_draw_callback_set(
+        subghz->recheck_cover_viewport, subghz_recheck_cover_draw_cb, subghz);
+    gui_add_view_port(subghz->gui, subghz->recheck_cover_viewport, GuiLayerFullscreen);
+    subghz->recheck_cover_timer =
+        furi_timer_alloc(subghz_recheck_cover_tick, FuriTimerTypePeriodic, subghz);
+    furi_timer_start(subghz->recheck_cover_timer, furi_ms_to_ticks(50));
+    view_port_update(subghz->recheck_cover_viewport);
+}
+
+void subghz_recheck_cover_hide(SubGhz* subghz) {
+    if(subghz->recheck_cover_timer) {
+        furi_timer_stop(subghz->recheck_cover_timer);
+        furi_timer_free(subghz->recheck_cover_timer);
+        subghz->recheck_cover_timer = NULL;
+    }
+    if(!subghz->recheck_cover_viewport) return;
+    gui_remove_view_port(subghz->gui, subghz->recheck_cover_viewport);
+    view_port_free(subghz->recheck_cover_viewport);
+    subghz->recheck_cover_viewport = NULL;
 }
 
 void subghz_blink_start(SubGhz* subghz) {
@@ -331,8 +410,14 @@ bool subghz_key_load(SubGhz* subghz, const char* file_path, bool show_dialog) {
 
             if(!subghz_setting_load_custom_preset(
                    setting, furi_string_get_cstr(temp_str), fff_data_file)) {
-                FURI_LOG_E(TAG, "Missing Custom preset");
-                break;
+
+                if(temp_data32 >= 830000000 && temp_data32 < 863000000) {
+                    FURI_LOG_W(TAG, "Custom preset has no data; fallback FM12K (2-FSK band)");
+                    furi_string_set_str(temp_str, "FM12K");
+                } else {
+                    FURI_LOG_W(TAG, "Custom preset has no data; fallback AM650");
+                    furi_string_set_str(temp_str, "AM650");
+                }
             }
         }
         int preset_index =
@@ -716,15 +801,215 @@ bool subghz_save_append_raw_from_file(const char* dev_file_name, const char* src
     return ok;
 }
 
+#define SEGMENT_BACK_US 50000L
+#define SEGMENT_FWD_US  80000L
+
+bool subghz_save_append_raw_segment_from_file(
+    const char* dev_file_name, const char* src_raw, uint32_t target_us) {
+    furi_assert(dev_file_name);
+    furi_assert(src_raw);
+    if(target_us == 0) {
+        return subghz_save_append_raw_from_file(dev_file_name, src_raw);
+    }
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    Stream* src = file_stream_alloc(storage);
+    Stream* dst = file_stream_alloc(storage);
+    FuriString* line = furi_string_alloc();
+    bool ok = false;
+    bool found = false;
+    uint32_t seg_start = 0, seg_end = 0;
+
+    do {
+        if(!file_stream_open(src, src_raw, FSAM_READ, FSOM_OPEN_EXISTING)) break;
+        size_t total = stream_size(src);
+        size_t raw_off = subghz_key_load_first_raw_offset(src);
+        if(raw_off >= total) break;
+
+        stream_seek(src, raw_off, StreamOffsetFromStart);
+        uint32_t cur = 0;
+        bool in_burst = false;
+        uint32_t burst_start = 0;
+        while(!found && stream_read_line(src, line)) {
+            if(!furi_string_start_with_str(line, "RAW_Data")) continue;
+            const char* rp = strchr(furi_string_get_cstr(line), ':');
+            if(!rp) continue;
+            rp++;
+            while(true) {
+                char* endp = NULL;
+                long v = strtol(rp, &endp, 10);
+                if(endp == rp) break;
+                rp = endp;
+                bool is_dead = (v < 0) && (-v > RAW_TRIM_DEAD_AIR_US);
+                if(is_dead) {
+                    if(in_burst) {
+                        if(burst_start <= target_us && target_us <= cur) {
+                            seg_start = burst_start;
+                            seg_end = cur;
+                            found = true;
+                        }
+                        in_burst = false;
+                    }
+                } else if(!in_burst) {
+                    burst_start = cur;
+                    in_burst = true;
+                }
+                cur += (uint32_t)(v < 0 ? -v : v);
+                if(found) break;
+            }
+        }
+        if(!found && in_burst && burst_start <= target_us && target_us <= cur) {
+            seg_start = burst_start;
+            seg_end = cur;
+            found = true;
+        }
+        if(!found) break;
+
+        {
+            uint32_t w_lo = (target_us > (uint32_t)SEGMENT_BACK_US) ?
+                                (target_us - (uint32_t)SEGMENT_BACK_US) : 0;
+            uint32_t w_hi = target_us + (uint32_t)SEGMENT_FWD_US;
+            if(w_lo > seg_start) seg_start = w_lo;
+            if(w_hi < seg_end) seg_end = w_hi;
+        }
+
+        if(!file_stream_open(dst, dev_file_name, FSAM_READ_WRITE, FSOM_OPEN_EXISTING)) break;
+        stream_seek(dst, 0, StreamOffsetFromEnd);
+        stream_seek(src, raw_off, StreamOffsetFromStart);
+        FuriString* out = furi_string_alloc();
+        size_t out_count = 0;
+        cur = 0;
+        while(stream_read_line(src, line)) {
+            if(!furi_string_start_with_str(line, "RAW_Data")) continue;
+            const char* rp = strchr(furi_string_get_cstr(line), ':');
+            if(!rp) continue;
+            rp++;
+            while(true) {
+                char* endp = NULL;
+                long v = strtol(rp, &endp, 10);
+                if(endp == rp) break;
+                rp = endp;
+                if(cur >= seg_start && cur < seg_end) {
+                    if(out_count == 0) furi_string_set(out, "RAW_Data:");
+                    furi_string_cat_printf(out, " %ld", (long)v);
+                    if(++out_count >= RAW_TRIM_VALUES_PER_LINE) {
+                        furi_string_cat_str(out, "\n");
+                        stream_write_string(dst, out);
+                        furi_string_reset(out);
+                        out_count = 0;
+                    }
+                }
+                cur += (uint32_t)(v < 0 ? -v : v);
+            }
+        }
+        if(out_count > 0) {
+            furi_string_cat_str(out, "\n");
+            stream_write_string(dst, out);
+        }
+        furi_string_free(out);
+        ok = true;
+    } while(false);
+
+    furi_string_free(line);
+    stream_free(src);
+    stream_free(dst);
+    furi_record_close(RECORD_STORAGE);
+
+    if(!ok && !found) {
+
+        return subghz_save_append_raw_from_file(dev_file_name, src_raw);
+    }
+    return ok;
+}
+
+static bool subghz_save_key_keep_raw(SubGhz* subghz, FlipperFormat* fff, const char* path) {
+    UNUSED(subghz);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    FuriString* tmp = furi_string_alloc();
+    furi_string_printf(tmp, "%s.tmp", path);
+    Stream* oldf = file_stream_alloc(storage);
+    Stream* tf = file_stream_alloc(storage);
+    bool ok = false;
+    do {
+        if(!file_stream_open(oldf, path, FSAM_READ, FSOM_OPEN_EXISTING)) break;
+        size_t total = stream_size(oldf);
+        size_t raw_off = subghz_key_load_first_raw_offset(oldf);
+
+        Stream* ks = flipper_format_get_raw_stream(fff);
+        stream_seek(ks, 0, StreamOffsetFromStart);
+        if(stream_save_to_file(ks, storage, furi_string_get_cstr(tmp), FSOM_CREATE_ALWAYS) == 0) {
+            break;
+        }
+
+        if(raw_off < total) {
+            if(!file_stream_open(tf, furi_string_get_cstr(tmp), FSAM_READ_WRITE, FSOM_OPEN_EXISTING)) {
+                break;
+            }
+            stream_seek(tf, 0, StreamOffsetFromEnd);
+            stream_seek(oldf, raw_off, StreamOffsetFromStart);
+            stream_copy(oldf, tf, total - raw_off);
+        }
+
+        stream_free(tf);
+        tf = NULL;
+        stream_free(oldf);
+        oldf = NULL;
+        storage_simply_remove(storage, path);
+        ok = (storage_common_rename(storage, furi_string_get_cstr(tmp), path) == FSE_OK);
+    } while(0);
+    if(tf) stream_free(tf);
+    if(oldf) stream_free(oldf);
+    if(!ok) storage_simply_remove(storage, furi_string_get_cstr(tmp));
+    furi_string_free(tmp);
+    furi_record_close(RECORD_STORAGE);
+    return ok;
+}
+
+void subghz_history_dedup_after_add(SubGhz* subghz, int16_t* track_idx, bool* keep) {
+    furi_assert(subghz);
+    int16_t removed;
+    do {
+        removed = subghz_history_dedup_last_fiat_hitag2(subghz->history);
+        if(removed < 0) removed = subghz_history_dedup_last_came_holtek(subghz->history);
+        if(removed < 0) removed = subghz_history_dedup_last_priority(subghz->history);
+        if(removed >= 0) {
+            if(subghz->dual_defer_view) {
+                subghz->dual_view_rebuild = true;
+            } else {
+                subghz_view_receiver_disable_draw_callback(subghz->subghz_receiver);
+                subghz_view_receiver_delete_item(subghz->subghz_receiver, (uint16_t)removed);
+                subghz_view_receiver_enable_draw_callback(subghz->subghz_receiver);
+                subghz->idx_menu_chosen =
+                    subghz_view_receiver_get_idx_menu(subghz->subghz_receiver);
+            }
+            if(track_idx) {
+                if(removed == *track_idx) {
+                    *track_idx = -1;
+                    if(keep) *keep = false;
+                } else if(removed < *track_idx) {
+                    (*track_idx)--;
+                }
+            }
+        }
+    } while(removed >= 0);
+}
+
 void subghz_save_to_file(void* context) {
     furi_assert(context);
     SubGhz* subghz = context;
     if(subghz->load_type_file == SubGhzLoadTypeFileRaw) return;
-    if(subghz_path_is_file(subghz->file_path)) {
-        subghz_save_protocol_to_file(
-            subghz,
-            subghz_txrx_get_fff_data(subghz->txrx),
-            furi_string_get_cstr(subghz->file_path));
+
+    FlipperFormat* fff = subghz_txrx_get_fff_data(subghz->txrx);
+    if(fff) {
+        flipper_format_rewind(fff);
+        if(flipper_format_key_exist(fff, "File_name")) return;
+    }
+
+    if(!subghz_path_is_file(subghz->file_path)) return;
+    if(subghz->loaded_file_has_raw) {
+        subghz_save_key_keep_raw(subghz, fff, furi_string_get_cstr(subghz->file_path));
+    } else {
+        subghz_save_protocol_to_file(subghz, fff, furi_string_get_cstr(subghz->file_path));
     }
 }
 

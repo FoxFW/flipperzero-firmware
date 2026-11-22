@@ -1,5 +1,5 @@
-/* enc_chrysler.fal : SD encoder for chrysler (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_chrysler enc_chrysler__subghz_protocol_chrysler
 #define subghz_protocol_encoder_chrysler_alloc enc_chrysler__subghz_protocol_encoder_chrysler_alloc
 #define subghz_protocol_encoder_chrysler_deserialize enc_chrysler__subghz_protocol_encoder_chrysler_deserialize
@@ -181,7 +181,6 @@ static size_t chrysler_v0_build_upload(
     return i;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -189,7 +188,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -382,6 +380,10 @@ SubGhzProtocolStatus
     chrysler_v0_build_payload(
         instance->plain_b, counter_b, instance->tx_button, instance->plain_header, payload_b);
 
+    if(instance->encoder.upload) {
+        free(instance->encoder.upload);
+        instance->encoder.upload = NULL;
+    }
     instance->encoder.upload = malloc(CHRYSLER_V0_UPLOAD_CAPACITY * sizeof(LevelDuration));
     furi_check(instance->encoder.upload);
     instance->encoder.size_upload = CHRYSLER_V0_UPLOAD_CAPACITY;
@@ -419,7 +421,6 @@ static const SubGhzProtocolEncoder enc_chrysler_vt = {
     .yield = subghz_protocol_encoder_chrysler_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_chrysler = {
     .name = CHRYSLER_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

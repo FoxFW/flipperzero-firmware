@@ -94,7 +94,6 @@ struct SubGhzProtocolEncoderSheriffCfm {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderSheriffCfm);
 
-
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderSheriffCfm);
 SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderSheriffCfm);
 
@@ -116,7 +115,6 @@ const SubGhzProtocolDecoder subghz_protocol_sheriff_cfm_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
     __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
@@ -207,8 +205,6 @@ void* subghz_protocol_decoder_sheriff_cfm_alloc(SubGhzEnvironment* environment) 
     return subghz_protocol_decoder_common_alloc(
         sizeof(SubGhzProtocolDecoderSheriffCfm), &subghz_protocol_sheriff_cfm);
 }
-
-
 
 void subghz_protocol_decoder_sheriff_cfm_reset(void* context) {
     furi_check(context);
@@ -322,8 +318,6 @@ void subghz_protocol_decoder_sheriff_cfm_feed(void* context, bool level, uint32_
         break;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_sheriff_cfm_serialize(
     void* context,

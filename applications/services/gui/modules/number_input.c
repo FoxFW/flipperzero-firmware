@@ -206,6 +206,10 @@ static void number_input_sign(NumberInputModel* model) {
 }
 
 static void number_input_add_digit(NumberInputModel* model, char* newChar) {
+
+    if(furi_string_cmp_str(model->text_buffer, "0") == 0) {
+        furi_string_set(model->text_buffer, "");
+    }
     furi_string_cat_str(model->text_buffer, newChar);
     if((model->max_value >= 0 && is_number_too_large(model)) ||
        (model->min_value < 0 && is_number_too_small(model))) {
@@ -435,13 +439,12 @@ void number_input_set_result_callback(
             model->callback = callback;
             model->callback_context = callback_context;
             model->current_number = current_number;
-            if(current_number != 0) {
-                furi_string_printf(model->text_buffer, "%ld", current_number);
-            } else {
-                furi_string_set(model->text_buffer, "");
-            }
+
+            furi_string_printf(model->text_buffer, "%ld", current_number);
             model->min_value = min_value;
             model->max_value = max_value;
+            model->selected_row = 1;
+            model->selected_column = 6;
         },
         true);
 }

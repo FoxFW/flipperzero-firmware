@@ -5,6 +5,7 @@
 #include <furi_hal_rtc.h>
 #include <furi_hal_spi.h>
 #include <furi_hal_cortex.h>
+#include <fox_fusion.h>
 #include <furi_hal_interrupt.h>
 #include <furi_hal_resources.h>
 #include <furi_hal_bus.h>
@@ -321,9 +322,16 @@ bool furi_hal_subghz_tx(void) {
     furi_hal_spi_acquire(&furi_hal_spi_bus_handle_subghz);
     cc1101_switch_to_tx(&furi_hal_spi_bus_handle_subghz);
 
-    furi_check(cc1101_wait_status_state(&furi_hal_spi_bus_handle_subghz, CC1101StateTX, 10000));
+    /* Do not crash if the radio never confirms TX state. A cheap external CC1101
+     * board can brown out its own 3.3V rail on a high-power TX burst and stop
+     * answering on SPI; that must fail the transmit gracefully (caller falls back
+     * to "Only Rx"), not take down the whole Flipper via furi_check. */
+    bool tx_ok = cc1101_wait_status_state(&furi_hal_spi_bus_handle_subghz, CC1101StateTX, 10000);
+    if(!tx_ok) {
+        cc1101_switch_to_idle(&furi_hal_spi_bus_handle_subghz);
+    }
     furi_hal_spi_release(&furi_hal_spi_bus_handle_subghz);
-    return true;
+    return tx_ok;
 }
 
 float furi_hal_subghz_get_rssi(void) {
@@ -465,6 +473,7 @@ static void furi_hal_subghz_capture_ISR(void* context) {
 
     if(LL_TIM_IsActiveFlag_CC1(TIM2)) {
         LL_TIM_ClearFlag_CC1(TIM2);
+        if(fox_fusion_armed) fox_fusion_push_int(true);
         furi_hal_subghz_capture_delta_duration = LL_TIM_IC_GetCaptureCH1(TIM2);
         if(furi_hal_subghz_capture_callback) {
             if(furi_hal_subghz.async_mirror_pin != NULL)
@@ -479,6 +488,7 @@ static void furi_hal_subghz_capture_ISR(void* context) {
 
     if(LL_TIM_IsActiveFlag_CC2(TIM2)) {
         LL_TIM_ClearFlag_CC2(TIM2);
+        if(fox_fusion_armed) fox_fusion_push_int(false);
         if(furi_hal_subghz_capture_callback) {
             if(furi_hal_subghz.async_mirror_pin != NULL)
                 furi_hal_gpio_write(furi_hal_subghz.async_mirror_pin, true);

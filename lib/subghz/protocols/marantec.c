@@ -191,8 +191,7 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_marantec_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderMarantec* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): the CRC helper is shared with the
-    // encoder and not exported, so the CRC is computed here, exactly as before.
+
     uint8_t tdata[6] = {
         instance->generic.data >> 48,
         instance->generic.data >> 40,

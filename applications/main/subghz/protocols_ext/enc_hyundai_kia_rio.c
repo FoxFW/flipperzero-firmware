@@ -1,6 +1,6 @@
-/* enc_hyundai_kia_rio.fal : SD encoder for hyundai_kia_rio (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define hyundai_kia_rio_protocol enc_hyundai_kia_rio__hyundai_kia_rio_protocol
+
+
+#define subghz_protocol_hyundai_kia_rio enc_hyundai_kia_rio__hyundai_kia_rio_protocol
 #define subghz_protocol_encoder_hyundai_kia_rio_alloc enc_hyundai_kia_rio__subghz_protocol_encoder_hyundai_kia_rio_alloc
 #define subghz_protocol_encoder_hyundai_kia_rio_deserialize enc_hyundai_kia_rio__subghz_protocol_encoder_hyundai_kia_rio_deserialize
 #include <lib/subghz/encode_plugin.h>
@@ -35,7 +35,6 @@ struct SubGhzProtocolEncoderHyundaiKiaRio {
     SubGhzBlockGeneric generic;
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&ppa_emit) ppa_emit;
     __typeof__(&ppa_encoder_buffer_ensure) ppa_encoder_buffer_ensure;
@@ -135,7 +134,7 @@ void* subghz_protocol_encoder_hyundai_kia_rio_alloc(SubGhzEnvironment* environme
     SubGhzProtocolEncoderHyundaiKiaRio* instance =
         calloc(1, sizeof(SubGhzProtocolEncoderHyundaiKiaRio));
     furi_check(instance);
-    instance->base.protocol = &hyundai_kia_rio_protocol;
+    instance->base.protocol = &subghz_protocol_hyundai_kia_rio;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 3;
     ppa_encoder_buffer_ensure(instance, HKR_UPLOAD_CAPACITY);
@@ -209,8 +208,7 @@ static const SubGhzProtocolEncoder enc_hyundai_kia_rio_vt = {
     .yield = enc_hyundai_kia_rio_tr_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol hyundai_kia_rio_protocol = {
+const SubGhzProtocol subghz_protocol_hyundai_kia_rio = {
     .name = HYUNDAI_KIA_RIO_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeStatic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |

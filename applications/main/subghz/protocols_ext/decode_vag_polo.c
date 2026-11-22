@@ -1,4 +1,4 @@
-/* decode_vag_polo.fal : SD get_string for vag_polo (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/vag_polo.h>
@@ -23,9 +23,9 @@ struct SubGhzProtocolDecoderVagPolo {
     uint16_t pbits;
 
     uint32_t serial;
-    uint8_t btn; // 1 = Unlock, 2 = Lock
-    uint8_t button_raw; // raw payload[0]
-    uint16_t hdr16; // top 16 bits of the 80-bit frame (payload[0..1])
+    uint8_t btn;
+    uint8_t button_raw;
+    uint16_t hdr16;
 };
 
 static const char* vag_polo_button_name(uint8_t hi_nibble);

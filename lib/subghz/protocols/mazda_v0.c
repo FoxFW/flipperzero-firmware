@@ -30,7 +30,7 @@ typedef struct SubGhzProtocolDecoderMazdaV0 {
     uint32_t serial;
     uint8_t button;
     uint32_t count;
-} 
+}
 SubGhzProtocolDecoderMazdaV0;
 
 typedef struct SubGhzProtocolEncoderMazdaV0 {
@@ -41,7 +41,7 @@ typedef struct SubGhzProtocolEncoderMazdaV0 {
     uint32_t serial;
     uint8_t button;
     uint32_t count;
-} 
+}
 SubGhzProtocolEncoderMazdaV0;
 
 typedef enum {
@@ -52,7 +52,6 @@ typedef enum {
 
 static bool mazda_v0_get_event(uint32_t duration, bool level, ManchesterEvent* event);
 static void mazda_v0_decode_key(SubGhzBlockGeneric* generic);
-
 
 static SubGhzProtocolStatus mazda_v0_write_display(
     FlipperFormat* flipper_format,
@@ -190,8 +189,6 @@ void* subghz_protocol_decoder_mazda_v0_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_mazda_v0_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderMazdaV0* instance = context;
@@ -292,8 +289,6 @@ void subghz_protocol_decoder_mazda_v0_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_mazda_v0_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -361,7 +356,5 @@ SubGhzProtocolStatus
     return ret;
 }
 
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMazdaV0);
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderMazdaV0);

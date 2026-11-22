@@ -72,6 +72,12 @@ struct SubGhz {
     ViewPort* blank_transition_viewport;
     ViewPort* loading_cover_viewport;
     const char* loading_cover_text;
+    FuriTimer* loading_cover_timer;
+    uint8_t loading_cover_frame;
+    ViewPort* recheck_cover_viewport;
+    const char* recheck_cover_proto;
+    FuriTimer* recheck_cover_timer;
+    uint8_t recheck_cover_frame;
 
     Submenu* submenu;
     Popup* popup;
@@ -110,6 +116,11 @@ struct SubGhz {
     bool raw_send_only;
 
     bool save_datetime_set;
+    bool add_manual_generated;
+    bool dual_defer_view;
+    bool dual_view_rebuild;
+    uint16_t dual_view_shown;
+    FuriString* saved_preselect;
     DateTime save_datetime;
 
     SubGhzLastSettings* last_settings;
@@ -167,9 +178,14 @@ bool subghz_save_protocol_to_file(
     FlipperFormat* flipper_format,
     const char* dev_file_name);
 bool subghz_save_append_raw_from_file(const char* dev_file_name, const char* src_raw);
+bool subghz_save_append_raw_segment_from_file(
+    const char* dev_file_name, const char* src_raw, uint32_t target_us);
 void subghz_loading_cover_show(SubGhz* subghz, const char* text);
 void subghz_loading_cover_hide(SubGhz* subghz);
+void subghz_recheck_cover_show(SubGhz* subghz, const char* proto);
+void subghz_recheck_cover_hide(SubGhz* subghz);
 void subghz_save_to_file(void* context);
+void subghz_history_dedup_after_add(SubGhz* subghz, int16_t* track_idx, bool* keep);
 bool subghz_rename_file(SubGhz* subghz);
 bool subghz_file_available(SubGhz* subghz);
 bool subghz_delete_file(SubGhz* subghz);

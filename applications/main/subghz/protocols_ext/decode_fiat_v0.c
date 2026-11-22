@@ -1,4 +1,4 @@
-/* decode_fiat_v0.fal : SD get_string for fiat_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/fiat_v0.h>
@@ -26,7 +26,6 @@ struct SubGhzProtocolDecoderFiatV0 {
 static void fiat_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFiatV0* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

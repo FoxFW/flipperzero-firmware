@@ -1,4 +1,4 @@
-/* decode_continental_rke.fal : SD get_string for continental_rke (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/continental_rke.h>
@@ -15,10 +15,10 @@ struct SubGhzProtocolDecoderContinentalRke {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint32_t te_accum; /* accumulated half-bit duration (rtl_433 time_since_last) */
-    uint32_t preamble_shift; /* rolling 20-bit window while hunting the preamble */
-    bool collecting; /* true once preamble matched, collecting payload bits */
-    uint16_t frame_bit; /* payload bits collected so far */
+    uint32_t te_accum;
+    uint32_t preamble_shift;
+    bool collecting;
+    uint16_t frame_bit;
     uint8_t frame[CONTINENTAL_RKE_PAYLOAD_BYTES];
 };
 
@@ -47,9 +47,6 @@ static void continental_rke_decode(const SubGhzDecodeInput* input, FuriString* o
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderContinentalRke* instance = input->decoder;
 
-
-    /* Re-derive ID + button from the stored 64-bit Key so this is stable across
-     * save/load (bytes 0..3 = ID, byte 5 high-nibble = button). */
     uint64_t data = instance->generic.data;
     uint32_t id = (uint32_t)(data >> 32);
     uint8_t button = (uint8_t)((data >> 20) & 0x0F);

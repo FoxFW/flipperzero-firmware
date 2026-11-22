@@ -32,6 +32,8 @@ void subghz_receiver_decode(SubGhzReceiver* instance, bool level, uint32_t durat
 
 void subghz_receiver_reset(SubGhzReceiver* instance);
 
+void subghz_receiver_reset_decode_result(SubGhzReceiver* instance);
+
 void subghz_receiver_reset_except_by_name(SubGhzReceiver* instance, const char* keep_name);
 
 void subghz_receiver_set_rx_callback(

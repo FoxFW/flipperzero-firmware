@@ -1,4 +1,4 @@
-/* decode_sheriff_cfm.fal : SD get_string for sheriff_cfm (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/sheriff_cfm.h>
@@ -71,7 +71,6 @@ static uint8_t cfm_get_btn_code(uint8_t original_btn) {
 static void sheriff_cfm_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSheriffCfm* instance = input->decoder;
-
 
     subghz_custom_btn_set_original(cfm_btn_to_custom(instance->generic.btn));
     subghz_custom_btn_set_max(4);

@@ -1,6 +1,6 @@
-/* enc_fiat_v1.fal : SD encoder for fiat_v1 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define fiat_v1_protocol enc_fiat_v1__fiat_v1_protocol
+
+
+#define subghz_protocol_fiat_v1 enc_fiat_v1__fiat_v1_protocol
 #define subghz_protocol_encoder_common_free enc_fiat_v1__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_fiat_v1__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_fiat_v1_alloc enc_fiat_v1__subghz_protocol_encoder_fiat_v1_alloc
@@ -285,7 +285,6 @@ static bool fiat_v1_encoder_build_upload(SubGhzProtocolEncoderFiatV1* instance) 
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -293,7 +292,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -317,7 +315,7 @@ void* subghz_protocol_encoder_fiat_v1_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolEncoderFiatV1* instance = calloc(1, sizeof(SubGhzProtocolEncoderFiatV1));
     furi_check(instance);
 
-    instance->base.protocol = &fiat_v1_protocol;
+    instance->base.protocol = &subghz_protocol_fiat_v1;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->tail_bits = FIAT_V1_DEFAULT_TAIL_BITS;
     instance->encoder.repeat = FIAT_V1_ENC_DEFAULT_REPEAT;
@@ -490,6 +488,10 @@ SubGhzProtocolStatus
     flipper_format_read_uint32(flipper_format, "Repeat", &repeat, 1);
     instance->encoder.repeat = (repeat == 0U) ? FIAT_V1_ENC_DEFAULT_REPEAT : (size_t)repeat;
 
+    if(instance->encoder.upload) {
+        free(instance->encoder.upload);
+        instance->encoder.upload = NULL;
+    }
     instance->encoder.upload = malloc(FIAT_V1_UPLOAD_CAPACITY * sizeof(LevelDuration));
     if(!fiat_v1_encoder_build_upload(instance)) {
         return SubGhzProtocolStatusErrorParserOthers;
@@ -517,8 +519,7 @@ static const SubGhzProtocolEncoder enc_fiat_v1_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol fiat_v1_protocol = {
+const SubGhzProtocol subghz_protocol_fiat_v1 = {
     .name = FIAT_V1_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |

@@ -2,11 +2,7 @@ App(
     appid="foxhub",
     name="FoxHub",
     apptype=FlipperAppType.MENUEXTERNAL,
-    # 14x14 home-screen Apps-menu icon. This is the one Fox app where this
-    # field takes effect immediately (MENUEXTERNAL is the only apptype
-    # FLIPPER_EXTERNAL_APPS/the home Apps menu actually reads it from) -
-    # previously unset here, so FoxHub was showing the generic Apps icon
-    # in that menu. See assets/icons/Fox/fox_generic_14x14.png.
+
     icon="I_fox_generic_14x14",
     entry_point="foxhub_main",
     stack_size=8 * 1024,

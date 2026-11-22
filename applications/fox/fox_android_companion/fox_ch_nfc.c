@@ -1,5 +1,5 @@
 #include "fox_ch_nfc.h"
-#include "fox_watchdog.h" /* kick the dispatch watchdog during long emulation windows */
+#include "fox_watchdog.h"
 
 #include <furi.h>
 #include <furi_hal.h>
@@ -16,7 +16,6 @@
 #include "lfrfid/lfrfid_worker.h"
 #include "lfrfid/lfrfid_dict_file.h"
 #include "lfrfid/protocols/lfrfid_protocols.h"
-
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,7 +90,7 @@ static const char* fox_nfc_emu_hf(const char* file_path, uint32_t ms) {
         nfc_listener_start(listener, fox_listener_cb, NULL);
         uint32_t start = furi_get_tick();
         while((furi_get_tick() - start) < furi_ms_to_ticks(ms)) {
-            fox_watchdog_kick(); // emulation is a legitimate long window, not a hang
+            fox_watchdog_kick();
             furi_delay_ms(50);
         }
         nfc_listener_stop(listener);
@@ -279,7 +278,7 @@ static const char* fox_lf_emu(const char* file_path, uint32_t ms) {
         lfrfid_worker_emulate_start(worker, (LFRFIDProtocol)protocol);
         uint32_t start = furi_get_tick();
         while((furi_get_tick() - start) < furi_ms_to_ticks(ms)) {
-            fox_watchdog_kick(); // emulation is a legitimate long window, not a hang
+            fox_watchdog_kick();
             furi_delay_ms(50);
         }
         lfrfid_worker_stop(worker);

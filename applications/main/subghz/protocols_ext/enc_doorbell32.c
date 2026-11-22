@@ -1,5 +1,5 @@
-/* enc_doorbell32.fal : SD encoder for doorbell32 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_doorbell32 enc_doorbell32__subghz_protocol_doorbell32
 #define subghz_protocol_encoder_common_alloc enc_doorbell32__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_doorbell32__subghz_protocol_encoder_common_free
@@ -37,19 +37,9 @@ static const SubGhzBlockConst subghz_protocol_doorbell32_const = {
     .min_count_bit_for_found = 32,
 };
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderDoorbell32 instance
- * @return true Always; this encoder has no failure path
- */
 static bool
     subghz_protocol_encoder_doorbell32_get_upload(SubGhzProtocolEncoderDoorbell32* instance);
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderDoorbell32 instance
- * @return true Always; this encoder has no failure path
- */
 static bool
     subghz_protocol_encoder_doorbell32_get_upload(SubGhzProtocolEncoderDoorbell32* instance) {
     furi_assert(instance);
@@ -64,7 +54,7 @@ static bool
             instance->encoder.upload[index++] = level_duration_make(false, instance->te * 3);
         }
     }
-    // closing pulse, then the guard that separates the repeats
+
     instance->encoder.upload[index++] = level_duration_make(true, instance->te);
     instance->encoder.upload[index++] =
         level_duration_make(false, instance->te * DOORBELL32_GUARD_TIME);
@@ -73,7 +63,6 @@ static bool
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -81,13 +70,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -106,7 +93,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -164,7 +150,6 @@ static const SubGhzProtocolEncoder enc_doorbell32_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_doorbell32 = {
     .name = SUBGHZ_PROTOCOL_DOORBELL32_NAME,
     .type = SubGhzProtocolTypeStatic,

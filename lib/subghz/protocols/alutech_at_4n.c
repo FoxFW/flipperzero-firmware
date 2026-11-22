@@ -12,7 +12,7 @@
 
 #define TAG "SubGhzProtocoAlutech_at_4n"
 
-static bool alutech_at_4n_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool alutech_at_4n_raw_replay = false;
 
 #define SUBGHZ_NO_ALUTECH_AT_4N_RAINBOW_TABLE         0xFFFFFFFFFFFFFFFF
 #define SUBGHZ_ALUTECH_AT_4N_RAINBOW_TABLE_SIZE_BYTES 32
@@ -72,7 +72,6 @@ const SubGhzProtocolDecoder subghz_protocol_alutech_at_4n_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* alutech_at4n_counter_mode;
     void* alutech_at_4n_raw_replay;
@@ -94,7 +93,6 @@ const SubGhzProtocol subghz_protocol_alutech_at_4n = {
     .decoder = &subghz_protocol_alutech_at_4n_decoder,
     .encoder = &subghz_protocol_alutech_at_4n_encoder_ext.vtable,
 };
-
 
 static uint32_t subghz_protocol_alutech_at_4n_get_magic_data_from_buffer(
     uint8_t* buffer,
@@ -249,7 +247,7 @@ static bool subghz_protocol_alutech_at_4n_gen_data(
     if((alutech_at4n_counter_mode == 0) || bypass) {
 
         if(alutech_at_4n_raw_replay) {
-            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+            bypass = false;
         } else if((furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) || bypass) {
             bypass = false;
 
@@ -329,7 +327,6 @@ bool subghz_protocol_alutech_at_4n_create_data(
     }
     return true;
 }
-
 
 void* subghz_protocol_decoder_alutech_at_4n_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderAlutech_at_4n* instance =

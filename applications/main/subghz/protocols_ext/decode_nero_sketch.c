@@ -1,4 +1,4 @@
-/* decode_nero_sketch.fal : SD get_string for nero_sketch (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nero_sketch.h>
@@ -19,7 +19,6 @@ struct SubGhzProtocolDecoderNeroSketch {
 static void nero_sketch_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderNeroSketch* instance = input->decoder;
-
 
     uint32_t code_found_hi = instance->generic.data >> 32;
     uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;

@@ -5,20 +5,13 @@
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
 #include <lib/subghz/blocks/bitbuf.h>
+#include "../encode_plugin.h"
 
 #define TAG "MazdaV2"
 
-// Mazda V2 -- ported from firmware mazda_v2.c via KeeLoq-RX arke_mazda_gm.py (MazdaV2).
-// Half-bit Manchester, ts=500 tl=1000 delta=150 (<=). Durations < 250us are a noise
-// filter and dropped. Frame = 8-bit 0xEC sync + 63 data bits. The 63 data bits are
-// left-shifted one (LSB padded 0) into a 64-bit word. No in-frame CRC -> STRUCTURAL
-// gate: hop0 top-2 bits == 01, hop3 bit2 == 0, and button-whitelist {Lock/Unlock/
-// Trunk}. Serial is an 8-bit per-remote constant; cnt is a cleartext 8-bit field
-// spread across hop2/hop3. Decode-only (rolling code); .encoder = NULL.
-
 #define MAZDA_V2_SYNC_BITS   8
 #define MAZDA_V2_DATA_BITS   63
-#define MAZDA_V2_FRAME_BITS  (MAZDA_V2_SYNC_BITS + MAZDA_V2_DATA_BITS) // 71
+#define MAZDA_V2_FRAME_BITS  (MAZDA_V2_SYNC_BITS + MAZDA_V2_DATA_BITS)
 #define MAZDA_V2_CAP         400
 #define MAZDA_V2_PROCESS_AT  380
 #define MAZDA_V2_NOISE_MIN   250
@@ -30,7 +23,6 @@ static const SubGhzBlockConst subghz_protocol_mazda_v2_const = {
     .min_count_bit_for_found = MAZDA_V2_DATA_BITS,
 };
 
-// 0xEC = 1110 1100, MSB first.
 static const uint8_t mazda_v2_sync[MAZDA_V2_SYNC_BITS] = {1, 1, 1, 0, 1, 1, 0, 0};
 
 struct SubGhzProtocolDecoderMazdaV2 {
@@ -49,13 +41,11 @@ struct SubGhzProtocolDecoderMazdaV2 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMazdaV2);
 
-
 typedef enum {
     MazdaV2StepReset = 0,
     MazdaV2StepCollect = 1,
 } MazdaV2Step;
 
-// Scan the collected half-bit stream for the 0xEC sync, then validate + extract.
 static void mazda_v2_process_frame(SubGhzProtocolDecoderMazdaV2* instance) {
     uint16_t n = instance->all_count;
     if(n < MAZDA_V2_FRAME_BITS) return;
@@ -84,15 +74,15 @@ static void mazda_v2_process_frame(SubGhzProtocolDecoderMazdaV2* instance) {
     for(uint8_t i = 0; i < MAZDA_V2_DATA_BITS; i++) {
         data = (data << 1) | (subghz_bitbuf_get(instance->all_bits, data_start + i) & 1);
     }
-    data = (data << 1); // pad LSB with 0 to fill 64 bits
+    data = (data << 1);
 
     uint8_t hop0 = (uint8_t)(data >> 40);
-    if((hop0 & 0xC0) != 0x40) return; // top-2 bits must be 01
+    if((hop0 & 0xC0) != 0x40) return;
     uint8_t hop3 = (uint8_t)(data >> 16);
-    if((hop3 & 0x04) != 0) return; // bit2 must be 0
+    if((hop3 & 0x04) != 0) return;
     uint8_t btn = (uint8_t)(data >> 56);
     uint8_t btn7 = btn & 0x7F;
-    if(btn7 != 0x06 && btn7 != 0x0A && btn7 != 0x0E) return; // button whitelist
+    if(btn7 != 0x06 && btn7 != 0x0A && btn7 != 0x0E) return;
 
     uint8_t serial = (uint8_t)(data >> 48);
     uint8_t hop2 = (uint8_t)(data >> 24);
@@ -124,8 +114,6 @@ void* subghz_protocol_decoder_mazda_v2_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_mazda_v2_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderMazdaV2* instance = context;
@@ -140,7 +128,7 @@ void subghz_protocol_decoder_mazda_v2_feed(void* context, bool level, uint32_t d
     furi_check(context);
     SubGhzProtocolDecoderMazdaV2* instance = context;
 
-    if(duration < MAZDA_V2_NOISE_MIN) return; // noise filter
+    if(duration < MAZDA_V2_NOISE_MIN) return;
 
     uint32_t ts = subghz_protocol_mazda_v2_const.te_short;
     uint32_t tl = subghz_protocol_mazda_v2_const.te_long;
@@ -185,8 +173,6 @@ void subghz_protocol_decoder_mazda_v2_feed(void* context, bool level, uint32_t d
         break;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_mazda_v2_serialize(
     void* context,
@@ -243,11 +229,15 @@ const SubGhzProtocolDecoder subghz_protocol_mazda_v2_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_mazda_v2_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_mazda_v2");
+
 const SubGhzProtocol subghz_protocol_mazda_v2 = {
     .name = MAZDA_V2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mazda_v2_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_mazda_v2_encoder_ext.vtable,
 };

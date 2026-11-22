@@ -1,6 +1,6 @@
-/* enc_santa_fe.fal : SD encoder for santa_fe (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define santa_fe_protocol enc_santa_fe__santa_fe_protocol
+
+
+#define subghz_protocol_santa_fe enc_santa_fe__santa_fe_protocol
 #define subghz_protocol_encoder_santa_fe_alloc enc_santa_fe__subghz_protocol_encoder_santa_fe_alloc
 #define subghz_protocol_encoder_santa_fe_deserialize enc_santa_fe__subghz_protocol_encoder_santa_fe_deserialize
 #include <lib/subghz/encode_plugin.h>
@@ -36,7 +36,6 @@ struct SubGhzProtocolEncoderSantaFe {
     uint32_t rolling;
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&ppa_emit) ppa_emit;
     __typeof__(&ppa_encoder_buffer_ensure) ppa_encoder_buffer_ensure;
@@ -119,7 +118,7 @@ void* subghz_protocol_encoder_santa_fe_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolEncoderSantaFe* instance = calloc(1, sizeof(SubGhzProtocolEncoderSantaFe));
     furi_check(instance);
-    instance->base.protocol = &santa_fe_protocol;
+    instance->base.protocol = &subghz_protocol_santa_fe;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 3;
     ppa_encoder_buffer_ensure(instance, SF_UPLOAD_CAPACITY);
@@ -183,8 +182,7 @@ static const SubGhzProtocolEncoder enc_santa_fe_vt = {
     .yield = enc_santa_fe_tr_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol santa_fe_protocol = {
+const SubGhzProtocol subghz_protocol_santa_fe = {
     .name = SANTA_FE_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeStatic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |

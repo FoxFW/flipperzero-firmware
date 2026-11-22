@@ -9,6 +9,7 @@
 #include "../blocks/math.h"
 
 #include <lib/toolbox/manchester_decoder.h>
+#include "../encode_plugin.h"
 
 #include <string.h>
 
@@ -171,13 +172,16 @@ const SubGhzProtocolEncoder subghz_protocol_opel_v1_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_opel_v1_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_opel_v1 = {
     .name = SUBGHZ_PROTOCOL_OPEL_V1_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_opel_v1_decoder,
-    .encoder = &subghz_protocol_opel_v1_encoder,
+    .encoder = &subghz_protocol_opel_v1_encoder_ext.vtable,
 };
 
 void* subghz_protocol_decoder_opel_v1_alloc(SubGhzEnvironment* environment) {
@@ -263,7 +267,7 @@ SubGhzProtocolStatus subghz_protocol_decoder_opel_v1_serialize(
     SubGhzProtocolDecoderOpelV1* instance = context;
 
     instance->generic.data = instance->cipher;
-    instance->generic.data_count_bit = subghz_protocol_opel_v1_const.min_count_bit_for_found;
+    instance->generic.data_count_bit = OPEL_V1_FRAME_BITS;
     instance->generic.serial = instance->serial;
     instance->generic.btn = instance->button;
     instance->generic.cnt = instance->count;
@@ -272,6 +276,27 @@ SubGhzProtocolStatus subghz_protocol_decoder_opel_v1_serialize(
         subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
     if(ret != SubGhzProtocolStatusOk) {
         return ret;
+    }
+
+    {
+        uint8_t fr[12];
+        memset(fr, 0, sizeof(fr));
+        uint32_t pos = 0;
+        for(int k = 4; k >= 0; k--) {
+            if((OPEL_V1_FRAMING >> k) & 1) fr[pos >> 3] |= (uint8_t)(0x80U >> (pos & 7));
+            pos++;
+        }
+        for(int k = 23; k >= 0; k--) {
+            if((instance->serial >> k) & 1) fr[pos >> 3] |= (uint8_t)(0x80U >> (pos & 7));
+            pos++;
+        }
+        for(int k = 63; k >= 0; k--) {
+            if((instance->cipher >> k) & 1) fr[pos >> 3] |= (uint8_t)(0x80U >> (pos & 7));
+            pos++;
+        }
+        if(!flipper_format_insert_or_update_hex(flipper_format, "Data", fr, sizeof(fr))) {
+            return SubGhzProtocolStatusErrorParserOthers;
+        }
     }
 
     if(!flipper_format_insert_or_update_hex(

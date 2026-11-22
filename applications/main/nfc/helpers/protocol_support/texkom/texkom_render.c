@@ -12,10 +12,6 @@ void nfc_render_texkom_info(
         furi_string_cat_printf(str, " %02X", uid[i]);
     }
 
-    // A wrong checksum travels in the frame, so it is the first thing to explain a key that reads
-    // cleanly and still opens nothing - worth the whole verdict on both screens. Same idea as
-    // dallas_common_render_crc_error(), minus the inline highlight: the text scroll element only
-    // honours line-leading escapes.
     const bool crc_valid = texkom_is_crc_valid(data);
     furi_string_cat_printf(
         str, "\nCRC: %02X (%s)", data->frame[TEXKOM_FRAME_SIZE - 1], crc_valid ? "OK" : "Invalid");

@@ -38,6 +38,7 @@ bool dialog_file_browser_show(
             .preselected_filename = path,
             .item_callback = options ? options->item_loader_callback : NULL,
             .item_callback_context = options ? options->item_loader_context : NULL,
+            .sort_by_name = options ? options->sort_by_name : false,
             .base_path = furi_string_get_cstr(base_path),
         }};
 

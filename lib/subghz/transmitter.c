@@ -8,10 +8,9 @@
 
 struct SubGhzTransmitter {
     const SubGhzProtocol* protocol;
-    /* Encoder actually driven: the protocol's own, or the SD plugin's real encoder
-     * when the protocol's encoder is an external placeholder (FoxFW2.0 v2.1). */
+
     const SubGhzProtocolEncoder* encoder;
-    void* encode_plugin; /* plugin handle while loaded, else NULL */
+    void* encode_plugin;
     SubGhzProtocolEncoderBase* protocol_instance;
 };
 
@@ -48,7 +47,7 @@ void subghz_transmitter_free(SubGhzTransmitter* instance) {
     if(instance->encoder && instance->encoder->free) {
         instance->encoder->free(instance->protocol_instance);
     }
-    /* Unload only after the plugin's own free() has run. */
+
     subghz_encode_plugin_release(instance->encode_plugin);
     free(instance);
 }

@@ -114,6 +114,11 @@ void subghz_worker_set_context(SubGhzWorker* instance, void* context) {
     instance->context = context;
 }
 
+void subghz_worker_set_priority(SubGhzWorker* instance, FuriThreadPriority priority) {
+    furi_check(instance);
+    furi_thread_set_priority(instance->thread, priority);
+}
+
 void subghz_worker_start(SubGhzWorker* instance) {
     furi_check(instance);
     furi_check(!instance->running);

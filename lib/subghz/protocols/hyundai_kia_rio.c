@@ -1,11 +1,5 @@
 #include "hyundai_kia_rio.h"
 
-/* ==== Self-contained sub-GHz helpers (de-refactored from the ProtoPirate/applab
- * "protocols_common" pp-framework) so this decoder depends only on the core
- * sub-GHz lib and carries no shared helper unit into lib/. All helpers are
- * static inline: unused ones are dropped with no -Wunused-function warning, and
- * the TX scratch buffer is a function-local static (no file-scope unused-var).
- * FoxFW2.0 2026-10-18 internal batch 2. ==== */
 #include <furi.h>
 #include <string.h>
 #include <lib/subghz/types.h>
@@ -20,7 +14,6 @@
 #include "common.h"
 #include "../encode_plugin.h"
 #include "pp_auto_common.h"
-
 
 #ifndef PP_COMPAT_SHIM_DEFINED
 #define PP_COMPAT_SHIM_DEFINED
@@ -50,10 +43,8 @@ typedef struct {
     SubGhzProtocolBlockEncoder encoder;
 } ProtoPirateEncoderHeader;
 
-#endif /* PP_COMPAT_SHIM_DEFINED */
+#endif
 
-
-// Ported from KAT src/protocols/hyundai_kia_rio.rs
 #define HKR_BIT_COUNT 64
 #define HKR_TE_SHORT  312
 #define HKR_TE_LONG   728
@@ -142,7 +133,7 @@ void* subghz_protocol_decoder_hyundai_kia_rio_alloc(SubGhzEnvironment* environme
     SubGhzProtocolDecoderHyundaiKiaRio* instance =
         calloc(1, sizeof(SubGhzProtocolDecoderHyundaiKiaRio));
     furi_check(instance);
-    instance->base.protocol = &hyundai_kia_rio_protocol;
+    instance->base.protocol = &subghz_protocol_hyundai_kia_rio;
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
@@ -291,7 +282,6 @@ const SubGhzProtocolDecoder subghz_protocol_hyundai_kia_rio_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&ppa_emit) ppa_emit;
     __typeof__(&ppa_encoder_buffer_ensure) ppa_encoder_buffer_ensure;
@@ -316,7 +306,7 @@ static const enc_hyundai_kia_rio_host_t enc_hyundai_kia_rio_host = {
 };
 static const SubGhzEncoderExternal subghz_protocol_hyundai_kia_rio_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_hyundai_kia_rio", &enc_hyundai_kia_rio_host);
 
-const SubGhzProtocol hyundai_kia_rio_protocol = {
+const SubGhzProtocol subghz_protocol_hyundai_kia_rio = {
     .name = HYUNDAI_KIA_RIO_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeStatic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |

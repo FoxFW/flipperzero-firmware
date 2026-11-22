@@ -59,6 +59,9 @@ size_t rpc_session_feed(RpcSession* session, const uint8_t* buffer, size_t size,
 
 size_t rpc_session_get_available_size(RpcSession* session);
 
+bool fox_rpc_usb_session_is_active(void);
+uint32_t fox_rpc_usb_session_active_since(void);
+
 #ifdef __cplusplus
 }
 #endif

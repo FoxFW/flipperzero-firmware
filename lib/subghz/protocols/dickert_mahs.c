@@ -91,7 +91,8 @@ void subghz_protocol_decoder_dickert_mahs_feed(void* context, bool level, uint32
     case DickertMAHSDecoderStepReset:
 
         if(instance->decoder.decode_count_bit >=
-           subghz_protocol_dickert_mahs_const.min_count_bit_for_found) {
+               subghz_protocol_dickert_mahs_const.min_count_bit_for_found &&
+           instance->decoder.decode_count_bit <= 40) {
             instance->generic.serial = 0x0;
             instance->generic.btn = 0x0;
 

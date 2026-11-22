@@ -34,6 +34,12 @@ typedef enum {
 } SubGhzPresetHopperState;
 
 typedef enum {
+    SubGhzPresetHopperModeStandard = 0,
+    SubGhzPresetHopperModeExtended = 1,
+    SubGhzPresetHopperModeBoth = 2,
+} SubGhzPresetHopperMode;
+
+typedef enum {
     SubGhzSpeakerStateDisable,
     SubGhzSpeakerStateShutdown,
     SubGhzSpeakerStateEnable,

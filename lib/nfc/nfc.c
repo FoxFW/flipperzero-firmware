@@ -702,16 +702,13 @@ NfcError nfc_texkom_poller_rx(Nfc* instance, BitBuffer* rx_buffer) {
         instance->rx_buffer, sizeof(instance->rx_buffer), &instance->rx_bits);
 
     if(error == FuriHalNfcErrorCommunicationTimeout) {
-        // Nothing modulated the field within the listening window, which for a tag that talks
-        // unprompted just means there is none in range.
+
         return NfcErrorTimeout;
     } else if(error != FuriHalNfcErrorNone) {
         FURI_LOG_D(TAG, "Failed in Texkom poller RX");
         return nfc_process_hal_error(error);
     }
 
-    // A caller may legitimately offer a smaller buffer - better an error than a crash inside
-    // bit_buffer_copy_bits(). (8 bits per byte.)
     if(instance->rx_bits > bit_buffer_get_capacity_bytes(rx_buffer) * 8U) {
         FURI_LOG_E(TAG, "Texkom capture of %zu bits does not fit the buffer", instance->rx_bits);
         return NfcErrorInternal;

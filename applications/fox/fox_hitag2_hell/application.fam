@@ -2,14 +2,13 @@ App(
     appid="fox_hitag2_hell",
     name="Hitag2 Hell",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     targets=["f7"],
     entry_point="fox_hitag2_hell_app",
     requires=["gui", "dialogs"],
     stack_size=2 * 1024,
     order=51,
-    fap_icon="icon.png",
-    fap_category="Sub-GHz",
+    fap_category="System/Includes",
     fap_description="Fiat V1 Hitag2 key recovery: known-key/dictionary/heuristic cascade plus a bitsliced Hitag2Hell guess-and-determine attack",
     fap_version=(1, 0),
 )

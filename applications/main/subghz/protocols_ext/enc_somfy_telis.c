@@ -1,5 +1,5 @@
-/* enc_somfy_telis.fal : SD encoder for somfy_telis (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_somfy_telis__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_somfy_telis__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_somfy_telis__subghz_protocol_encoder_common_stop
@@ -36,7 +36,6 @@ static const SubGhzBlockConst subghz_protocol_somfy_telis_const = {
     .min_count_bit_for_found = 56,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool somfy_telis_raw_replay__bridge_ty;
 typedef struct {
     void* somfy_telis_raw_replay;
@@ -77,7 +76,7 @@ static bool subghz_protocol_somfy_telis_gen_data(
         FURI_LOG_D(TAG, "Button sucessfully changed to 0x%X", btn);
 
     if(somfy_telis_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -314,7 +313,6 @@ static uint8_t subghz_protocol_somfy_telis_get_btn_code(void) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -322,13 +320,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -347,7 +343,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -375,7 +370,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderSomfyTelis* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         somfy_telis_raw_replay = false;
         {
             uint32_t somfy_telis_txraw = 0;
@@ -387,7 +382,10 @@ SubGhzProtocolStatus
             flipper_format_rewind(flipper_format);
         }
         if(SubGhzProtocolStatusOk !=
-           subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
+           subghz_block_generic_deserialize_check_count_bit(
+               &instance->generic,
+               flipper_format,
+               subghz_protocol_somfy_telis_const.min_count_bit_for_found)) {
             FURI_LOG_E(TAG, "Deserialize error");
             break;
         }
@@ -426,7 +424,6 @@ static const SubGhzProtocolEncoder enc_somfy_telis_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_somfy_telis = {
     .name = SUBGHZ_PROTOCOL_SOMFY_TELIS_NAME,
     .type = SubGhzProtocolTypeDynamic,

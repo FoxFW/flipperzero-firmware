@@ -1,6 +1,6 @@
 #include "fiat_marelli.h"
 
-#include "fiat_v1.h" // reuse the verified Fiat V1 BCM-Hitag2 authenticator + key dictionary
+#include "fiat_v1.h"
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
@@ -61,10 +61,9 @@ struct SubGhzProtocolDecoderFiatMarelli {
     uint32_t te_sum;
     uint16_t te_count;
     uint32_t te_detected;
-    // Cached result of the Hitag2 manufacturer-key dictionary pass (computed
-    // lazily on first get_string; see fiat_marelli_find_hitag2_key).
+
     bool hitag2_checked;
-    int16_t hitag2_key_index; // -1 = no known key matched; >=0 index into fiat_v1 keys
+    int16_t hitag2_key_index;
     uint32_t hitag2_epoch;
 };
 
@@ -78,7 +77,6 @@ struct SubGhzProtocolEncoderFiatMarelli {
     uint32_t te_detected;
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFiatMarelli);
-
 
 typedef enum {
     FiatMarelliDecoderStepReset = 0,
@@ -104,16 +102,7 @@ static const SubGhzEncoderExternal subghz_protocol_fiat_marelli_encoder_ext = SU
 const SubGhzProtocol subghz_protocol_fiat_marelli = {
     .name = FIAT_MARELLI_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    // SubGhzProtocolFlag_Decodable deliberately omitted (v2.0.14, 2026-10-12).
-    // Delphi BSI and Magneti Marelli BSI Fiat systems both use the same
-    // Hitag2/PCF7946 transponder, so there is no distinct Marelli over-the-air
-    // protocol: the Fiat V0/V1 decoders already cover every Fiat Hitag2 remote.
-    // With Decodable set, this decoder only ever latched garbage 102-bit frames
-    // (misframed, wrong serial) onto Fiat V1 (Delphi) and Renault captures and
-    // showed up as a bogus second Decode-RAW result (0 of 22 corpus fires were
-    // uniquely Marelli). Dropping Decodable keeps it out of the live-RX/Decode-RAW
-    // sweep, while Load|Save|Send keep existing saved MARELLI .sub files openable
-    // and emulatable. Re-add Decodable if a genuine Marelli RF frame is ever found.
+
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Load |
             SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_fiat_marelli_decoder,
@@ -177,8 +166,6 @@ void* subghz_protocol_decoder_fiat_marelli_alloc(SubGhzEnvironment* environment)
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_fiat_marelli_reset(void* context) {
     furi_check(context);
@@ -343,12 +330,6 @@ void subghz_protocol_decoder_fiat_marelli_feed(void* context, bool level, uint32
                 crc_ok = (calc == instance->raw_data[12]);
             }
 
-            // Preamble-residue gate (see fiat_marelli notes): a genuine Marelli
-            // frame starts with a full 0xFF preamble byte and a data-start 0 bit
-            // in byte[1] (observed 0xFFFE across two fobs; 0xFFFC per spec). A
-            // noise/cross-protocol latch (e.g. a Manchester-ish section of a Fiat
-            // V1 capture) comes through as 0xFFFF and is rejected here, so it no
-            // longer shows up as a bogus Marelli result in Decode RAW.
             bool preamble_ok =
                 (instance->raw_data[0] == 0xFFU) && ((instance->raw_data[1] & 0x01U) == 0U);
 
@@ -438,19 +419,6 @@ SubGhzProtocolStatus subghz_protocol_decoder_fiat_marelli_deserialize(
     return ret;
 }
 
-// Hitag2 manufacturer-key dictionary pass for a Fiat/Marelli frame. Marelli
-// shares the Fiat V1 BCM-Hitag2 cipher, so we reuse the verified fiat_v1
-// authenticator and key list. The Marelli field mapping (confirmed against the
-// community KeeLoq-RX recovery and a host round-trip) is:
-//   uid     = raw[2..5]
-//   button  = raw[6] >> 4
-//   control = ((raw[6] & 0x0F) << 5) | (raw[7] >> 3)   (exposed epoch4|counter5)
-//   hop(ks) = raw[8..11]
-// The frame's hidden high counter bits are modelled by the fiat_v1 epoch. The
-// full 0..FIAT_MARELLI_HITAG2_EPOCH_MAX sweep (~95 keys x 256 epochs) measures
-// ~10-30s on the 64MHz target, so the info screen calls this epoch_max=1 only
-// (epoch-0 quick check, matching fiat_v1's inline verify); the full sweep runs
-// off the GUI thread (worker). Result cached in the instance.
 #define FIAT_MARELLI_HITAG2_EPOCH_MAX 256U
 static int16_t
     fiat_marelli_find_hitag2_key(const uint8_t* raw, uint32_t* out_epoch, uint32_t epoch_max) {
@@ -477,9 +445,7 @@ static int16_t
 void subghz_protocol_decoder_fiat_marelli_get_string(void* context, FuriString* output) {
     furi_check(context);
     SubGhzProtocolDecoderFiatMarelli* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): the epoch-0 dictionary check uses the
-    // Fiat V1 cipher (not exported), so it stays internal, same condition and
-    // caching as before; nothing it computes is displayed.
+
     if(instance->bit_count >= 104 && !instance->hitag2_checked &&
        fiat_marelli_crc8(instance->raw_data, 12) == instance->raw_data[12]) {
         instance->hitag2_key_index =

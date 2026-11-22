@@ -1,4 +1,4 @@
-/* decode_secplus_v1.fal : SD get_string for secplus_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/secplus_v1.h>
@@ -22,7 +22,6 @@ struct SubGhzProtocolDecoderSecPlus_v1 {
 static void secplus_v1_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSecPlus_v1* instance = input->decoder;
-
 
     uint32_t fixed = (instance->generic.data >> 32) & 0xFFFFFFFF;
     instance->generic.cnt = instance->generic.data & 0xFFFFFFFF;

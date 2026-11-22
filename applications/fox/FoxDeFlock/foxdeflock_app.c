@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+
 
 #include "foxdeflock_app.h"
 #include "foxdeflock_scan.h"
@@ -68,7 +68,7 @@ static void draw_esp32_check(Canvas* c, FoxDeFlockApp* app) {
 }
 
 #define FOXDEFLOCK_BUTTON_H 13
-#define FOXDEFLOCK_BUTTON_PAD_X 4
+#define FOXDEFLOCK_BUTTON_PAD_X 3
 #define FOXDEFLOCK_BUTTON_GAP 6
 #define FOXDEFLOCK_BUTTON_R 3
 

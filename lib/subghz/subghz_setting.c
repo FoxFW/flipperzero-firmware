@@ -115,6 +115,7 @@ struct SubGhzSetting {
     FrequencyList_t frequencies;
     FrequencyList_t hopper_frequencies;
     PresetIndexList_t hopper_preset_indices;
+    PresetIndexList_t hopper_preset2_indices;
     SubGhzSettingCustomPresetStruct* preset;
 };
 
@@ -123,6 +124,7 @@ SubGhzSetting* subghz_setting_alloc(void) {
     FrequencyList_init(instance->frequencies);
     FrequencyList_init(instance->hopper_frequencies);
     PresetIndexList_init(instance->hopper_preset_indices);
+    PresetIndexList_init(instance->hopper_preset2_indices);
     instance->preset = malloc(sizeof(SubGhzSettingCustomPresetStruct));
     SubGhzSettingCustomPresetItemArray_init(instance->preset->data);
     return instance;
@@ -142,6 +144,7 @@ void subghz_setting_free(SubGhzSetting* instance) {
     FrequencyList_clear(instance->frequencies);
     FrequencyList_clear(instance->hopper_frequencies);
     PresetIndexList_clear(instance->hopper_preset_indices);
+    PresetIndexList_clear(instance->hopper_preset2_indices);
     for
         M_EACH(item, instance->preset->data, SubGhzSettingCustomPresetItemArray_t) {
             furi_string_free(item->custom_preset_name);
@@ -184,6 +187,7 @@ static void subghz_setting_load_default_region(
     FrequencyList_reset(instance->frequencies);
     FrequencyList_reset(instance->hopper_frequencies);
     PresetIndexList_reset(instance->hopper_preset_indices);
+    PresetIndexList_reset(instance->hopper_preset2_indices);
     subghz_setting_preset_reset(instance);
 
     while(*frequencies) {
@@ -319,6 +323,22 @@ void subghz_setting_load(SubGhzSetting* instance, const char* file_path) {
                 }
             }
 
+            if(!flipper_format_rewind(fff_data_file)) {
+                FURI_LOG_E(TAG, "Rewind error");
+                break;
+            }
+            furi_string_reset(temp_str);
+            while(flipper_format_read_string(fff_data_file, "Hopping_Preset2", temp_str)) {
+                const char* preset_name = furi_string_get_cstr(temp_str);
+                int preset_index = subghz_setting_get_inx_preset_by_name(instance, preset_name);
+                if(preset_index >= 0) {
+                    PresetIndexList_push_back(instance->hopper_preset2_indices, (size_t)preset_index);
+                    FURI_LOG_I(TAG, "Hopper2 preset loaded: %s (index %d)", preset_name, preset_index);
+                } else {
+                    FURI_LOG_E(TAG, "Hopper2 preset not found: %s", preset_name);
+                }
+            }
+
         } while(false);
     }
 
@@ -367,6 +387,19 @@ size_t subghz_setting_get_hopper_preset_index(SubGhzSetting* instance, size_t id
     furi_check(instance);
     if(idx < PresetIndexList_size(instance->hopper_preset_indices)) {
         return *PresetIndexList_get(instance->hopper_preset_indices, idx);
+    }
+    return 0;
+}
+
+size_t subghz_setting_get_hopper_preset2_count(SubGhzSetting* instance) {
+    furi_check(instance);
+    return PresetIndexList_size(instance->hopper_preset2_indices);
+}
+
+size_t subghz_setting_get_hopper_preset2_index(SubGhzSetting* instance, size_t idx) {
+    furi_check(instance);
+    if(idx < PresetIndexList_size(instance->hopper_preset2_indices)) {
+        return *PresetIndexList_get(instance->hopper_preset2_indices, idx);
     }
     return 0;
 }

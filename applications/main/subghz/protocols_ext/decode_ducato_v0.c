@@ -1,4 +1,4 @@
-/* decode_ducato_v0.fal : SD get_string for ducato_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/ducato_v0.h>
@@ -17,8 +17,8 @@ struct SubGhzProtocolDecoderDucatoV0 {
     uint16_t preamble_count;
     uint8_t man_state;
 
-    uint64_t data_lo; // bits 0..63
-    uint32_t data_hi; // bits 64..70 (7 bits)
+    uint64_t data_lo;
+    uint32_t data_hi;
     uint16_t bit_count;
 
     uint32_t fix;

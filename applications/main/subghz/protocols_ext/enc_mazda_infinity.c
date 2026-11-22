@@ -1,5 +1,5 @@
-/* enc_mazda_infinity.fal : SD encoder for mazda_infinity (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_mazda_infinity__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_mazda_infinity__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_mazda_infinity_alloc enc_mazda_infinity__subghz_protocol_encoder_mazda_infinity_alloc
@@ -47,19 +47,13 @@ struct SubGhzProtocolEncoderMazdaInfinity {
     uint8_t logical[MAZDA_INF_PAYLOAD_BYTES];
 };
 
-// ---------------------------------------------------------------------------
-// Whitening / interleave primitives (verified against 0x12a90 & 0x10994).
-// All are self-inverse, so the same routine is used to build and to reverse.
-// ---------------------------------------------------------------------------
-
 static uint8_t mazda_inf_parity(uint8_t v);
 static uint8_t mazda_inf_checksum(const uint8_t b[MAZDA_INF_PAYLOAD_BYTES]);
-// Step 2: counter interleave (self-inverse merge of b5/b6).
+
 static void mazda_inf_interleave(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]);
-// Step 3: data whitening keyed by popcount(b7)&1 (self-inverse XOR).
+
 static void mazda_inf_whiten(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]);
-// Build the 8 whitened+inverted on-wire data bytes from the logical payload.
-//   logical -> checksum -> interleave -> whiten -> one's-complement
+
 static void mazda_inf_logical_to_wire(
     const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES],
     uint8_t wire[MAZDA_INF_PAYLOAD_BYTES]);
@@ -67,23 +61,9 @@ static uint32_t mazda_inf_uid(const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]);
 static uint16_t mazda_inf_counter(const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]);
 static void mazda_inf_decode_fields(SubGhzBlockGeneric* generic, const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]);
 static bool mazda_inf_frame_valid(const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]);
-// ---------------------------------------------------------------------------
-// Encoder: exact inverse of the decode path.
-//   logical -> (checksum, interleave, whiten, invert) -> 8 wire data bytes,
-//   then emit: 12x Manchester(0xFF) + FF FF D7 + 8 wire bytes + 0x5A trailer,
-//   Manchester Te=250, repeat 4.
-//     bit1 -> HIGH 250 , LOW 250
-//     bit0 -> LOW 250 , HIGH 250
-// Replay-capable: the stored logical bytes reproduce the exact wire.
-// ---------------------------------------------------------------------------
 
 static size_t mazda_inf_emit_byte(LevelDuration* upload, size_t index, uint8_t byte);
 static bool mazda_inf_encoder_build_upload(SubGhzProtocolEncoderMazdaInfinity* instance);
-
-// ---------------------------------------------------------------------------
-// Whitening / interleave primitives (verified against 0x12a90 & 0x10994).
-// All are self-inverse, so the same routine is used to build and to reverse.
-// ---------------------------------------------------------------------------
 
 static uint8_t mazda_inf_parity(uint8_t v) {
     v ^= (uint8_t)(v >> 4);
@@ -100,7 +80,6 @@ static uint8_t mazda_inf_checksum(const uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     return (uint8_t)(sum & 0xFFU);
 }
 
-// Step 2: counter interleave (self-inverse merge of b5/b6).
 static void mazda_inf_interleave(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     const uint8_t b5 = b[5];
     const uint8_t b6 = b[6];
@@ -108,7 +87,6 @@ static void mazda_inf_interleave(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     b[6] = (uint8_t)((b5 & 0x55U) | (b6 & 0xAAU));
 }
 
-// Step 3: data whitening keyed by popcount(b7)&1 (self-inverse XOR).
 static void mazda_inf_whiten(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     const uint8_t p = mazda_inf_parity(b[7]);
     if(p == 1U) {
@@ -125,18 +103,16 @@ static void mazda_inf_whiten(uint8_t b[MAZDA_INF_PAYLOAD_BYTES]) {
     }
 }
 
-// Build the 8 whitened+inverted on-wire data bytes from the logical payload.
-//   logical -> checksum -> interleave -> whiten -> one's-complement
 static void mazda_inf_logical_to_wire(
     const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES],
     uint8_t wire[MAZDA_INF_PAYLOAD_BYTES]) {
     uint8_t b[MAZDA_INF_PAYLOAD_BYTES];
     memcpy(b, logical, MAZDA_INF_PAYLOAD_BYTES);
-    b[7] = mazda_inf_checksum(b); // step 1
-    mazda_inf_interleave(b); // step 2
-    mazda_inf_whiten(b); // step 3
+    b[7] = mazda_inf_checksum(b);
+    mazda_inf_interleave(b);
+    mazda_inf_whiten(b);
     for(size_t i = 0U; i < MAZDA_INF_PAYLOAD_BYTES; i++) {
-        wire[i] = (uint8_t)(255U - b[i]); // step 4: one's complement
+        wire[i] = (uint8_t)(255U - b[i]);
     }
 }
 
@@ -154,7 +130,7 @@ static void mazda_inf_decode_fields(SubGhzBlockGeneric* generic, const uint8_t l
     generic->btn = logical[4];
     generic->cnt = mazda_inf_counter(logical);
     generic->data_count_bit = MAZDA_INF_PAYLOAD_BITS;
-    // 64-bit logical payload fits in generic.data (MSB-first over b0..b7).
+
     uint64_t data = 0U;
     for(size_t i = 0U; i < MAZDA_INF_PAYLOAD_BYTES; i++) {
         data = (data << 8U) | logical[i];
@@ -167,26 +143,16 @@ static bool mazda_inf_frame_valid(const uint8_t logical[MAZDA_INF_PAYLOAD_BYTES]
     return uid != 0U && uid != UINT32_MAX;
 }
 
-// ---------------------------------------------------------------------------
-// Encoder: exact inverse of the decode path.
-//   logical -> (checksum, interleave, whiten, invert) -> 8 wire data bytes,
-//   then emit: 12x Manchester(0xFF) + FF FF D7 + 8 wire bytes + 0x5A trailer,
-//   Manchester Te=250, repeat 4.
-//     bit1 -> HIGH 250 , LOW 250
-//     bit0 -> LOW 250 , HIGH 250
-// Replay-capable: the stored logical bytes reproduce the exact wire.
-// ---------------------------------------------------------------------------
-
 static size_t mazda_inf_emit_byte(LevelDuration* upload, size_t index, uint8_t byte) {
     const uint32_t te = MAZDA_INF_TE_SHORT;
     for(uint8_t bit = 0U; bit < 8U; bit++) {
         const bool value = ((byte >> (7U - bit)) & 1U) != 0U;
         if(value) {
-            // bit1 = HIGH then LOW
+
             upload[index++] = level_duration_make(true, te);
             upload[index++] = level_duration_make(false, te);
         } else {
-            // bit0 = LOW then HIGH
+
             upload[index++] = level_duration_make(false, te);
             upload[index++] = level_duration_make(true, te);
         }
@@ -204,25 +170,20 @@ static bool mazda_inf_encoder_build_upload(SubGhzProtocolEncoderMazdaInfinity* i
 
     size_t index = 0U;
 
-    // 12x Manchester of 0xFF (all-ones preamble).
     for(uint8_t i = 0U; i < MAZDA_INF_PREAMBLE_BYTES; i++) {
         index = mazda_inf_emit_byte(upload, index, 0xFFU);
     }
 
-    // Bit-sync gap (LOW) between preamble and sync.
     upload[index++] = level_duration_make(false, MAZDA_INF_GAP_US);
 
-    // Sync FF FF D7 (RAW).
     index = mazda_inf_emit_byte(upload, index, MAZDA_INF_SYNC0);
     index = mazda_inf_emit_byte(upload, index, MAZDA_INF_SYNC1);
     index = mazda_inf_emit_byte(upload, index, MAZDA_INF_SYNC2);
 
-    // 8 payload bytes (already inverted/whitened wire bytes).
     for(uint8_t i = 0U; i < MAZDA_INF_PAYLOAD_BYTES; i++) {
         index = mazda_inf_emit_byte(upload, index, wire[i]);
     }
 
-    // Trailer 0x5A (RAW).
     index = mazda_inf_emit_byte(upload, index, MAZDA_INF_TRAILER);
 
     instance->encoder.size_upload = index;
@@ -230,7 +191,6 @@ static bool mazda_inf_encoder_build_upload(SubGhzProtocolEncoderMazdaInfinity* i
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -238,7 +198,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -317,12 +276,6 @@ SubGhzProtocolStatus subghz_protocol_encoder_mazda_infinity_deserialize(
     instance->generic.btn = instance->logical[4];
     instance->generic.cnt = mazda_inf_counter(instance->logical);
 
-    // [PROTOPIRATE_PORT] custom_btn support.
-    // Mazda Infinity buttons: Lock=0x10, Unlock=0x20, Trunk=0x40. OK replays the
-    // captured b4. The D-pad selects a known button; on a change the 16-bit
-    // rolling counter is advanced so the re-encoded frame is a valid new press.
-    // b5/b6 hold the logical counter (high/low); interleave/whiten/checksum are
-    // recomputed inside mazda_inf_logical_to_wire, so any change round-trips.
     const uint8_t original_btn = instance->logical[4];
     if(subghz_custom_btn_get_original() == 0) {
         subghz_custom_btn_set_original(original_btn);
@@ -335,13 +288,12 @@ SubGhzProtocolStatus subghz_protocol_encoder_mazda_infinity_deserialize(
     case SUBGHZ_CUSTOM_BTN_DOWN:  new_btn = MAZDA_INF_BTN_UNLOCK; break;
     case SUBGHZ_CUSTOM_BTN_LEFT:  new_btn = MAZDA_INF_BTN_TRUNK; break;
     case SUBGHZ_CUSTOM_BTN_OK:
-    default:                      new_btn = original_btn; break; // exact replay
+    default:                      new_btn = original_btn; break;
     }
 
     if(new_btn != original_btn) {
         instance->logical[4] = new_btn;
-        // Advance the rolling counter for a genuine (non-replay) press, honoring
-        // an explicit framework override if one is set.
+
         uint32_t new_counter = instance->generic.cnt;
         uint32_t override_cnt = 0U;
         if(subghz_block_generic_global_counter_override_get(&override_cnt)) {
@@ -365,6 +317,10 @@ SubGhzProtocolStatus subghz_protocol_encoder_mazda_infinity_deserialize(
     instance->encoder.repeat = (repeat == 0U) ? MAZDA_INF_DEFAULT_REPEAT : (size_t)repeat;
 
     if(instance->encoder.upload == NULL) {
+        if(instance->encoder.upload) {
+            free(instance->encoder.upload);
+            instance->encoder.upload = NULL;
+        }
         instance->encoder.upload = malloc(MAZDA_INF_UPLOAD_CAPACITY * sizeof(LevelDuration));
         furi_check(instance->encoder.upload);
     }
@@ -384,7 +340,6 @@ static const SubGhzProtocolEncoder enc_mazda_infinity_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_mazda_infinity = {
     .name = MAZDA_INFINITY_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,

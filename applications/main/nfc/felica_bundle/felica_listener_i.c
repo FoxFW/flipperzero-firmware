@@ -187,7 +187,6 @@ bool felica_listener_check_block_list_size(
         return true;
     }
 
-    // Standard mode uses multi-service packet format; parsing done in command handlers
     if(instance->data->workflow_type == FelicaStandard &&
        (req->header.code == FELICA_CMD_READ_WITHOUT_ENCRYPTION ||
         req->header.code == FELICA_CMD_WRITE_WITHOUT_ENCRYPTION)) {
@@ -217,11 +216,7 @@ static FelicaIDm
     furi_assert(instance);
 
     FelicaIDm idm = instance->data->idm;
-    // System 0 uses the card's base IDm untouched - only non-zero System indices get
-    // their index encoded into the upper nibble. Unconditionally masking byte 0 here
-    // would corrupt the base IDm's real upper nibble for cards where it isn't already
-    // zero, making the emulated card report an IDm inconsistent with what the reader
-    // saw during the initial (hardware-handled) wildcard Polling.
+
     if(system_idx != 0) {
         idm.data[0] = (uint8_t)((idm.data[0] & 0x0F) | (system_idx << 4));
     }

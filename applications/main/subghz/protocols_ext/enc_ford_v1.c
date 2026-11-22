@@ -1,6 +1,6 @@
-/* enc_ford_v1.fal : SD encoder for ford_v1 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define ford_protocol_v1 enc_ford_v1__ford_protocol_v1
+
+
+#define subghz_protocol_ford_v1 enc_ford_v1__ford_protocol_v1
 #define subghz_protocol_encoder_ford_v1_alloc enc_ford_v1__subghz_protocol_encoder_ford_v1_alloc
 #define subghz_protocol_encoder_ford_v1_deserialize enc_ford_v1__subghz_protocol_encoder_ford_v1_deserialize
 #define subghz_protocol_encoder_ford_v1_free enc_ford_v1__subghz_protocol_encoder_ford_v1_free
@@ -377,7 +377,7 @@ void* subghz_protocol_encoder_ford_v1_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolEncoderFordV1* instance = calloc(1, sizeof(SubGhzProtocolEncoderFordV1));
     furi_check(instance);
-    instance->base.protocol = &ford_protocol_v1;
+    instance->base.protocol = &subghz_protocol_ford_v1;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 10;
     instance->encoder.front = 0;
@@ -588,8 +588,7 @@ static const SubGhzProtocolEncoder enc_ford_v1_vt = {
     .yield = subghz_protocol_encoder_ford_v1_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol ford_protocol_v1 = {
+const SubGhzProtocol subghz_protocol_ford_v1 = {
     .name = FORD_PROTOCOL_V1_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_FM |

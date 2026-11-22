@@ -14,7 +14,7 @@
 
 #define TAG "SubGhzProtocoSecPlusV2"
 
-static bool secplus_v2_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool secplus_v2_raw_replay = false;
 
 #define SECPLUS_V2_HEADER      0x3C0000000000
 #define SECPLUS_V2_HEADER_MASK 0xFFFF3C0000000000
@@ -68,7 +68,6 @@ const SubGhzProtocolDecoder subghz_protocol_secplus_v2_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* secplus_v2_raw_replay;
 } enc_secplus_v2_host_t;
@@ -214,7 +213,7 @@ static void subghz_protocol_secplus_v2_encode(SubGhzProtocolEncoderSecPlus_v2* i
     uint8_t roll_2[9] = {0};
 
     if(secplus_v2_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {

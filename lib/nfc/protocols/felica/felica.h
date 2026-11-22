@@ -21,8 +21,6 @@ extern "C" {
 
 #define FELICA_SYSTEM_NODE_CODE (0xFFFFU)
 
-/** @brief Placeholders for data that files older than format version 3 do not carry.
- * Both match what a card returns for a node it does not know about. */
 #define FELICA_KEY_VERSION_UNKNOWN   (0xFFFFU)
 #define FELICA_AREA_END_CODE_UNKNOWN (0xFFFFU)
 
@@ -87,7 +85,6 @@ extern "C" {
 #define FELICA_SF2_ERROR_AUTHENTICATION_REQUIRED  (0xB1U)
 #define FELICA_SF2_ERROR_RC_MAC_WCNT              (0xB2U)
 
-/** @brief Type of possible Felica errors */
 typedef enum {
     FelicaErrorNone,
     FelicaErrorNotPresent,
@@ -112,63 +109,46 @@ typedef struct {
     uint8_t data[FELICA_DATA_BLOCK_SIZE];
 } FelicaBlockData;
 
-/** @brief Separate type for card key block. Used in authentication process */
 typedef struct {
     uint8_t data[FELICA_DATA_BLOCK_SIZE];
 } FelicaCardKey;
 
-/** @brief In Felica there two types of auth. Internal is the first one, after
-  * which external became possible. Here are two flags representing which one
-  * was passed */
 typedef struct {
     bool internal : 1;
     bool external : 1;
 } FelicaAuthenticationStatus;
 
-/** @brief Struct which controls the process of authentication and can be passed as
-  * a parameter to the application level. In order to force user to fill card key block data. */
 typedef struct {
-    bool skip_auth; /**< By default it is true, so auth is skipped. By setting this to false several auth steps will be performed in order to pass auth*/
+    bool skip_auth;
     FelicaCardKey
-        card_key; /**< User must fill this field with known card key in order to pass auth*/
-    FelicaAuthenticationStatus auth_status; /**< Authentication status*/
+        card_key;
+    FelicaAuthenticationStatus auth_status;
 } FelicaAuthenticationContext;
 
-/**
- * @brief Stucture for holding Felica session key which is calculated from rc and ck.
-*/
 typedef struct {
     uint8_t data[FELICA_DATA_BLOCK_SIZE];
 } FelicaSessionKey;
 
-/**
- * @brief Structure used to hold authentication related fields.
-*/
 typedef struct {
-    mbedtls_des3_context des_context; /**< Context for mbedtls des functions. */
-    FelicaSessionKey session_key; /**< Calculated session key. */
-    FelicaAuthenticationContext context; /**< Public auth context provided to upper levels. */
+    mbedtls_des3_context des_context;
+    FelicaSessionKey session_key;
+    FelicaAuthenticationContext context;
 } FelicaAuthentication;
 
-/** @brief Felica ID block */
 typedef struct {
     uint8_t data[FELICA_IDM_SIZE];
 } FelicaIDm;
 
-/** @brief Felica PMm block */
 typedef struct {
     uint8_t data[FELICA_PMM_SIZE];
 } FelicaPMm;
 
-/** @brief Felica block with status flags indicating last operation with it.
-  * See Felica manual for more details on status codes. */
 typedef struct {
-    uint8_t SF1; /**< Status flag 1, equals to 0 when success*/
-    uint8_t SF2; /**< Status flag 2, equals to 0 when success*/
-    uint8_t data[FELICA_DATA_BLOCK_SIZE]; /**< Block data */
+    uint8_t SF1;
+    uint8_t SF2;
+    uint8_t data[FELICA_DATA_BLOCK_SIZE];
 } FelicaBlock;
 
-/** @brief Felica filesystem structure */
 typedef struct {
     FelicaBlock spad[14];
     FelicaBlock reg;
@@ -187,7 +167,6 @@ typedef struct {
     FelicaBlock crc_check;
 } FelicaFileSystem;
 
-/** @brief Union which represents filesystem in junction with plain data dump */
 typedef union {
     FelicaFileSystem fs;
     uint8_t dump[sizeof(FelicaFileSystem)];
@@ -222,7 +201,6 @@ typedef struct {
     SimpleArray* public_blocks;
 } FelicaSystem;
 
-/** @brief Structure used to store Felica data and additional values about reading */
 typedef struct {
     FelicaIDm idm;
     FelicaPMm pmm;

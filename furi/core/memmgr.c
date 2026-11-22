@@ -9,6 +9,21 @@ extern size_t xPortGetFreeHeapSize(void);
 extern size_t xPortGetTotalHeapSize(void);
 extern size_t xPortGetMinimumEverFreeHeapSize(void);
 
+/* Silent RAM Recovery: one-shot "skip the next desktop RAM-defrag" flag.
+ * See memmgr.h. RAM-only; no locking needed -- a stale read at worst skips or
+ * runs one defrag pass, which is self-correcting on the following app exit. */
+static volatile bool memmgr_defrag_suppress_flag = false;
+
+void memmgr_defrag_suppress_once(void) {
+    memmgr_defrag_suppress_flag = true;
+}
+
+bool memmgr_defrag_suppress_consume(void) {
+    bool v = memmgr_defrag_suppress_flag;
+    memmgr_defrag_suppress_flag = false;
+    return v;
+}
+
 void* malloc(size_t size) {
     return pvPortMalloc(size);
 }

@@ -16,7 +16,7 @@
 
 #define TAG "BenincaARC"
 
-static bool beninca_arc_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool beninca_arc_raw_replay = false;
 
 #define BENINCA_ARC_KEY_TYPE 9u
 
@@ -52,7 +52,6 @@ struct SubGhzProtocolEncoderBenincaARC {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderBenincaARC);
 
-
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderBenincaARC);
 SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderBenincaARC);
 
@@ -69,7 +68,6 @@ const SubGhzProtocolDecoder subghz_protocol_beninca_arc_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* beninca_arc_raw_replay;
 } enc_beninca_arc_host_t;

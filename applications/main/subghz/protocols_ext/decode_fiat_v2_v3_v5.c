@@ -1,4 +1,4 @@
-/* decode_fiat_v2_v3_v5.fal : SD get_string for fiat_v2_v3_v5 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/fiat_v2_v3_v5.h>
@@ -204,11 +204,10 @@ static const char* fiat_get_button_name(FiatVariant variant, uint8_t btn) {
 }
 
 static uint8_t fiat_v3_hop_btn_extract(uint64_t hop) {
-    /* Mask selects bit-pairs (4,5) in each of the 5 full bytes */
+
     const uint64_t mask = (3ULL << 4) | (3ULL << 12) | (3ULL << 20) | (3ULL << 28) | (3ULL << 36);
     uint64_t masked = hop & mask;
 
-    /* popcount parity: XOR of all selected bits = popcount mod 2 */
     masked ^= masked >> 32;
     masked ^= masked >> 16;
     masked ^= masked >> 8;
@@ -219,15 +218,15 @@ static uint8_t fiat_v3_hop_btn_extract(uint64_t hop) {
 }
 
 static bool fiat_v3_hop_invariants_check(uint64_t hop) {
-    /* R1: XOR bits {5,6,13,14,21,22,29,30,37,38} = 0 */
+
     const uint64_t r1 = (3ULL << 5) | (3ULL << 13) | (3ULL << 21) | (3ULL << 29) | (3ULL << 37);
-    /* R2: XOR bits {5,7,13,15,21,23,29,31,37,39} = 0 */
+
     const uint64_t r2 = (5ULL << 5) | (5ULL << 13) | (5ULL << 21) | (5ULL << 29) | (5ULL << 37);
-    /* R3: XOR bits {5,8,13,16,21,24,29,32,37,40} = 0 */
+
     const uint64_t r3 = (1ULL << 5) | (1ULL << 8) | (1ULL << 13) | (1ULL << 16) |
                          (1ULL << 21) | (1ULL << 24) | (1ULL << 29) | (1ULL << 32) |
                          (1ULL << 37) | (1ULL << 40);
-    /* R4: XOR bits {1,9,17,25,33,41} = 0 */
+
     const uint64_t r4 = (1ULL << 1) | (1ULL << 9) | (1ULL << 17) | (1ULL << 25) |
                          (1ULL << 33) | (1ULL << 41);
 
@@ -273,7 +272,6 @@ static void fiat_v2_v3_v5_decode(const SubGhzDecodeInput* input, FuriString* out
 
     const FiatVariantParams* params = fiat_get_params(dec->variant);
 
-    // Re-extract fields from generic.data
     switch(dec->variant) {
     case FiatVariantV3: {
         uint32_t fix;
@@ -298,7 +296,6 @@ static void fiat_v2_v3_v5_decode(const SubGhzDecodeInput* input, FuriString* out
         break;
     }
 
-    // Push UI globals
     subghz_block_generic_global.btn_is_available = true;
     subghz_block_generic_global.btn_length_bit = params->btn_length_bit;
     subghz_block_generic_global.current_btn = dec->generic.btn;
@@ -319,7 +316,6 @@ static void fiat_v2_v3_v5_decode(const SubGhzDecodeInput* input, FuriString* out
         subghz_block_generic_global.current_cnt = dec->generic.cnt;
     }
 
-    // Display with variant-specific name
     switch(dec->variant) {
     case FiatVariantV3:
         furi_string_cat_printf(

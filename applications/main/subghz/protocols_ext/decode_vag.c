@@ -1,4 +1,4 @@
-/* decode_vag.fal : SD get_string for vag (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/vag.h>
@@ -65,9 +65,6 @@ static const char* vag_button_name(uint8_t btn) {
 static void vag_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderVAG* instance = input->decoder;
-
-
-    /* AUT64 decrypt done internally */
 
     uint64_t key1 = ((uint64_t)instance->key1_high << 32) | instance->key1_low;
     uint16_t key2 = (uint16_t)(instance->key2_low & 0xFFFF);

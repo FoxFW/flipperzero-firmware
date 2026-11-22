@@ -16,6 +16,7 @@
 #include <lib/subghz/devices/devices.h>
 #include <stdio.h>
 #include <gui/icon.h>
+#include <cli/cli_vcp.h>
 
 #define TAG "Loader"
 
@@ -702,6 +703,47 @@ static const FlipperInternalApplication* loader_find_application_by_name(const c
     return NULL;
 }
 
+static const char* const loader_cli_lock_apps[] = {
+    "Saflok",
+};
+
+#define LOADER_CLI_SOFTLOCK_MIN_BLOCK 102400u
+
+#define LOADER_CLI_SOFTLOCK_SETTLE_MS 300u
+
+static bool loader_app_needs_cli_lock(const char* name) {
+    if(!name) return false;
+    for(size_t i = 0; i < COUNT_OF(loader_cli_lock_apps); i++) {
+        if(strcmp(name, loader_cli_lock_apps[i]) == 0) return true;
+    }
+    return false;
+}
+
+static bool s_loader_cli_softlocked = false;
+static FuriHalUsbInterface* s_loader_saved_usb = NULL;
+
+static void loader_app_cli_softlock_engage(void) {
+    if(s_loader_cli_softlocked) return;
+    CliVcp* cli_vcp = furi_record_open(RECORD_CLI_VCP);
+    cli_vcp_session_lock(cli_vcp);
+    furi_record_close(RECORD_CLI_VCP);
+    s_loader_saved_usb = furi_hal_usb_get_config();
+    furi_hal_usb_unlock();
+    furi_hal_usb_set_config(NULL, NULL);
+    s_loader_cli_softlocked = true;
+    furi_delay_ms(LOADER_CLI_SOFTLOCK_SETTLE_MS);
+}
+
+static void loader_app_cli_softlock_release(void) {
+    if(!s_loader_cli_softlocked) return;
+    furi_hal_usb_set_config(s_loader_saved_usb, NULL);
+    s_loader_saved_usb = NULL;
+    CliVcp* cli_vcp = furi_record_open(RECORD_CLI_VCP);
+    cli_vcp_session_unlock(cli_vcp);
+    furi_record_close(RECORD_CLI_VCP);
+    s_loader_cli_softlocked = false;
+}
+
 static void loader_start_app_thread(Loader* loader, FlipperInternalApplicationFlag flags) {
 
     FuriHalRtcHeapTrackMode mode = furi_hal_rtc_get_heap_track_mode();
@@ -898,6 +940,16 @@ static LoaderMessageLoaderStatusResult loader_start_external_app(
             }
         }
 
+        bool launched_via_rpc = (args && strncmp(args, "RPC ", 4) == 0);
+        if(!s_loader_cli_softlocked && !launched_via_rpc &&
+           memmgr_heap_get_max_free_block() < LOADER_CLI_SOFTLOCK_MIN_BLOCK) {
+            const FlipperApplicationManifest* app_manifest =
+                flipper_application_get_manifest(loader->app.fap);
+            if(app_manifest && loader_app_needs_cli_lock(app_manifest->name)) {
+                loader_app_cli_softlock_engage();
+            }
+        }
+
         heap_alloc_guard_lock();
 
         size_t map_start = furi_get_tick();
@@ -949,6 +1001,7 @@ static LoaderMessageLoaderStatusResult loader_start_external_app(
     } while(0);
 
     if(result.value != LoaderStatusOk) {
+        loader_app_cli_softlock_release();
         heap_alloc_guard_lock();
         flipper_application_free(loader->app.fap);
         heap_alloc_guard_unlock();
@@ -992,11 +1045,7 @@ static bool loader_do_menu_show_settings_if_pending(Loader* loader) {
 }
 
 static void loader_do_menu_closed(Loader* loader) {
-    /* Anti-fragmentation: do NOT free the menu here. It is built once at boot
-     * and kept for the firmware lifetime. The menu thread has already parked
-     * itself (its view_dispatcher_run returned) and is waiting for the next
-     * show flag; we only need to drop the "shown" state. Freeing/rebuilding on
-     * every close was the main source of heap fragmentation. */
+
     loader->menu_shown = false;
     if(!loader_do_menu_show_settings_if_pending(loader) && !loader->app.thread) {
         view_holder_set_view(loader->view_holder, NULL);
@@ -1010,11 +1059,7 @@ static void loader_do_ensure_menu_built(Loader* loader) {
 }
 
 static void loader_do_release_hidden_menu(Loader* loader) {
-    /* Anti-fragmentation: the menu is built once at boot and kept permanently,
-     * so there is nothing to release on qFlipper/CLI disconnect. Freeing it
-     * here (when it happened to not be shown) was a key fragmentation trigger:
-     * the connect-built, disconnect-freed menu stranded a small survivor block
-     * high in the heap and split the contiguous free tail. */
+
     UNUSED(loader);
 }
 
@@ -1293,6 +1338,8 @@ static void loader_do_app_closed(Loader* loader) {
         furi_hal_power_insomnia_exit();
     }
 
+    loader_app_cli_softlock_release();
+
     furi_kernel_lock();
     if(loader->app.args) {
         free(loader->app.args);
@@ -1380,22 +1427,6 @@ int32_t loader_srv(void* p) {
         FLIPPER_ON_SYSTEM_START[i]();
     }
 
-    /* Anti-fragmentation: build the main menu ONCE here, at boot, and keep it
-     * for the firmware lifetime (see loader_do_menu_closed /
-     * loader_do_release_hidden_menu, which no longer free it). Building it now
-     * - before any app has loaded and churned the heap - clusters the menu's
-     * thread/view/Menu/Submenu/item allocations LOW, just above the permanent
-     * boot region, leaving the entire upper heap as one contiguous tail.
-     *
-     * The old behaviour built the menu lazily (on qFlipper/CLI connect or on
-     * menu-show) and freed it on every menu close and qFlipper disconnect.
-     * Because those builds happened high in an already-churned heap and were
-     * then freed, each cycle stranded a small survivor block high up, splitting
-     * the free tail and shrinking the max contiguous block over a session
-     * (eventually OOMing Mass Storage). Building once at boot and keeping it
-     * removes that churn entirely. We trade a few KB of permanently-resident
-     * RAM for a stable, large contiguous tail. The menu thread simply parks
-     * waiting for a show flag; it does not attach to the GUI until shown. */
     loader_wait_for_storage_ready();
     heap_alloc_guard_lock();
     loader_do_ensure_menu_built(loader);
@@ -1511,12 +1542,17 @@ int32_t loader_srv(void* p) {
 
                     bool is_subghz = strcmp(p, "subghz") == 0;
                     bool is_keeloq_tool = strstr(p, "subghz_keeloq_tool") != NULL;
-                    if(is_fap) {
+
+                    bool is_add_manual = strstr(p, "subghz_add_manually") != NULL;
+
+                    bool is_raw_dual = strstr(p, "subghz_raw_dual") != NULL;
+                    bool is_fox_setup = strstr(p, "fox_setup") != NULL;
+                    if(is_fap && !is_raw_dual) {
                         view_holder_set_view(
                             loader->view_holder,
                             empty_screen_get_view(loader->empty_screen));
                         view_holder_send_to_front(loader->view_holder);
-                    } else if(is_subghz || is_keeloq_tool) {
+                    } else if(is_subghz || is_keeloq_tool || is_add_manual || is_raw_dual || is_fox_setup) {
                         view_holder_set_view(
                             loader->view_holder,
                             loading_get_view(loader->loading));

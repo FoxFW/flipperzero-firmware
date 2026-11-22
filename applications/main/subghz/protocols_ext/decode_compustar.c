@@ -1,4 +1,4 @@
-/* decode_compustar.fal : SD get_string for compustar (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/compustar.h>
@@ -71,30 +71,27 @@ static void subghz_protocol_compustar_append_button(FuriString* output, uint8_t 
 
 static bool subghz_protocol_compustar_check(SubGhzBlockGeneric* instance) {
     if(instance->data_count_bit != COMPUSTAR_BIT_COUNT) return false;
-    uint64_t data = instance->data & 0xFFFFFFFFFULL; /* 36 bits */
+    uint64_t data = instance->data & 0xFFFFFFFFFULL;
 
     uint16_t id = (uint16_t)((data >> 20) & 0xFFFF);
     if(id == 0x0000 || id == 0xFFFF) return false;
 
-    /* 3-bit unknown field must be 0b111 */
     if(((data >> 17) & 0x7) != 0x7) return false;
 
     uint8_t button_inverse = (uint8_t)((data >> 9) & 0xFF);
     uint8_t button = (uint8_t)((data >> 1) & 0xFF);
 
-    /* MIC: inverted button field must be the bitwise NOT of the button field */
     if((uint8_t)(~button_inverse) != button) return false;
 
     instance->serial = id;
     instance->btn = button;
-    instance->cnt = 0; /* fixed code, no rolling counter */
+    instance->cnt = 0;
     return true;
 }
 
 static void compustar_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderCompustar* instance = input->decoder;
-
 
     subghz_protocol_compustar_check(&instance->generic);
 

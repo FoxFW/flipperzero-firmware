@@ -1,12 +1,4 @@
 #include "fox_ch_settings.h"
-// Import Companion Settings
-//
-// External System app. Desktop launches it when the companion app (over BLE/USB
-// storage RPC) drops a request flag. It reads the pending settings file and
-// applies each section LIVE using the same subsystem calls as foxr_companion.c
-// (no reboot except a Device Name change), or writes the current settings out
-// for the companion app to read. Shows a spinner (~0.5s) then "Done" (~0.5s),
-// clears the flag, and exits. Being EXTERNAL, it costs no internal flash.
 
 #include <furi.h>
 #include <furi_hal.h>
@@ -29,11 +21,10 @@
 #include <stdlib.h>
 
 #define FOXI_DIR      EXT_PATH("apps_data/fox_companion")
-#define FOXI_REQUEST  EXT_PATH("apps_data/fox_companion/request.flag")  // "READ" or "WRITE"
-#define FOXI_PENDING  EXT_PATH("apps_data/fox_companion/pending.txt")   // sections for WRITE
-#define FOXI_CURRENT  EXT_PATH("apps_data/fox_companion/current.txt")   // 42-field line for READ
+#define FOXI_REQUEST  EXT_PATH("apps_data/fox_companion/request.flag")
+#define FOXI_PENDING  EXT_PATH("apps_data/fox_companion/pending.txt")
+#define FOXI_CURRENT  EXT_PATH("apps_data/fox_companion/current.txt")
 
-// ---- value tables (copied from foxr_companion.c) ----
 #define FOXR_NIGHT_SHIFT_COUNT 7
 static const float foxr_night_shift_value[FOXR_NIGHT_SHIFT_COUNT] =
     {1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f};
@@ -61,8 +52,6 @@ static uint8_t foxi_index_of_float(float val, const float* arr, uint8_t count) {
         if(arr[i] == val) return i;
     return 0;
 }
-
-// ---- apply functions (adapted 1:1 from foxr_companion.c, minus the UART reply) ----
 
 static void apply_notif(const char* p) {
     int contrast;
@@ -275,7 +264,6 @@ static void apply_alarm(const char* p) {
     furi_record_close(RECORD_DESKTOP);
 }
 
-// ---- READ: write current settings (42-field line, foxr_handle_settings_get order) ----
 static void write_current(Storage* storage) {
     NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
     int contrast = notification->settings.contrast;
@@ -417,7 +405,7 @@ static void process_request(void) {
                 if(buf) {
                     uint16_t rd = storage_file_read(pf, buf, (uint16_t)sz);
                     buf[rd] = '\0';
-                    // Manual line split (strtok_r is disabled for external apps)
+
                     char* cur = buf;
                     while(*cur) {
                         char* line = cur;

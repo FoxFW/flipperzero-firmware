@@ -320,10 +320,6 @@ SubGhzProtocolStatus
     return res;
 }
 
-/* FoxFW2.0 2026-10-22: the 10 KB capture buffers are allocated on first use (the
- * first RSSI-triggered capture, or loading/serialising a BinRAW signal) instead of
- * whenever a receiver is built. BinRAW is off in Read by default, so most sessions
- * never pay for them. Behaviour once allocated is unchanged. */
 #define BIN_RAW_BUF_BYTES \
     (BIN_RAW_BUF_RAW_SIZE * sizeof(int32_t) + BIN_RAW_BUF_RAW_SIZE * sizeof(uint8_t))
 #define BIN_RAW_ALLOC_MIN_FREE_HEAP (BIN_RAW_BUF_BYTES + 8192U)
@@ -514,14 +510,7 @@ static bool
         bin_raw_debug_tag(TAG, "Tinted sequence\r\n");
         ind = (BIN_RAW_BUF_DATA_SIZE * 8);
         uint16_t bit_count = 0;
-        /* FoxFW: guard gap_ind == 0. The do/while below runs `gap_ind--` BEFORE its
-         * test, so entering with gap_ind == 0 underflows this uint16_t to 65535 and
-         * then reads instance->data_raw[] tens of thousands of entries out of bounds
-         * -> MPU fault. gap_ind reaches 0 when the backward search above found no
-         * edge matching the detected gap (a noise pattern that yields a "gap" class
-         * with no matching sample); there is no data below the gap to extract, so
-         * bail. This is the Sub-GHz "Read crashes after minutes on noise" fault
-         * (both AM and FM; faster on FM, which floods far more edges per second). */
+
         if(gap_ind == 0) {
             return false;
         }

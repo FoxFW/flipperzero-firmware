@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+
 
 #include "flock_ble.h"
 #include <string.h>

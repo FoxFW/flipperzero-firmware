@@ -1,4 +1,4 @@
-/* decode_x10.fal : SD get_string for x10 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/x10.h>

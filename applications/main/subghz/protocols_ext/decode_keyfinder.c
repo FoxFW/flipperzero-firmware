@@ -1,4 +1,4 @@
-/* decode_keyfinder.fal : SD get_string for keyfinder (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/keyfinder.h>
@@ -26,7 +26,6 @@ static void subghz_protocol_keyfinder_check_remote_controller(SubGhzBlockGeneric
 static void keyfinder_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderKeyFinder* instance = input->decoder;
-
 
     subghz_protocol_keyfinder_check_remote_controller(&instance->generic);
 

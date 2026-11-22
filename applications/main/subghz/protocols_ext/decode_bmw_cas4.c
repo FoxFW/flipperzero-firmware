@@ -1,4 +1,4 @@
-/* decode_bmw_cas4.fal : SD get_string for bmw_cas4 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/bmw_cas4.h>
@@ -24,7 +24,6 @@ struct SubGhzProtocolDecoderBmwCas4 {
 static void bmw_cas4_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderBmwCas4* instance = input->decoder;
-
 
     furi_string_cat_printf(
         output,

@@ -9,7 +9,6 @@ typedef struct SubGhzProtocolEncoderAudiV1 SubGhzProtocolEncoderAudiV1;
 
 extern const SubGhzProtocol subghz_protocol_audi_v1;
 
-/* Decoder */
 void* subghz_protocol_decoder_audi_v1_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_audi_v1_free(void* context);
 void subghz_protocol_decoder_audi_v1_reset(void* context);
@@ -23,7 +22,6 @@ SubGhzProtocolStatus
     subghz_protocol_decoder_audi_v1_deserialize(void* context, FlipperFormat* flipper_format);
 void subghz_protocol_decoder_audi_v1_get_string(void* context, FuriString* output);
 
-/* Encoder */
 void* subghz_protocol_encoder_audi_v1_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_encoder_audi_v1_free(void* context);
 SubGhzProtocolStatus

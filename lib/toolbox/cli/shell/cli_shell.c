@@ -23,7 +23,7 @@
 typedef enum {
     CliShellComponentCompletions,
     CliShellComponentLine,
-    CliShellComponentMAX, //<! do not use
+    CliShellComponentMAX,
 } CliShellComponent;
 
 CliShellKeyComboSet* component_key_combo_sets[] = {
@@ -46,7 +46,7 @@ typedef struct {
 } CliShellStorage;
 
 struct CliShell {
-    // Set and freed by external thread
+
     CliShellMotd motd;
     void* callback_context;
     PipeSide* pipe;
@@ -55,7 +55,6 @@ struct CliShell {
     FuriThread* thread;
     const char* prompt;
 
-    // Set and freed by shell thread
     FuriEventLoop* event_loop;
     CliAnsiParser* ansi_parser;
     FuriEventLoopTimer* ansi_parsing_timer;
@@ -85,10 +84,6 @@ static void cli_shell_detach_pipe(CliShell* cli_shell) {
     furi_thread_set_stdin_callback(NULL, NULL);
     furi_thread_set_stdout_callback(NULL, NULL);
 }
-
-// =================
-// Built-in commands
-// =================
 
 void cli_command_reload_external(PipeSide* pipe, FuriString* args, void* context) {
     UNUSED(pipe);
@@ -139,10 +134,6 @@ void cli_command_exit(PipeSide* pipe, FuriString* args, void* context) {
     furi_event_loop_stop(shell->event_loop);
 }
 
-// ==================
-// Internal functions
-// ==================
-
 static int32_t cli_command_thread(void* context) {
     CliCommandThreadData* thread_data = context;
     if(!(thread_data->command->flags & CliCommandFlagDontAttachStdio))
@@ -156,7 +147,7 @@ static int32_t cli_command_thread(void* context) {
 }
 
 void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
-    // split command into command and args
+
     size_t space = furi_string_search_char(command, ' ');
     if(space == FURI_STRING_FAILURE) space = furi_string_size(command);
     FuriString* command_name = furi_string_alloc_set(command);
@@ -170,7 +161,7 @@ void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
     CliRegistryCommand command_data;
 
     do {
-        // find handler
+
         if(!cli_registry_get_command(cli_shell->registry, command_name, &command_data)) {
             printf(
                 ANSI_FG_RED "could not find command `%s`, try `help`" ANSI_RESET,
@@ -178,7 +169,6 @@ void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
             break;
         }
 
-        // load external command
         if(command_data.flags & CliCommandFlagExternal) {
             const CliCommandExternalConfig* ext_config = cli_shell->ext_config;
             plugin_manager = plugin_manager_alloc(
@@ -206,11 +196,9 @@ void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
             command_data.flags = plugin->flags | CliCommandFlagExternal;
             command_data.stack_depth = plugin->stack_depth;
 
-            // external commands have to run in an external thread
             furi_check(!(command_data.flags & CliCommandFlagUseShellThread));
         }
 
-        // lock loader
         if(!(command_data.flags & CliCommandFlagParallelSafe)) {
             loader_locked = loader_lock(loader);
             if(!loader_locked) {
@@ -221,10 +209,10 @@ void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
         }
 
         if(command_data.flags & CliCommandFlagUseShellThread) {
-            // run command in this thread
+
             command_data.execute_callback(cli_shell->pipe, args, command_data.context);
         } else {
-            // run command in separate thread
+
             cli_shell_detach_pipe(cli_shell);
             CliCommandThreadData thread_data = {
                 .command = &command_data,
@@ -246,21 +234,15 @@ void cli_shell_execute_command(CliShell* cli_shell, FuriString* command) {
     furi_string_free(command_name);
     furi_string_free(args);
 
-    // unlock loader
     if(loader_locked) loader_unlock(loader);
     furi_record_close(RECORD_LOADER);
 
-    // unload external command
     if(plugin_manager) plugin_manager_free(plugin_manager);
 }
 
 const char* cli_shell_get_prompt(CliShell* cli_shell) {
     return cli_shell->prompt;
 }
-
-// ==============
-// Event handlers
-// ==============
 
 static void cli_shell_signal_storage_event(CliShell* cli_shell, CliShellStorageEvent event) {
     furi_check(!(furi_event_flag_set(cli_shell->storage.event_flag, event) & FuriFlagError));
@@ -299,7 +281,7 @@ static void
     CliKeyCombo key_combo = parse_result.result;
     if(key_combo.key == CliKeyUnrecognized) return;
 
-    for(size_t i = 0; i < CliShellComponentMAX; i++) { // -V1008
+    for(size_t i = 0; i < CliShellComponentMAX; i++) {
         CliShellKeyComboSet* set = component_key_combo_sets[i];
         void* component_context = cli_shell->components[i];
 
@@ -315,7 +297,7 @@ static void
 }
 
 static void cli_shell_pipe_broken(PipeSide* pipe, void* context) {
-    // allow commands to be processed before we stop the shell
+
     if(pipe_bytes_available(pipe)) return;
 
     CliShell* cli_shell = context;
@@ -328,7 +310,6 @@ static void cli_shell_data_available(PipeSide* pipe, void* context) {
 
     furi_event_loop_timer_start(cli_shell->ansi_parsing_timer, furi_ms_to_ticks(ANSI_TIMEOUT_MS));
 
-    // process ANSI escape sequences
     int c = getchar();
     furi_assert(c >= 0);
     cli_shell_process_parser_result(cli_shell, cli_ansi_parser_feed(cli_shell->ansi_parser, c));
@@ -339,10 +320,6 @@ static void cli_shell_timer_expired(void* context) {
     cli_shell_process_parser_result(
         cli_shell, cli_ansi_parser_feed_timeout(cli_shell->ansi_parser));
 }
-
-// ===========
-// Thread code
-// ===========
 
 static void cli_shell_wait_for_storage_ready(void) {
     while(!furi_record_exists(RECORD_STORAGE)) {
@@ -453,10 +430,6 @@ static void cli_shell_deinit(CliShell* shell) {
 static int32_t cli_shell_thread(void* context) {
     CliShell* shell = context;
 
-    // Sometimes, the other side (e.g. qFlipper) closes the pipe even before our thread is started.
-    // Although the rest of the code will eventually find this out if this check is removed,
-    // there's no point in wasting time. This gives qFlipper a chance to quickly close and re-open
-    // the session.
     const size_t delay_step = 10;
     for(size_t i = 0; i < TRANSIENT_SESSION_WINDOW_MS / delay_step; i++) {
         furi_delay_ms(delay_step);
@@ -481,9 +454,6 @@ static int32_t cli_shell_thread(void* context) {
     return 0;
 }
 
-// ==========
-// Public API
-// ==========
 CliShell* cli_shell_alloc(
     CliShellMotd motd,
     void* context,

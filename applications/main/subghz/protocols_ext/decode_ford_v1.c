@@ -1,4 +1,4 @@
-/* decode_ford_v1.fal : SD get_string for ford_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/ford_v1.h>
@@ -64,7 +64,6 @@ static void
 static void ford_v1_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderFordV1* instance = input->decoder;
-
 
     uint64_t key1 = instance->generic.data;
     uint64_t key2 = instance->data2;

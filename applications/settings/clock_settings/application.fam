@@ -6,7 +6,7 @@ App(
     requires=["gui"],
     provides=["clock_settings_start"],
     stack_size=1 * 1024,
-    order=30,
+    order=35,
     fap_libs=["assets"],
     fap_category="assets",
 )

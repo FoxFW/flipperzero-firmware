@@ -15,7 +15,7 @@
 
 typedef struct SubGhzProtocolDecoderFordV1 SubGhzProtocolDecoderFordV1;
 
-extern const SubGhzProtocol ford_protocol_v1;
+extern const SubGhzProtocol subghz_protocol_ford_v1;
 
 void* subghz_protocol_decoder_ford_v1_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_ford_v1_free(void* context);

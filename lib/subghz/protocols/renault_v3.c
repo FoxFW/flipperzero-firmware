@@ -5,27 +5,16 @@
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
 #include <lib/subghz/blocks/bitbuf.h>
+#include "../encode_plugin.h"
 
 #define TAG "RenaultV3"
-
-// Renault V3 (Megane) -- ported from firmware renault_v3.c via KeeLoq-RX arke_renault_v123.py.
-// 2-FSK NRZ, te 52/104. Variable 64..160-bit frame, two frame types:
-//   [sync 0xC969 (TypeA) | 0xCB2D (TypeB) :16][serial :16][encrypted ...]
-// Only the 16-bit serial is in the clear; button/counter live inside the encrypted
-// remainder and are NOT separable. NO CRC. Decode-only; .encoder = NULL.
-// Being 2-FSK, this protocol declares SubGhzProtocolFlag_FM.
-//
-// Bit engine = NRZ quantiser: each timing emits N = round(duration/te_short) bits of the
-// current level. After >=MIN_PREAMBLE short pulses, the first non-short pulse starts data.
-// False-positive defences: exact 16-bit sync (A or B) + 64..160-bit length envelope +
-// non-degenerate serial.
 
 #define RENAULT_V3_MIN_DATA_BITS 64
 #define RENAULT_V3_MAX_DATA_BITS 160
 #define RENAULT_V3_MIN_PREAMBLE  10
 #define RENAULT_V3_ARR_SIZE      256
 #define RENAULT_V3_OVERFLOW      250
-#define RENAULT_V3_FRAME_BYTES   20 // 160 bits
+#define RENAULT_V3_FRAME_BYTES   20
 
 static const SubGhzBlockConst subghz_protocol_renault_v3_const = {
     .te_short = 52,
@@ -34,14 +23,12 @@ static const SubGhzBlockConst subghz_protocol_renault_v3_const = {
     .min_count_bit_for_found = RENAULT_V3_MIN_DATA_BITS,
 };
 
-// sync A 0xC969 = 1100 1001 0110 1001
 static const uint8_t renault_v3_sync_a[16] =
     {1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1};
-// sync B 0xCB2D = 1100 1011 0010 1101
+
 static const uint8_t renault_v3_sync_b[16] =
     {1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1};
 
-// Structurally meaningless 16-bit serials -> reject (matches arke _DEGENERATE 16-bit forms).
 static bool renault_v3_serial_degenerate(uint16_t s) {
     return s == 0x0000 || s == 0xFFFF || s == 0x5555 || s == 0xAAAA;
 }
@@ -63,12 +50,11 @@ struct SubGhzProtocolDecoderRenaultV3 {
     uint16_t all_bit_count;
 
     uint16_t serial;
-    uint8_t variant; // 0 = TypeA, 1 = TypeB
-    uint8_t frame_bytes[RENAULT_V3_FRAME_BYTES]; // full MSB-first frame from sync
+    uint8_t variant;
+    uint8_t frame_bytes[RENAULT_V3_FRAME_BYTES];
     uint16_t frame_bit_len;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderRenaultV3);
-
 
 static void renault_v3_append_n(SubGhzProtocolDecoderRenaultV3* instance, uint32_t n, bool level) {
     uint8_t bit_val = level ? 1 : 0;
@@ -78,7 +64,6 @@ static void renault_v3_append_n(SubGhzProtocolDecoderRenaultV3* instance, uint32
     }
 }
 
-// Mirror of arke_renault_v123.RenaultV3._process().
 static void renault_v3_process(SubGhzProtocolDecoderRenaultV3* instance) {
     const uint8_t* bits = instance->all_bits;
     int n = (int)instance->all_bit_count;
@@ -109,19 +94,17 @@ static void renault_v3_process(SubGhzProtocolDecoderRenaultV3* instance) {
     if(sync_pos < 0) return;
 
     int data_after = n - sync_pos;
-    // Exact-length gate (hardening): within the protocol's 64..160-bit envelope.
+
     if(data_after < RENAULT_V3_MIN_DATA_BITS || data_after > RENAULT_V3_MAX_DATA_BITS) return;
 
     int data_len = data_after < RENAULT_V3_MAX_DATA_BITS ? data_after : RENAULT_V3_MAX_DATA_BITS;
 
-    // top 64 bits -> generic.data; serial = bits 16..31 after sync.
     uint64_t gdata = 0;
     int top = data_len < 64 ? data_len : 64;
     for(int i = 0; i < top; i++) gdata = (gdata << 1) | (subghz_bitbuf_get(bits, sync_pos + i) & 1);
     uint16_t serial = (uint16_t)((gdata >> 32) & 0xFFFFU);
     if(renault_v3_serial_degenerate(serial)) return;
 
-    // Store the whole frame MSB-first for display/serialize (encrypted remainder).
     for(int i = 0; i < RENAULT_V3_FRAME_BYTES; i++) instance->frame_bytes[i] = 0;
     for(int i = 0; i < data_len; i++) {
         if(subghz_bitbuf_get(bits, sync_pos + i)) instance->frame_bytes[i >> 3] |= (uint8_t)(0x80 >> (i & 7));
@@ -150,8 +133,6 @@ void* subghz_protocol_decoder_renault_v3_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_renault_v3_reset(void* context) {
     furi_check(context);
@@ -183,7 +164,7 @@ void subghz_protocol_decoder_renault_v3_feed(void* context, bool level, uint32_t
             instance->preamble_count++;
             if(instance->preamble_count > 5000) instance->step = RenaultV3StepReset;
         } else if(instance->preamble_count >= RENAULT_V3_MIN_PREAMBLE) {
-            // non-SHORT after enough preamble -> NRZ data starts here
+
             instance->all_bit_count = 0;
             uint32_t n = (duration + ts / 2) / ts;
             if(n > 8) n = 8;
@@ -195,7 +176,6 @@ void subghz_protocol_decoder_renault_v3_feed(void* context, bool level, uint32_t
         return;
     }
 
-    // RenaultV3StepCollect
     uint32_t n = (duration + ts / 2) / ts;
     if(n == 0 || duration > ts * 8) {
         renault_v3_process(instance);
@@ -208,8 +188,6 @@ void subghz_protocol_decoder_renault_v3_feed(void* context, bool level, uint32_t
         instance->step = RenaultV3StepReset;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_renault_v3_serialize(
     void* context,
@@ -229,6 +207,12 @@ SubGhzProtocolStatus subghz_protocol_decoder_renault_v3_serialize(
        !flipper_format_write_uint32(flipper_format, "FrameBits", &bitlen, 1) ||
        !flipper_format_write_hex(
            flipper_format, "Frame", instance->frame_bytes, RENAULT_V3_FRAME_BYTES)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint16_t fbytes = (uint16_t)((instance->frame_bit_len + 7) / 8);
+    if(fbytes > RENAULT_V3_FRAME_BYTES) fbytes = RENAULT_V3_FRAME_BYTES;
+    if(!flipper_format_write_hex(flipper_format, "Data", instance->frame_bytes, fbytes)) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -279,12 +263,16 @@ const SubGhzProtocolDecoder subghz_protocol_renault_v3_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_renault_v3_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_renault_v3 = {
     .name = RENAULT_V3_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_renault_v3_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_renault_v3_encoder_ext.vtable,
 };

@@ -1,4 +1,4 @@
-/* decode_renault_v0.fal : SD get_string for renault_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/renault_v0.h>
@@ -86,7 +86,6 @@ static const char* renault_v0_get_button_name(RenaultV0TypeId type_id, uint8_t b
 static void renault_v0_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderRenaultV0* instance = input->decoder;
-
 
     uint8_t display_btn = (uint8_t)instance->generic.btn;
     if(instance->type_id == RenaultV0Type13) {

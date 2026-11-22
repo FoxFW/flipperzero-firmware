@@ -17,7 +17,7 @@
 typedef struct SubGhzProtocolDecoderFiatV1 SubGhzProtocolDecoderFiatV1;
 typedef struct SubGhzProtocolEncoderFiatV1 SubGhzProtocolEncoderFiatV1;
 
-extern const SubGhzProtocol fiat_v1_protocol;
+extern const SubGhzProtocol subghz_protocol_fiat_v1;
 
 void* subghz_protocol_decoder_fiat_v1_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_fiat_v1_reset(void* context);
@@ -66,9 +66,8 @@ SubGhzProtocolStatus
 void subghz_protocol_encoder_fiat_v1_stop(void* context);
 LevelDuration subghz_protocol_encoder_fiat_v1_yield(void* context);
 
-#define FIAT_V1_KNOWN_KEY_COUNT 95U
-// L1 = the first 8 high-confidence keys (fast full-epoch sweep). L2 = the remaining
-// manufacturer/factory keys [8,95), swept on OK or over the ESP32 companion.
+#define FIAT_V1_KNOWN_KEY_COUNT 96U
+
 #define FIAT_V1_DEEP_SWEEP_KEY_COUNT 8U
 
 uint32_t subghz_protocol_fiat_v1_compute_auth(

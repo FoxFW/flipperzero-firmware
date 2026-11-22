@@ -350,15 +350,30 @@ static void rpc_system_storage_read_process(const PB_Main* request, void* contex
 
     PB_Main response = PB_Main_init_default;
     const char* path = request->content.storage_read_request.path;
+
+    uint32_t range_offset = request->content.storage_read_request.offset;
+    uint32_t range_size = request->content.storage_read_request.size;
+    bool ranged = (range_size != 0);
     File* file = storage_file_alloc(rpc_storage->api);
     bool fs_operation_success = storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING);
 
     if(fs_operation_success) {
         size_t size_left = storage_file_size(file);
+        if(ranged) {
+            size_t file_size = size_left;
+            if(range_offset > file_size) range_offset = file_size;
+            if(range_offset) fs_operation_success = storage_file_seek(file, range_offset, true);
+            if(fs_operation_success) {
+                size_left = file_size - range_offset;
+                if((size_t)range_size < size_left) size_left = range_size;
+            }
+        }
+        if(fs_operation_success) {
         do {
             response.command_id = request->command_id;
             response.which_content = PB_Main_storage_read_response_tag;
             response.command_status = PB_CommandStatus_OK;
+            response.content.storage_read_response.ranged = ranged;
 
             size_t read_size = MIN(size_left, MAX_DATA_SIZE);
             if(read_size) {
@@ -389,6 +404,7 @@ static void rpc_system_storage_read_process(const PB_Main* request, void* contex
                 rpc_send_and_release(session, &response);
             }
         } while((size_left != 0) && fs_operation_success);
+        }
     }
 
     if(!fs_operation_success) {

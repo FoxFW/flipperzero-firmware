@@ -23,7 +23,10 @@ typedef struct {
     uint32_t frequency;
     uint32_t last_ping_tick;
     uint32_t serial;
+    uint64_t match_id;
+    bool undecoded_psa;
     uint32_t file_id;
+    uint32_t raw_end_us;
     DateTime datetime;
     uint16_t proto_idx;
     uint16_t preset_idx;
@@ -38,7 +41,10 @@ typedef struct {
 
 ARRAY_DEF(SubGhzHistoryNameArray, FuriString*, M_POD_OPLIST)
 
+#define SUBGHZ_HISTORY_BURST_GAP_MS 150
+
 struct SubGhzHistory {
+    bool combine_repeats;
     uint32_t last_update_timestamp;
     uint32_t next_file_id;
     uint32_t cache_id;
@@ -160,6 +166,11 @@ static void subghz_history_fill_common(
     furi_hal_rtc_get_datetime(&item->datetime);
 }
 
+void subghz_history_set_combine_repeats(SubGhzHistory* instance, bool enable) {
+    furi_assert(instance);
+    instance->combine_repeats = enable;
+}
+
 static void subghz_history_fill_match_fields(
     SubGhzHistory* instance,
     SubGhzHistoryItem* item,
@@ -176,12 +187,43 @@ static void subghz_history_fill_match_fields(
         item->serial = ((uint32_t)serial[0] << 24) | ((uint32_t)serial[1] << 16) |
                        ((uint32_t)serial[2] << 8) | (uint32_t)serial[3];
     }
+
+    item->match_id = 0;
+    flipper_format_rewind(ff);
+    if(flipper_format_read_string(ff, "Protocol", instance->tmp_string) &&
+       furi_string_equal_str(instance->tmp_string, "Honda V9")) {
+        uint32_t v9_serial = 0, v9_fp = 0, v9_btn = 0;
+        flipper_format_rewind(ff);
+        bool rs = flipper_format_read_uint32(ff, "Serial", &v9_serial, 1);
+        flipper_format_rewind(ff);
+        bool rf = flipper_format_read_uint32(ff, "Fingerprint", &v9_fp, 1);
+        flipper_format_rewind(ff);
+        bool rb = flipper_format_read_uint32(ff, "Btn", &v9_btn, 1);
+        if(rs && rf && rb) {
+
+            item->match_id = ((uint64_t)v9_serial << 40) | ((uint64_t)v9_fp << 8) |
+                             (uint64_t)(v9_btn & 0xFF);
+        }
+    }
+
+    item->undecoded_psa = false;
+    flipper_format_rewind(ff);
+    if(flipper_format_read_string(ff, "Protocol", instance->tmp_string) &&
+       furi_string_equal_str(instance->tmp_string, "PSA GROUP")) {
+        FuriString* psa_type = furi_string_alloc();
+        flipper_format_rewind(ff);
+        bool has_type = flipper_format_read_string(ff, "Type", psa_type) &&
+                        !furi_string_equal_str(psa_type, "00");
+        furi_string_free(psa_type);
+        item->undecoded_psa = !has_type;
+    }
     flipper_format_rewind(ff);
 }
 
 SubGhzHistory* subghz_history_alloc(void) {
     SubGhzHistory* instance = malloc(sizeof(SubGhzHistory));
     memset(instance, 0, sizeof(SubGhzHistory));
+    instance->combine_repeats = true;
     instance->tmp_string = furi_string_alloc();
     instance->preset_tmp.name = furi_string_alloc();
     SubGhzHistoryNameArray_init(instance->names);
@@ -424,6 +466,23 @@ void subghz_history_set_auto_save_pending(SubGhzHistory* instance, uint16_t idx,
     furi_mutex_release(instance->mutex);
 }
 
+void subghz_history_set_raw_end_us(SubGhzHistory* instance, uint16_t idx, uint32_t us) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    SubGhzHistoryItem* item = subghz_history_at(instance, idx);
+    if(item) item->raw_end_us = us;
+    furi_mutex_release(instance->mutex);
+}
+
+uint32_t subghz_history_get_raw_end_us(SubGhzHistory* instance, uint16_t idx) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    SubGhzHistoryItem* item = subghz_history_at(instance, idx);
+    uint32_t us = item ? item->raw_end_us : 0;
+    furi_mutex_release(instance->mutex);
+    return us;
+}
+
 bool subghz_history_find_auto_save_pending(SubGhzHistory* instance, uint16_t* idx) {
     furi_assert(instance);
     furi_assert(idx);
@@ -453,7 +512,7 @@ bool subghz_history_get_text_space_left(SubGhzHistory* instance, FuriString* out
         if(output != NULL) furi_string_printf(output, "   Memory is FULL");
         return true;
     }
-    if(output != NULL) furi_string_printf(output, "%02u/%u", count, SUBGHZ_HISTORY_MAX);
+    if(output != NULL) furi_string_printf(output, "%02u", count);
     return false;
 }
 
@@ -566,6 +625,93 @@ int16_t subghz_history_dedup_last_came_holtek(SubGhzHistory* instance) {
     return removed;
 }
 
+#define SUBGHZ_HISTORY_MULTI_BURST_MS 500U
+
+typedef struct {
+    const char* winner;
+    const char* loser;
+} SubGhzHistoryPriorityRule;
+
+static const SubGhzHistoryPriorityRule subghz_history_priority_rules[] = {
+    {"PSA GROUP", "PSA OLD"},
+    {"Honda V5", "Honda V9"},
+    {"VAG GROUP", "Fiat Multi"},
+    {"VAG GROUP", "PSA OLD"},
+    {"BMW/Mini V3", "PSA GROUP"},
+    {"BMW/Mini V3", "PSA OLD"},
+    {"Toyota", "Honda V8"},
+    {"Toyota V0", "Honda V8"},
+    {"Fiat V1", "Renault V0"},
+    {"Fiat V1", "Hitag2"},
+    {"Hitag-2", "Renault V0"},
+
+    {"Fiat V1", "Honda V6"},
+    {"Hitag-2", "Honda V6"},
+    {"LDV V0", "Ford V3"},
+    {"LDV V0", "Fiat V2"},
+    {"Jeep V0", "Fiat V2"},
+    {"Honda V6", "PSA GROUP"},
+    {"Honda V9", "PSA GROUP"},
+    {"Honda V6", "Continental RKE"},
+    {"Honda V6", "Kia V7"},
+    {"Microchip-HCS361", "KeeLoq"},
+    {"Microchip-HCS362", "KeeLoq"},
+    {"Datsun Lada", "Fiat V1"},
+    {"Datsun Lada", "Hitag-2"},
+    {"Chevrolet V0", "Opel V1"},
+    {"PSA GROUP", "Peugot V0"},
+    {"Fiat Ducato V0", "FIAT SPA"},
+    {"Fiat Ducato V0", "Fiat V0"},
+    {"KIA/HYU V0", "PSA GROUP"},
+    {"KIA/HYU V0", "PSA OLD"},
+    {"PSA GROUP", "Continental RKE"},
+    {"Intertechno_V3", "Princeton"},
+    {"LDV V0", "PSA OLD"},
+    {"LDV V0", "PSA GROUP"},
+    {"LDV V0", "Hitag2"},
+    {"X10", "Honda V8"},
+    {"BMW V2", "Nissan V0"},
+};
+
+int16_t subghz_history_dedup_last_priority(SubGhzHistory* instance) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    int16_t removed = -1;
+    if(instance->count >= 2) {
+        uint16_t last = instance->count - 1;
+        SubGhzHistoryItem* li = subghz_history_at(instance, last);
+        uint32_t lt = li->last_ping_tick;
+        const uint16_t nrules =
+            (uint16_t)(sizeof(subghz_history_priority_rules) /
+                       sizeof(subghz_history_priority_rules[0]));
+        for(uint16_t i = 0; i < instance->count && removed < 0; i++) {
+            SubGhzHistoryItem* oi = subghz_history_at(instance, i);
+            if((uint32_t)(lt - oi->last_ping_tick) > SUBGHZ_HISTORY_MULTI_BURST_MS)
+                continue;
+            const char* oname = subghz_history_name(instance, oi->proto_idx);
+            if(!oname) continue;
+            for(uint16_t r = 0; r < nrules && removed < 0; r++) {
+                if(strcmp(oname, subghz_history_priority_rules[r].loser) != 0) continue;
+                for(uint16_t j = 0; j < instance->count; j++) {
+                    if(j == i) continue;
+                    SubGhzHistoryItem* wj = subghz_history_at(instance, j);
+                    if((uint32_t)(lt - wj->last_ping_tick) > SUBGHZ_HISTORY_MULTI_BURST_MS)
+                        continue;
+                    const char* wname = subghz_history_name(instance, wj->proto_idx);
+                    if(wname &&
+                       strcmp(wname, subghz_history_priority_rules[r].winner) == 0) {
+                        subghz_history_remove_at(instance, i);
+                        removed = (int16_t)i;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    furi_mutex_release(instance->mutex);
+    return removed;
+}
+
 int16_t subghz_history_find_identical(
     SubGhzHistory* instance,
     void* context,
@@ -587,10 +733,26 @@ int16_t subghz_history_find_identical(
     bool have_proto = flipper_format_read_string(ff, "Protocol", in_proto);
     flipper_format_rewind(ff);
     bool have_key = flipper_format_read_hex(ff, "Key", in_key, sizeof(uint64_t));
+
+    bool is_honda_v9 = have_proto && furi_string_equal_str(in_proto, "Honda V9");
+    uint64_t in_match_id = 0;
+    if(is_honda_v9) {
+        uint32_t v9_serial = 0, v9_fp = 0, v9_btn = 0;
+        flipper_format_rewind(ff);
+        bool rs = flipper_format_read_uint32(ff, "Serial", &v9_serial, 1);
+        flipper_format_rewind(ff);
+        bool rf = flipper_format_read_uint32(ff, "Fingerprint", &v9_fp, 1);
+        flipper_format_rewind(ff);
+        bool rb = flipper_format_read_uint32(ff, "Btn", &v9_btn, 1);
+        if(rs && rf && rb)
+            in_match_id = ((uint64_t)v9_serial << 40) | ((uint64_t)v9_fp << 8) |
+                          (uint64_t)(v9_btn & 0xFF);
+    }
     flipper_format_free(ff);
 
+    bool use_v9 = is_honda_v9 && in_match_id != 0;
     int16_t found = -1;
-    if(have_proto && have_key) {
+    if(have_proto && (have_key || use_v9)) {
         furi_mutex_acquire(instance->mutex, FuriWaitForever);
         for(uint16_t i = 0; i < instance->count; i++) {
             SubGhzHistoryItem* oi = subghz_history_at(instance, i);
@@ -598,7 +760,22 @@ int16_t subghz_history_find_identical(
             if(!oi->has_key) continue;
             if(!furi_string_equal_str(in_proto, subghz_history_name(instance, oi->proto_idx)))
                 continue;
-            if(memcmp(oi->key, in_key, sizeof(uint64_t)) != 0) continue;
+            if(use_v9) {
+
+                bool id_match = (oi->match_id != 0) && (oi->match_id == in_match_id);
+                if(!id_match) continue;
+
+                if(!instance->combine_repeats &&
+                   (uint32_t)(furi_get_tick() - oi->last_ping_tick) > SUBGHZ_HISTORY_BURST_GAP_MS)
+                    continue;
+            } else {
+                if(!have_key) continue;
+                if(memcmp(oi->key, in_key, sizeof(uint64_t)) != 0) continue;
+
+                if(!instance->combine_repeats &&
+                   (uint32_t)(furi_get_tick() - oi->last_ping_tick) > SUBGHZ_HISTORY_BURST_GAP_MS)
+                    continue;
+            }
             found = (int16_t)i;
             uint32_t now = furi_get_tick();
             if(out_notify) {
@@ -636,7 +813,7 @@ static void subghz_history_build_label(
                                 !furi_string_equal_str(psa_type, "00");
             furi_string_free(psa_type);
             flipper_format_rewind(ff);
-            if(!psa_has_type) furi_string_set(instance->tmp_string, "Unknown Signal");
+            if(!psa_has_type) furi_string_set(instance->tmp_string, "PSA (encrypted)");
         }
         if(item->type == SubGhzProtocolTypeTpms) {
             uint32_t id = 0;
@@ -695,6 +872,63 @@ static void subghz_history_build_label(
         }
     } while(false);
     furi_string_free(text);
+}
+
+bool subghz_history_last_is_undecoded_psa(SubGhzHistory* instance) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    bool is_undecoded = (instance->count >= 1) &&
+                        subghz_history_at(instance, instance->count - 1)->undecoded_psa;
+    furi_mutex_release(instance->mutex);
+    return is_undecoded;
+}
+
+int16_t subghz_history_remove_last_if_undecoded_psa(SubGhzHistory* instance) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    int16_t removed = -1;
+    if(instance->count >= 1) {
+        uint16_t last = instance->count - 1;
+        if(subghz_history_at(instance, last)->undecoded_psa) {
+            subghz_history_remove_at(instance, last);
+            removed = (int16_t)last;
+        }
+    }
+    furi_mutex_release(instance->mutex);
+    return removed;
+}
+
+static bool subghz_history_item_is_undecoded_psa_locked(
+    SubGhzHistory* instance,
+    SubGhzHistoryItem* li) {
+    UNUSED(instance);
+
+    return li->undecoded_psa;
+}
+
+int16_t subghz_history_remove_one_undecoded_psa_extra(
+    SubGhzHistory* instance,
+    bool drop_even_if_alone) {
+    furi_assert(instance);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    int16_t removed = -1;
+    uint16_t real = 0;
+    for(uint16_t i = 0; i < instance->count; i++) {
+        if(!subghz_history_item_is_undecoded_psa_locked(instance, subghz_history_at(instance, i)))
+            real++;
+    }
+    if(drop_even_if_alone || real > 0) {
+        for(uint16_t i = 0; i < instance->count; i++) {
+            if(subghz_history_item_is_undecoded_psa_locked(
+                   instance, subghz_history_at(instance, i))) {
+                subghz_history_remove_at(instance, i);
+                removed = (int16_t)i;
+                break;
+            }
+        }
+    }
+    furi_mutex_release(instance->mutex);
+    return removed;
 }
 
 bool subghz_history_add_to_history(
@@ -770,6 +1004,48 @@ bool subghz_history_replace_item(
     snprintf(item->label, sizeof(item->label), "%s", furi_string_get_cstr(label));
     furi_string_free(label);
     subghz_history_fill_match_fields(instance, item, item->ff);
+    furi_mutex_release(instance->mutex);
+    return true;
+}
+
+bool subghz_history_insert_item(
+    SubGhzHistory* instance,
+    uint16_t idx,
+    FlipperFormat* ff,
+    uint8_t type,
+    SubGhzRadioPreset* preset) {
+    furi_assert(instance);
+    furi_assert(ff);
+    furi_assert(preset);
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    if(instance->count >= SUBGHZ_HISTORY_MAX || idx > instance->count) {
+        furi_mutex_release(instance->mutex);
+        return false;
+    }
+
+    uint16_t last_block = instance->count / SUBGHZ_HISTORY_BLOCK;
+    if(!instance->blocks[last_block]) {
+        instance->blocks[last_block] = malloc(sizeof(SubGhzHistoryItem) * SUBGHZ_HISTORY_BLOCK);
+    }
+    instance->count++;
+
+    for(uint16_t i = instance->count - 1; i > idx; i--) {
+        *subghz_history_at(instance, i) = *subghz_history_at(instance, i - 1);
+    }
+    SubGhzHistoryItem* item = subghz_history_at(instance, idx);
+    memset(item, 0, sizeof(SubGhzHistoryItem));
+    item->file_id = ++instance->next_file_id;
+    item->proto_idx = SUBGHZ_HISTORY_NO_NAME;
+    item->preset_idx = SUBGHZ_HISTORY_NO_NAME;
+    item->ff = ff;
+    item->type = type;
+    subghz_history_fill_common(instance, item, preset);
+    FuriString* label = furi_string_alloc();
+    subghz_history_build_label(instance, item, item->ff, label);
+    snprintf(item->label, sizeof(item->label), "%s", furi_string_get_cstr(label));
+    furi_string_free(label);
+    subghz_history_fill_match_fields(instance, item, item->ff);
+    instance->cache_id = 0;
     furi_mutex_release(instance->mutex);
     return true;
 }

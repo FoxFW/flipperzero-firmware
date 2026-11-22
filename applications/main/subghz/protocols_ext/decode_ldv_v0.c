@@ -1,4 +1,4 @@
-/* decode_ldv_v0.fal : SD get_string for ldv_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/ldv_v0.h>
@@ -19,13 +19,13 @@ struct SubGhzProtocolDecoderLdvV0 {
     uint16_t preamble_count;
     uint8_t last_bit_value;
 
-    uint64_t data_2; // second 64 demodulated bits (bytes 8..15)
+    uint64_t data_2;
     uint16_t bit_count;
 
     uint32_t serial;
     uint8_t btn;
     uint32_t cnt;
-    uint64_t hop; // 40-bit rolling tail
+    uint64_t hop;
     bool frame_ok;
 };
 

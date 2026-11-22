@@ -1,4 +1,4 @@
-/* decode_nero_radio.fal : SD get_string for nero_radio (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/nero_radio.h>
@@ -31,31 +31,7 @@ struct SubGhzProtocolDecoderNeroRadio {
 static void subghz_protocol_nero_radio_parse_data(SubGhzBlockGeneric* instance);
 
 static void subghz_protocol_nero_radio_parse_data(SubGhzBlockGeneric* instance) {
-    // Key samples from unit tests
-    // 57250501049DD3
-    // 57250502049D13
-    //
-    // Samples from remote
-    // 36E4E80104A644
-    // 36E4E80204A684
-    // 36E4E80304A604
-    // 36E4E80404A6E4
-    //
-    // Held button, one remote (n = hold counter, steps every ~8 frames, restarts per press)
-    // F6C18102 n1 6r E5   r = n bit reversed: 0160 1168 2164 316C ... D16B F16F
-    // F6C18101 n1 6r 25
-    // 57 bit remote, extra bit trails: B2230602 n4 Br 96 + 1, r = 2 for n = 1
-    // So r = bit reversed n ^ per remote const (0, A, D seen)
 
-    // possible contents
-    // serial  button  hold cnt  ?    check
-    // 5725050 1       0         49D  D3
-    // 5725050 2       0         49D  13
-    // 36E4E80 1       0         4A6  44
-    // F6C1810 2       D         16B  E5
-    // check depends on serial and button only, not a CRC8 or sum
-
-    // 57 bit frames carry one extra trailing bit
     uint64_t data = instance->data >> (instance->data_count_bit - 56);
     instance->serial = data >> 28;
     instance->btn = (data >> 24) & 0xF;
@@ -65,7 +41,6 @@ static void subghz_protocol_nero_radio_parse_data(SubGhzBlockGeneric* instance) 
 static void nero_radio_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderNeroRadio* instance = input->decoder;
-
 
     uint32_t code_found_hi = instance->generic.data >> 32;
     uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
@@ -112,11 +87,9 @@ static void nero_radio_decode(const SubGhzDecodeInput* input, FuriString* output
 
     subghz_protocol_nero_radio_parse_data(&instance->generic);
 
-    // push protocol data to global variable
     subghz_block_generic_global.btn_is_available = false;
     subghz_block_generic_global.current_btn = instance->generic.btn;
     subghz_block_generic_global.btn_length_bit = 4;
-    //
 
     furi_string_cat_printf(
         output,

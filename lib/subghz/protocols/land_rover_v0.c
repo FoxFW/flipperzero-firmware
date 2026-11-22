@@ -75,7 +75,7 @@ typedef struct SubGhzProtocolEncoderLandRoverV0 {
     uint32_t count;
     uint8_t  button;
     uint8_t  check;
-} 
+}
 SubGhzProtocolEncoderLandRoverV0;
 
 typedef enum {
@@ -143,7 +143,6 @@ static bool land_rover_v0_process_transition(
     bool                              level,
     uint32_t                          duration);
 static bool land_rover_v0_finish_frame(SubGhzProtocolDecoderLandRoverV0* instance);
-
 
 const SubGhzProtocolDecoder subghz_protocol_land_rover_v0_decoder = {
     .alloc         = subghz_protocol_decoder_land_rover_v0_alloc,
@@ -353,8 +352,6 @@ void* subghz_protocol_decoder_land_rover_v0_alloc(SubGhzEnvironment* environment
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_land_rover_v0_reset(void* context) {
     furi_check(context);
@@ -572,7 +569,4 @@ void subghz_protocol_decoder_land_rover_v0_get_string(void* context, FuriString*
     subghz_decode_plugin_get_string(instance->generic.protocol_name, &input, output);
 }
 
-
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderLandRoverV0);

@@ -2,6 +2,8 @@
 
 #include "base.h"
 #include "public_api.h"
+#include "../subghz_keystore.h"
+#include "../blocks/generic.h"
 
 #define SUBGHZ_PROTOCOL_KEELOQ_NAME "KeeLoq"
 
@@ -42,3 +44,8 @@ SubGhzProtocolStatus
     subghz_protocol_decoder_keeloq_deserialize(void* context, FlipperFormat* flipper_format);
 
 void subghz_protocol_decoder_keeloq_get_string(void* context, FuriString* output);
+
+uint32_t subghz_protocol_keeloq_identify_codeword(
+    SubGhzBlockGeneric* generic,
+    SubGhzKeystore* keystore,
+    const char** manufacture_name);

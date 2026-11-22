@@ -1,4 +1,4 @@
-/* decode_dooya.fal : SD get_string for dooya (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/dooya.h>
@@ -7,6 +7,7 @@
 #include <lib/subghz/blocks/encoder.h>
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
+#include <lib/subghz/blocks/custom_btn_i.h>
 
 #define DOYA_SINGLE_CHANNEL 0xFF
 
@@ -72,10 +73,13 @@ static void dooya_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderDooya* instance = input->decoder;
 
-
     subghz_protocol_dooya_check_remote_controller(&instance->generic);
 
-    subghz_block_generic_global.btn_is_available = false;
+    if(subghz_custom_btn_get_original() == 0) {
+        subghz_custom_btn_set_original((uint8_t)(instance->generic.data & 0xFF));
+    }
+    subghz_custom_btn_set_max(4);
+    subghz_block_generic_global.btn_is_available = true;
     subghz_block_generic_global.current_btn = instance->generic.btn;
     subghz_block_generic_global.btn_length_bit = 8;
 

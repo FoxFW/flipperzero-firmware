@@ -1,5 +1,5 @@
-/* enc_star_line.fal : SD encoder for star_line (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_star_line_alloc enc_star_line__subghz_protocol_encoder_star_line_alloc
 #define subghz_protocol_encoder_star_line_deserialize enc_star_line__subghz_protocol_encoder_star_line_deserialize
 #define subghz_protocol_encoder_star_line_free enc_star_line__subghz_protocol_encoder_star_line_free
@@ -37,7 +37,6 @@ static const SubGhzBlockConst subghz_protocol_star_line_const = {
     .min_count_bit_for_found = 64,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
     __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
@@ -659,7 +658,6 @@ static const SubGhzProtocolEncoder enc_star_line_vt = {
     .yield = subghz_protocol_encoder_star_line_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_star_line = {
     .name = SUBGHZ_PROTOCOL_STAR_LINE_NAME,
     .type = SubGhzProtocolTypeDynamic,

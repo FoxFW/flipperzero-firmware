@@ -1559,6 +1559,138 @@ a{color:var(--link)}
     frequencies without authorization is not. Know your local regulations.
   </div>
 
+  <!-- ===== PROTOCOL COVERAGE HEADLINE ===== -->
+  <h3 id="protocol-coverage">Protocol Coverage — Every Protocol Transmits <span class="badge">New</span></h3>
+  <p>
+    FoxFW decodes <strong>166 Sub-GHz protocols</strong>, and as of v2.1.1
+    <strong>every single one has a working Send button</strong> — there are no
+    decode-only protocols left. Open any saved <code>.sub</code> and it will
+    always offer to transmit. What that Send does falls into three kinds:
+  </p>
+  <div id="proto-coverage">
+    <div class="pc-stats">
+      <div class="pc-stat pc-clone"><span class="pc-n">123</span><span class="pc-l">Clone / encoder</span></div>
+      <div class="pc-stat pc-replay"><span class="pc-n">41</span><span class="pc-l">Reconstruction replay</span></div>
+      <div class="pc-stat pc-raw"><span class="pc-n">2</span><span class="pc-l">Raw pulses</span></div>
+      <div class="pc-stat pc-none"><span class="pc-n">0</span><span class="pc-l">Decode-only</span></div>
+    </div>
+    <dl class="pc-defs">
+      <dt class="pc-d-clone">Clone / encoder</dt>
+      <dd>The firmware rebuilds the signal from its own native encoder. A full,
+        functional reproduction — for fixed-code protocols this is a working copy
+        of the remote.</dd>
+      <dt class="pc-d-replay">Reconstruction replay</dt>
+      <dd>No native encoder exists, so FoxFW re-emits the decoded frame in the
+        protocol's own modulation. The saved <code>.sub</code> re-transmits and
+        <strong>re-decodes as the same protocol</strong> — a re-detectable
+        round-trip. It is <em>not</em> a functional clone: any rolling counter is
+        frozen at the captured value, so it won't operate a rolling-code vehicle.</dd>
+      <dt class="pc-d-raw">Raw pulses</dt>
+      <dd>Generic RAW capture — the exact timing is replayed with no protocol
+        decode. Always transmittable.</dd>
+    </dl>
+    <p class="pc-link">
+      <a href="https://foxfw.github.io/fox-web/FoxFW%20Protocol%20Matrix.html" target="_blank" rel="noopener">Open the full Protocol Send Matrix →</a>
+      <span>Searchable, filterable, per-protocol — what every Send button does, grouped by make.</span>
+    </p>
+  </div>
+  <style>
+    #proto-coverage{margin:16px 0 8px}
+    #proto-coverage .pc-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+    @media(max-width:560px){#proto-coverage .pc-stats{grid-template-columns:repeat(2,1fr)}}
+    #proto-coverage .pc-stat{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px 12px;text-align:center;min-width:0}
+    #proto-coverage .pc-n{display:block;font-family:var(--mono);font-size:1.8rem;font-weight:700;line-height:1}
+    #proto-coverage .pc-l{display:block;font-size:.72rem;letter-spacing:.3px;text-transform:uppercase;color:var(--text-faint);margin-top:7px}
+    #proto-coverage .pc-clone{border-color:var(--tip-bd)} #proto-coverage .pc-clone .pc-n{color:var(--green)}
+    #proto-coverage .pc-replay{border-color:var(--warn-bd)} #proto-coverage .pc-replay .pc-n{color:var(--orange)}
+    #proto-coverage .pc-raw .pc-n{color:var(--text-faint)}
+    #proto-coverage .pc-none{border-color:var(--tip-bd)} #proto-coverage .pc-none .pc-n{color:var(--green)}
+    #proto-coverage .pc-defs{margin:0;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:14px 18px}
+    #proto-coverage .pc-defs dt{font-weight:700;color:var(--text-hi);margin-top:12px;font-size:.92rem}
+    #proto-coverage .pc-defs dt:first-child{margin-top:0}
+    #proto-coverage .pc-defs dt.pc-d-clone{color:var(--green)} #proto-coverage .pc-defs dt.pc-d-replay{color:var(--orange)} #proto-coverage .pc-defs dt.pc-d-raw{color:var(--text-dim)}
+    #proto-coverage .pc-defs dd{margin:4px 0 0;color:var(--text-dim);font-size:.9rem;line-height:1.6}
+    #proto-coverage .pc-link{margin:16px 0 0;display:flex;flex-direction:column;gap:3px}
+    #proto-coverage .pc-link a{font-weight:700;color:var(--link);font-size:1rem}
+    #proto-coverage .pc-link span{color:var(--text-faint);font-size:.82rem}
+  </style>
+
+  <!-- ===== CROSS-FIRMWARE DECODE COMPARISON ===== -->
+  <h3 id="crossfw-compare">How FoxFW Compares — Seven Firmwares, One Corpus <span class="badge">New</span></h3>
+  <p>
+    Every mainstream Flipper firmware was fed the <strong>identical 2,326-file</strong>
+    union-detectable capture set — the files at least one firmware decodes, drawn from 15,427 real
+    captures after de-duplication — through the <strong>identical host harness</strong>. The three
+    outcome columns (No decode + Single + Multi) add up to 2,326 on every row. FoxFW decodes
+    <strong>more of them than any other firmware</strong>, and after its live cross-protocol dedup it
+    is the <strong>only one with zero decode ambiguity</strong>.
+  </p>
+  <div id="crossfw">
+    <div class="cf-scroll">
+      <table class="cf-table">
+        <thead>
+          <tr>
+            <th>Firmware</th>
+            <th>Protocols<span class="cf-sub">in menu</span></th>
+            <th>Corpus<span class="cf-sub">files</span></th>
+            <th>No decode<span class="cf-sub">0 protocols</span></th>
+            <th>Single match<span class="cf-sub">1 protocol</span></th>
+            <th>Multi-match<span class="cf-sub">2+ protocols</span></th>
+            <th>Total decoded<span class="cf-sub">single+multi</span></th>
+            <th>Multi-match rate<span class="cf-sub">of decoded</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="cf-fox"><td>FoxFW2.0 &mdash; raw decoders</td><td>166</td><td>2,326</td><td>34</td><td>1,494</td><td>798</td><td><strong>2,292</strong></td><td>34.82%</td></tr>
+          <tr class="cf-fox cf-fox-live"><td>FoxFW2.0 &mdash; live on-device <span class="cf-tag">after history dedup</span></td><td>166</td><td>2,326</td><td>34</td><td>2,292</td><td class="cf-zero">0</td><td><strong>2,292</strong></td><td class="cf-zero">0.00%</td></tr>
+          <tr><td>doctor-firmware</td><td>97</td><td>2,326</td><td>1,538</td><td>782</td><td>6</td><td>788</td><td>0.76%</td></tr>
+          <tr><td>flipperzero-wPlugins</td><td>70</td><td>2,326</td><td>972</td><td>1,056</td><td>298</td><td>1,354</td><td class="cf-high">22.01%</td></tr>
+          <tr><td>Unleashed</td><td>66</td><td>2,326</td><td>1,618</td><td>410</td><td>298</td><td>708</td><td class="cf-high">42.09%</td></tr>
+          <tr><td>Momentum</td><td>61</td><td>2,326</td><td>1,623</td><td>424</td><td>279</td><td>703</td><td class="cf-high">39.69%</td></tr>
+          <tr><td>flipperzero (official)</td><td>53</td><td>2,326</td><td>1,682</td><td>342</td><td>302</td><td>644</td><td class="cf-high">46.89%</td></tr>
+          <tr><td>Flipper-ARF</td><td>44</td><td>2,326</td><td>2,116</td><td>191</td><td>19</td><td>210</td><td>9.05%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cf-note">
+      <strong>The two FoxFW rows are the same sweep.</strong> The second re-counts it after Fox's live
+      history dedup (cross-protocol priority suppression) — the only thing that differs. No other
+      firmware does cross-protocol suppression, so their single row is already their on-device
+      behaviour. This cycle Fox's dedup table was driven to resolve <strong>every</strong> remaining
+      multi-fire combo in the corpus: the live multi-match rate is now <strong>0.00%</strong> (down
+      from 2.76% last release) — Fox is both the <strong>broadest</strong> decoder (2,292 files, most
+      of any firmware) and the only one with <strong>zero</strong> decode ambiguity.
+    </p>
+    <p class="cf-note">
+      <strong>Single match</strong> = exactly one protocol decoded the signal (clean).
+      <strong>Multi-match</strong> = two or more different protocols both claimed the one captured
+      signal (ambiguity to resolve). <strong>Rate</strong> = multi &divide; decoded.
+    </p>
+    <div class="box info">
+      <strong>Method (identical for every firmware):</strong> each firmware's real <code>lib/subghz</code>
+      decoder registry compiled on host and fed every capture, mirroring its Sub-GHz Read. Internal
+      registries only (ProtoPirate apps excluded, symmetric); empty keystore (crypto getters stubbed,
+      symmetric); synthetic Bruteforce / Jamming / de-Bruijn and &gt;8&nbsp;MB stress files excluded.
+      Corpus = the maintainer's current capture library on 2026-11-17, after removing ~12,600 duplicate
+      files. Zero sweep timeouts.
+    </div>
+  </div>
+  <style>
+    #crossfw{margin:16px 0 8px}
+    #crossfw .cf-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:10px;-webkit-overflow-scrolling:touch}
+    #crossfw .cf-table{margin:0;border:0;border-radius:0;min-width:720px;font-variant-numeric:tabular-nums}
+    #crossfw .cf-table th,#crossfw .cf-table td{padding:9px 12px;text-align:right;white-space:nowrap;vertical-align:bottom}
+    #crossfw .cf-table th:first-child,#crossfw .cf-table td:first-child{text-align:left}
+    #crossfw .cf-table .cf-sub{display:block;font-weight:400;font-size:.68rem;letter-spacing:.2px;color:var(--text-faint);text-transform:none;margin-top:2px}
+    #crossfw .cf-table tbody tr:nth-child(even){background:rgba(255,255,255,.02)}
+    #crossfw .cf-fox td{background:rgba(255,177,92,.10);color:var(--text-hi);font-weight:600}
+    #crossfw .cf-fox-live td{box-shadow:inset 0 -1px 0 var(--border)}
+    #crossfw .cf-table td.cf-zero{color:var(--green);font-weight:800}
+    #crossfw .cf-high{color:#ff6b6b;font-weight:700}
+    #crossfw .cf-tag{display:inline-block;font-family:var(--mono);font-size:.62rem;letter-spacing:.3px;text-transform:uppercase;background:var(--orange);color:#1a1020;padding:1px 6px;border-radius:20px;margin-left:5px;vertical-align:middle;white-space:nowrap}
+    #crossfw .cf-note{color:var(--text-dim);font-size:.82rem;line-height:1.6;margin:12px 0 0}
+  </style>
+
   <h3 id="read">Read <span class="badge">Enhanced</span></h3>
   <p>
     Opens on a Start screen — press OK to begin listening for an incoming

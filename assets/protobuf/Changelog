@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27]
+### Added
+- Storage ReadRequest: offset + size fields for ranged (partial) reads;
+  ReadResponse: ranged flag. size=0 keeps whole-file behavior. Lets a companion
+  fetch a byte window / resume large transfers. (Fox lineage; mirrors the OFW 0.30
+  Storage feature only — NOT OFW's 0.27-0.29 Companion/Network stack.)
+
 ## [0.26]
 ### Added
 - New subsystems: Network, Gps

@@ -1,4 +1,4 @@
-/* decode_elplast.fal : SD get_string for elplast (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/elplast.h>
@@ -18,7 +18,6 @@ struct SubGhzProtocolDecoderElplast {
 static void elplast_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderElplast* instance = input->decoder;
-
 
     uint64_t code_found_reverse = subghz_protocol_blocks_reverse_key(
         instance->generic.data, instance->generic.data_count_bit);

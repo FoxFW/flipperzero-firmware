@@ -1,0 +1,67 @@
+#include "../saflok_app_i.h"
+#include "../helpers/saflok_app_helpers.h"
+#include "../helpers/saflok_field_helpers.h"
+
+static void led_warnings_scene_save_changes(SaflokApp* app, bool new_value) {
+    if (app->saflok_data->access_control.led_warning != new_value) {
+        app->saflok_data->access_control.led_warning = new_value;
+        app->changed->led_warning = true;
+    }
+    
+    scene_manager_previous_scene(app->scene_manager);
+}
+
+static void dialog_ex_callback(DialogExResult result, void* context) {
+    SaflokApp* app = context;
+    
+    switch(result) {
+        case DialogExResultLeft:
+            led_warnings_scene_save_changes(app, false);
+            break;
+        case DialogExResultRight:
+            led_warnings_scene_save_changes(app, true);
+            break;
+        case DialogExResultCenter:
+            break;
+        default:
+            break;
+    }
+}
+
+void saflok_scene_led_warnings_on_enter(void* context) {
+    SaflokApp* app = context;
+    DialogEx* dialog_ex = app->dialog_ex;
+    
+    dialog_ex_set_header(dialog_ex, "LED Warnings", 64, 10, AlignCenter, AlignTop);
+    dialog_ex_set_text(dialog_ex, "Enable LED warning\nfor expiring keys?", 64, 32, AlignCenter, AlignCenter);
+    
+    dialog_ex_set_left_button_text(dialog_ex, "No");
+    dialog_ex_set_right_button_text(dialog_ex, "Yes");
+    
+    dialog_ex_set_context(dialog_ex, app);
+    dialog_ex_set_result_callback(dialog_ex, dialog_ex_callback);
+    
+    view_dispatcher_switch_to_view(app->view_dispatcher, SaflokViewDialogEx);
+}
+
+bool saflok_scene_led_warnings_on_event(void* context, SceneManagerEvent event) {
+    SaflokApp* app = context;
+    bool consumed = false;
+    
+    if(event.type == SceneManagerEventTypeBack) {
+        consumed = scene_manager_previous_scene(app->scene_manager);
+    }
+    
+    return consumed;
+}
+
+void saflok_scene_led_warnings_on_exit(void* context) {
+    SaflokApp* app = context;
+
+    if(app->changed->led_warning) {
+        saflok_pack_current_led_warning(app);
+    }
+
+    dialog_ex_reset(app->dialog_ex);
+}
+

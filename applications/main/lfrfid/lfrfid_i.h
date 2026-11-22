@@ -89,6 +89,7 @@ struct LfRfid {
     FuriString* file_path;
     FuriString* file_name;
     FuriString* raw_file_name;
+    FuriString* duplicate_name;
 
     ProtocolDict* dict;
     ProtocolId protocol_id;
@@ -111,6 +112,8 @@ struct LfRfid {
 
     LfRfidReadView* read_view;
 };
+
+bool lfrfid_check_duplicate(LfRfid* app);
 
 typedef enum {
     LfRfidViewSubmenu,

@@ -15,7 +15,7 @@
 
 #define TAG "SubGhzProtocoCameAtomo"
 
-static bool came_atomo_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool came_atomo_raw_replay = false;
 
 static bool bypass = false;
 
@@ -65,7 +65,6 @@ const SubGhzProtocolDecoder subghz_protocol_came_atomo_decoder = {
     .get_string = subghz_protocol_decoder_came_atomo_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* bypass;
     void* came_atomo_counter_mode;
@@ -89,7 +88,6 @@ const SubGhzProtocol subghz_protocol_came_atomo = {
 };
 
 static void subghz_protocol_came_atomo_remote_controller(SubGhzBlockGeneric* instance);
-
 
 bool subghz_protocol_came_atomo_create_data(
     void* context,
@@ -354,8 +352,7 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_came_atomo_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderCameAtomo* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): Atomo decrypt (rainbow table) stays
-    // internal; the SD plugin only formats.
+
     subghz_protocol_came_atomo_remote_controller(&instance->generic);
     const SubGhzDecodeInput input = {
         .decoder = context,

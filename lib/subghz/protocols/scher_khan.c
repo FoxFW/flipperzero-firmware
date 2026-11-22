@@ -128,7 +128,6 @@ struct SubGhzProtocolEncoderScherKhan {
 };
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderScherKhan);
 
-
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderScherKhan);
 SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderScherKhan);
 
@@ -156,9 +155,8 @@ const SubGhzProtocolDecoder subghz_protocol_scher_khan_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-static bool scher_khan_raw_replay = false; // #101: TxRaw verbatim replay (freeze counter)
+static bool scher_khan_raw_replay = false;
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* scher_khan_raw_replay;
 } enc_scher_khan_host_t;
@@ -183,8 +181,6 @@ void* subghz_protocol_decoder_scher_khan_alloc(SubGhzEnvironment* environment) {
     return subghz_protocol_decoder_common_alloc(
         sizeof(SubGhzProtocolDecoderScherKhan), &subghz_protocol_scher_khan);
 }
-
-
 
 void subghz_protocol_decoder_scher_khan_reset(void* context) {
     furi_check(context);
@@ -385,8 +381,6 @@ static void subghz_protocol_scher_khan_check_remote_controller(
         break;
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_scher_khan_serialize(
     void* context,

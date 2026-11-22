@@ -1,5 +1,5 @@
-/* enc_keeloq.fal : SD encoder for keeloq (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_yield enc_keeloq__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_keeloq_alloc enc_keeloq__subghz_protocol_encoder_keeloq_alloc
 #define subghz_protocol_encoder_keeloq_deserialize enc_keeloq__subghz_protocol_encoder_keeloq_deserialize
@@ -34,6 +34,8 @@ struct SubGhzProtocolEncoderKeeloq {
     const char* manufacture_name;
 
     FuriString* manufacture_from_file;
+    uint32_t te;
+    size_t upload_max;
 };
 
 static const SubGhzBlockConst subghz_protocol_keeloq_const = {
@@ -43,7 +45,12 @@ static const SubGhzBlockConst subghz_protocol_keeloq_const = {
     .min_count_bit_for_found = 64,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
+#define KEELOQ_TE_FAST 200u
+static inline uint32_t enc_keeloq_te_sanitize(uint32_t te) {
+    return (te == KEELOQ_TE_FAST) ? KEELOQ_TE_FAST :
+                                    (uint32_t)subghz_protocol_keeloq_const.te_short;
+}
+
 extern bool bypass__bridge_ty;
 extern uint8_t keeloq_counter_mode__bridge_ty;
 extern bool keeloq_raw_replay__bridge_ty;
@@ -81,6 +88,85 @@ static const void* enc_keeloq_host_raw;
 #define subghz_protocol_keeloq_common_magic_xor_type1_learning (ENC_KEELOQ_HOST->subghz_protocol_keeloq_common_magic_xor_type1_learning)
 #define subghz_protocol_keeloq_common_normal_learning (ENC_KEELOQ_HOST->subghz_protocol_keeloq_common_normal_learning)
 #define subghz_protocol_keeloq_common_secure_learning (ENC_KEELOQ_HOST->subghz_protocol_keeloq_common_secure_learning)
+
+#ifndef COUNT_OF
+#define COUNT_OF(x) (sizeof(x) / sizeof((x)[0]))
+#endif
+#define KEELOQ_COUNTER_MODE_PACK  7u
+#define KEELOQ_UPLOAD_PACK_FRAMES 12u
+#define KEELOQ_UPLOAD_FRAME       176u
+
+typedef struct {
+    uint16_t offset;
+    bool real_btn;
+    uint8_t repeat;
+} KeeloqResyncFrame;
+
+typedef struct {
+    const KeeloqResyncFrame* frames;
+    uint8_t count;
+    bool absolute;
+} KeeloqResyncPack;
+
+static const KeeloqResyncFrame keeloq_resync_pack_old[] = {
+    {0, true, 1},      {1, true, 1},      {15999, false, 1}, {16000, false, 1},
+    {31997, false, 1}, {31998, false, 1}, {47995, false, 1}, {47996, false, 1},
+    {49533, false, 1}, {49534, false, 1}, {65534, true, 1},  {65535, true, 1},
+};
+static const KeeloqResyncFrame keeloq_resync_pack_dhre[] = {
+    {0, true, 1},      {1, true, 1},      {13108, false, 1}, {13109, false, 1},
+    {26216, false, 1}, {26217, false, 1}, {39324, false, 1}, {39325, false, 1},
+    {52432, false, 1}, {52433, false, 1}, {0, false, 1},     {1, true, 1},
+};
+
+static const KeeloqResyncFrame keeloq_resync_pack_cv01[] = {
+    {0x8000, true, 2},
+    {65535, true, 2},
+    {1, true, 2},
+};
+
+static const KeeloqResyncFrame keeloq_resync_pack_phantom[] = {
+    {0xFFFE, true, 3},
+    {0xFFFF, true, 3},
+};
+
+static const KeeloqResyncPack keeloq_resync_packs[] = {
+    {keeloq_resync_pack_old, COUNT_OF(keeloq_resync_pack_old), false},
+    {keeloq_resync_pack_dhre, COUNT_OF(keeloq_resync_pack_dhre), false},
+    {keeloq_resync_pack_cv01, COUNT_OF(keeloq_resync_pack_cv01), false},
+    {keeloq_resync_pack_phantom, COUNT_OF(keeloq_resync_pack_phantom), true},
+};
+
+static inline bool keeloq_counter_mode_is_pack(void) {
+    return keeloq_counter_mode >= KEELOQ_COUNTER_MODE_PACK;
+}
+
+static const KeeloqResyncPack* keeloq_counter_mode_pack(void) {
+    size_t index = (size_t)keeloq_counter_mode - KEELOQ_COUNTER_MODE_PACK;
+    if(index >= COUNT_OF(keeloq_resync_packs)) {
+        index = COUNT_OF(keeloq_resync_packs) - 1u;
+    }
+    return &keeloq_resync_packs[index];
+}
+
+static size_t keeloq_resync_pack_frames(const KeeloqResyncPack* pack) {
+    size_t frames = 0;
+    for(uint8_t i = 0; i < pack->count; i++) {
+        frames += pack->frames[i].repeat;
+    }
+    return frames;
+}
+
+static void subghz_protocol_encoder_keeloq_upload_reserve(
+    SubGhzProtocolEncoderKeeloq* instance,
+    size_t size) {
+    if(instance->upload_max >= size) {
+        return;
+    }
+    free(instance->encoder.upload);
+    instance->encoder.upload = malloc(size * sizeof(LevelDuration));
+    instance->upload_max = size;
+}
 
 static bool subghz_protocol_keeloq_gen_data(
     SubGhzProtocolEncoderKeeloq* instance,
@@ -126,7 +212,7 @@ static bool subghz_protocol_keeloq_gen_data(
     }
 
     ProgMode prog_mode = subghz_custom_btn_get_prog_mode();
-    if(!skip_btn_check && (keeloq_counter_mode != 7)) {
+    if(!skip_btn_check && !keeloq_counter_mode_is_pack()) {
 
         if(subghz_custom_btn_get_original() == 0) {
             subghz_custom_btn_set_original(btn);
@@ -459,45 +545,34 @@ static size_t subghz_protocol_encoder_keeloq_encode_to_timings(
         return 0;
     }
 
-    uint32_t gap_duration = subghz_protocol_keeloq_const.te_short * 40;
+    const uint32_t te_short = instance->te;
+    const uint32_t te_long = instance->te * 2;
+    uint32_t gap_duration = te_short * 40;
     if((strcmp(instance->manufacture_name, "Sommer") == 0)) {
-        gap_duration = subghz_protocol_keeloq_const.te_short * 29;
+        gap_duration = te_short * 29;
     }
 
     for(uint8_t i = 11; i > 0; i--) {
-        instance->encoder.upload[index++] =
-            level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_short);
-        instance->encoder.upload[index++] =
-            level_duration_make(false, (uint32_t)subghz_protocol_keeloq_const.te_short);
+        instance->encoder.upload[index++] = level_duration_make(true, te_short);
+        instance->encoder.upload[index++] = level_duration_make(false, te_short);
     }
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_keeloq_const.te_short * 10);
+    instance->encoder.upload[index++] = level_duration_make(true, te_short);
+    instance->encoder.upload[index++] = level_duration_make(false, te_short * 10);
 
     for(uint8_t i = instance->generic.data_count_bit; i > 0; i--) {
         if(bit_read(instance->generic.data, i - 1)) {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_short);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_keeloq_const.te_long);
+            instance->encoder.upload[index++] = level_duration_make(true, te_short);
+            instance->encoder.upload[index++] = level_duration_make(false, te_long);
         } else {
-
-            instance->encoder.upload[index++] =
-                level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_long);
-            instance->encoder.upload[index++] =
-                level_duration_make(false, (uint32_t)subghz_protocol_keeloq_const.te_short);
+            instance->encoder.upload[index++] = level_duration_make(true, te_long);
+            instance->encoder.upload[index++] = level_duration_make(false, te_short);
         }
     }
 
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_short);
-    instance->encoder.upload[index++] =
-        level_duration_make(false, (uint32_t)subghz_protocol_keeloq_const.te_long);
+    instance->encoder.upload[index++] = level_duration_make(true, te_short);
+    instance->encoder.upload[index++] = level_duration_make(false, te_long);
 
-    instance->encoder.upload[index++] =
-        level_duration_make(true, (uint32_t)subghz_protocol_keeloq_const.te_short);
+    instance->encoder.upload[index++] = level_duration_make(true, te_short);
     instance->encoder.upload[index++] = level_duration_make(false, gap_duration);
 
     return index;
@@ -514,29 +589,27 @@ static bool
        subghz_block_generic_global.btn_need_override)
         bypass = true;
 
-    if(keeloq_counter_mode == 7 && !bypass && !keeloq_raw_replay) {
-        uint16_t temp_cnt = instance->generic.cnt;
+    if(keeloq_counter_mode_is_pack() && !bypass && !keeloq_raw_replay) {
+
+        const KeeloqResyncPack* pack = keeloq_counter_mode_pack();
+        const size_t frames = keeloq_resync_pack_frames(pack);
+        furi_check(frames <= KEELOQ_UPLOAD_PACK_FRAMES);
+        subghz_protocol_encoder_keeloq_upload_reserve(instance, frames * KEELOQ_UPLOAD_FRAME);
+        const uint16_t base_cnt = (uint16_t)instance->generic.cnt;
         instance->encoder.repeat = 1;
-        for(uint8_t i = 7; i > 0; i--) {
-            if(i == 3) {
-                instance->generic.cnt = 0x0000;
+        for(uint8_t i = 0; i < pack->count; i++) {
+            instance->generic.cnt = pack->absolute ?
+                                        pack->frames[i].offset :
+                                        (uint16_t)(base_cnt + pack->frames[i].offset);
+            const uint8_t frame_btn = pack->frames[i].real_btn ? btn : (uint8_t)0x00;
+            for(uint8_t r = 0; r < pack->frames[i].repeat; r++) {
                 upindex = subghz_protocol_encoder_keeloq_encode_to_timings(
-                    instance, (uint8_t)0x00, false, upindex);
-                continue;
-            } else if(i == 2) {
-                instance->generic.cnt = temp_cnt;
-                upindex = subghz_protocol_encoder_keeloq_encode_to_timings(
-                    instance, btn, false, upindex);
-                continue;
-            } else if(i == 1) {
-                instance->generic.cnt = temp_cnt + 1;
-                upindex = subghz_protocol_encoder_keeloq_encode_to_timings(
-                    instance, btn, false, upindex);
-                continue;
+                    instance, frame_btn, false, upindex);
             }
-            upindex = subghz_protocol_encoder_keeloq_encode_to_timings(
-                instance, (uint8_t)0x00, true, upindex);
         }
+
+        instance->generic.cnt = base_cnt;
+        subghz_protocol_keeloq_gen_data(instance, btn, false, true);
         instance->encoder.size_upload = upindex;
         return true;
     } else {
@@ -709,8 +782,7 @@ static uint32_t subghz_protocol_keeloq_check_remote_controller_selector(
                     }
                     break;
                 case KEELOQ_LEARNING_AERF: {
-                    // AERF (type 14): derive the device key (nl_extend), then try the
-                    // firmware's three candidates (nl_extend 0x240, 0x210, plain decrypt).
+
                     uint64_t man_aerf =
                         subghz_protocol_keeloq_common_learning_aerf(fix, manufacture_code->key);
                     decrypt = subghz_protocol_keeloq_common_decrypt_aerf(hop, man_aerf, 0x240u);
@@ -737,7 +809,7 @@ static uint32_t subghz_protocol_keeloq_check_remote_controller_selector(
                     break;
                 }
                 case KEELOQ_LEARNING_JCM1G:
-                    // JCM1G (type 15): simple learning (device key == mfkey), 8-bit serial.
+
                     decrypt = subghz_protocol_keeloq_common_decrypt(hop, manufacture_code->key);
                     if(subghz_protocol_keeloq_check_decrypt(instance, decrypt, btn, end_serial)) {
                         *manufacture_name =
@@ -1083,7 +1155,6 @@ static uint8_t subghz_protocol_keeloq_get_btn_code(uint8_t last_btn_code) {
     return btn;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -1112,7 +1183,9 @@ void* subghz_protocol_encoder_keeloq_alloc(SubGhzEnvironment* environment) {
     instance->encoder.repeat = 3;
     instance->encoder.size_upload = 1100;
     instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
+    instance->upload_max = 1100;
     instance->encoder.is_running = false;
+    instance->te = subghz_protocol_keeloq_const.te_short;
 
     instance->manufacture_from_file = furi_string_alloc();
 
@@ -1189,6 +1262,16 @@ SubGhzProtocolStatus
             break;
         }
 
+        uint32_t tmp_te;
+        instance->te = subghz_protocol_keeloq_const.te_short;
+        if(flipper_format_read_uint32(flipper_format, "TE", &tmp_te, 1)) {
+            instance->te = enc_keeloq_te_sanitize(tmp_te);
+        }
+        if(!flipper_format_rewind(flipper_format)) {
+            FURI_LOG_E(TAG, "Rewind error");
+            break;
+        }
+
         uint32_t tmp_counter_mode;
         if(flipper_format_read_uint32(flipper_format, "CounterMode", &tmp_counter_mode, 1)) {
             keeloq_counter_mode = (uint8_t)tmp_counter_mode;
@@ -1256,7 +1339,6 @@ static const SubGhzProtocolEncoder enc_keeloq_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_keeloq = {
     .name = SUBGHZ_PROTOCOL_KEELOQ_NAME,
     .type = SubGhzProtocolTypeDynamic,

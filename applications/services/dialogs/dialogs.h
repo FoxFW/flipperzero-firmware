@@ -20,6 +20,7 @@ typedef struct {
     bool hide_ext;
     FileBrowserLoadItemCallback item_loader_callback;
     void* item_loader_context;
+    bool sort_by_name;
 } DialogsFileBrowserOptions;
 
 void dialog_file_browser_set_basic_options(

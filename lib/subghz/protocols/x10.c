@@ -1,6 +1,7 @@
 #include "x10.h"
 
 #include "common.h"
+#include "../encode_plugin.h"
 
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
@@ -58,13 +59,16 @@ const SubGhzProtocolEncoder subghz_protocol_x10_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_x10_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_x10");
+
 const SubGhzProtocol subghz_protocol_x10 = {
     .name = SUBGHZ_PROTOCOL_X10_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_315  | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable,
+    .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_x10_decoder,
-    .encoder = &subghz_protocol_x10_encoder,
+    .encoder = &subghz_protocol_x10_encoder_ext.vtable,
 };
 
 void* subghz_protocol_decoder_x10_alloc(SubGhzEnvironment* environment) {

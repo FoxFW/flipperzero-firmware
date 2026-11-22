@@ -4,7 +4,7 @@
 
 void subghz_blank_transition_draw_cb(Canvas* canvas, void* ctx);
 
-#define SUBGHZ_HITAG2_HELL_FAP_PATH EXT_PATH("apps/Sub-GHz/fox_hitag2_hell.fap")
+#define SUBGHZ_HITAG2_HELL_FAP_PATH EXT_PATH("apps/System/Includes/fox_hitag2_hell.fap")
 
 enum SubmenuIndex {
     SubmenuIndexHitag2Hell,

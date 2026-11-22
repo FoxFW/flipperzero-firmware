@@ -4,7 +4,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <storage/storage.h>
-#include <desktop/helpers/slideshow_filename.h>
+#include <desktop/helpers/update_flag.h>
 #include <toolbox/path.h>
 #include <update_util/dfu_file.h>
 #include <update_util/int_backup.h>
@@ -152,6 +152,15 @@ static bool update_task_post_update(UpdateTask* update_task) {
 
         CHECK_RESULT(int_backup_unpack(update_task->storage, furi_string_get_cstr(file_path)));
 
+        {
+            File* updated_flag = storage_file_alloc(update_task->storage);
+            if(storage_file_open(
+                   updated_flag, FOX_UPDATED_FLAG_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+                storage_file_close(updated_flag);
+            }
+            storage_file_free(updated_flag);
+        }
+
         if(update_task->state.groups & UpdateTaskStageGroupResources) {
             TarUnpackProgress progress = {
                 .update_task = update_task,
@@ -173,20 +182,6 @@ static bool update_task_post_update(UpdateTask* update_task) {
             CHECK_RESULT(tar_archive_unpack_to(archive, STORAGE_EXT_PATH_PREFIX, NULL));
         }
 
-        if(update_task->state.groups & UpdateTaskStageGroupSplashscreen) {
-            update_task_set_progress(update_task, UpdateTaskStageSplashscreenInstall, 0);
-            FuriString* tmp_path;
-            tmp_path = furi_string_alloc_set(update_task->update_path);
-            path_append(tmp_path, furi_string_get_cstr(update_task->manifest->splash_file));
-            if(storage_common_copy(
-                   update_task->storage,
-                   furi_string_get_cstr(tmp_path),
-                   INT_PATH(SLIDESHOW_FILE_NAME)) != FSE_OK) {
-                // actually, not critical
-            }
-            furi_string_free(tmp_path);
-            update_task_set_progress(update_task, UpdateTaskStageSplashscreenInstall, 100);
-        }
         success = true;
     } while(false);
 

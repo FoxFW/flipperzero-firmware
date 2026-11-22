@@ -1,5 +1,5 @@
-/* enc_urmet.fal : SD encoder for urmet (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_urmet_alloc enc_urmet__subghz_protocol_encoder_urmet_alloc
 #define subghz_protocol_encoder_urmet_deserialize enc_urmet__subghz_protocol_encoder_urmet_deserialize
 #define subghz_protocol_encoder_urmet_free enc_urmet__subghz_protocol_encoder_urmet_free
@@ -19,7 +19,7 @@
 
 #define TAG "SubGhzProtocolUrmet"
 #define URMET_TE              500
-#define URMET_PAUSE_TE        68 // ~34 ms trailing low on TX
+#define URMET_PAUSE_TE        68
 #define URMET_MIN_BYTES       16
 #define URMET_MAX_BYTES       40
 #define URMET_MAX_GAPS        192
@@ -44,7 +44,7 @@ struct SubGhzProtocolEncoderUrmet {
 static uint64_t urmet_bytes_to_key(const uint8_t* bytes, uint8_t count);
 static void urmet_key_to_bytes(uint64_t key, uint8_t* bytes, uint8_t count);
 static bool urmet_byte_count_ok(uint8_t byte_count);
-// Build gap list from USART bytes (fallback when Gaps field missing).
+
 static uint8_t urmet_gaps_from_bytes(const uint8_t* bytes, uint8_t byte_count, uint8_t* gaps);
 static bool urmet_load_from_ff(
     FlipperFormat* flipper_format,
@@ -85,20 +85,19 @@ static bool urmet_byte_count_ok(uint8_t byte_count) {
     return byte_count >= URMET_MIN_BYTES && byte_count <= URMET_MAX_BYTES;
 }
 
-// Build gap list from USART bytes (fallback when Gaps field missing).
 static uint8_t urmet_gaps_from_bytes(const uint8_t* bytes, uint8_t byte_count, uint8_t* gaps) {
-    // Bit stream -> RLE lows after each high run of 1*te (highs always split to 1).
+
     uint8_t tmp_bits[URMET_BITBUF];
     uint16_t bit_cnt = 0;
-    // Leading idle not stored as a gap; first edge is start high of byte 0.
+
     for(uint8_t bi = 0; bi < byte_count && bit_cnt + 10 < URMET_BITBUF; bi++) {
         uint8_t val = bytes[bi];
-        tmp_bits[bit_cnt++] = 1; // start
+        tmp_bits[bit_cnt++] = 1;
         for(uint8_t b = 0; b < 8; b++) {
             bool logical = (val >> b) & 1;
             tmp_bits[bit_cnt++] = logical ? 0 : 1;
         }
-        tmp_bits[bit_cnt++] = 0; // stop
+        tmp_bits[bit_cnt++] = 0;
     }
 
     uint8_t gap_count = 0;
@@ -108,7 +107,7 @@ static uint8_t urmet_gaps_from_bytes(const uint8_t* bytes, uint8_t byte_count, u
             i++;
             continue;
         }
-        // Consume exactly one high te (USART highs are 1).
+
         i++;
         uint8_t low = 0;
         while(i < bit_cnt && tmp_bits[i] == 0 && low < 20) {
@@ -205,7 +204,6 @@ static bool subghz_protocol_encoder_urmet_get_upload(SubGhzProtocolEncoderUrmet*
         return false;
     }
 
-    // Exact PPM shape: fixed high 1*te + captured low gap te-multiples.
     for(uint8_t i = 0; i < instance->gap_count; i++) {
         uint8_t g = instance->gaps[i];
         if(g < 1) g = 1;
@@ -214,14 +212,8 @@ static bool subghz_protocol_encoder_urmet_get_upload(SubGhzProtocolEncoderUrmet*
         urmet_upload_add(up, &index, URMET_UPLOAD_MAX, false, g);
     }
 
-    // Terminating high pulse. On air every frame ends with one more 1*te high
-    // immediately before the inter-frame silence; the decoder consumes that
-    // last high as the end-of-frame marker (pending_high dropped at the end
-    // gap), so it is never stored in the gap list. Without re-emitting it the
-    // TX is one pulse short of the captured frame and the receiver rejects it.
     urmet_upload_add(up, &index, URMET_UPLOAD_MAX, true, 1);
 
-    // Trailing inter-frame pause (~34 ms).
     urmet_upload_add(up, &index, URMET_UPLOAD_MAX, false, URMET_PAUSE_TE);
 
     if(index == 0 || index > URMET_UPLOAD_MAX) {
@@ -233,8 +225,6 @@ static bool subghz_protocol_encoder_urmet_get_upload(SubGhzProtocolEncoderUrmet*
     instance->encoder.size_upload = index;
     return true;
 }
-
-// ---------------------------------------------------------------- Encoder
 
 void* subghz_protocol_encoder_urmet_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -330,7 +320,6 @@ static const SubGhzProtocolEncoder enc_urmet_vt = {
     .yield = subghz_protocol_encoder_urmet_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_urmet = {
     .name = SUBGHZ_PROTOCOL_URMET_NAME,
     .type = SubGhzProtocolTypeStatic,

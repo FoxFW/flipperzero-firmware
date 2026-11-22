@@ -12,6 +12,7 @@ void subghz_scene_save_success_on_enter(void* context) {
     Popup* popup = subghz->popup;
 
     popup_set_header(popup, "Saved", 15, 19, AlignLeft, AlignBottom);
+    popup_set_text(popup, subghz->file_name_tmp, 15, 24, AlignLeft, AlignTop);
     popup_set_timeout(popup, 1500);
     popup_set_context(popup, subghz);
     popup_set_callback(popup, subghz_scene_save_success_popup_callback);

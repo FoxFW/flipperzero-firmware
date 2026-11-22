@@ -2,6 +2,7 @@
 
 #include <furi.h>
 #include <toolbox/cli/cli_command.h>
+#include <cli/cli_main_commands.h>
 #include <toolbox/args.h>
 #include <toolbox/pipe.h>
 
@@ -99,8 +100,9 @@ static void input_cli_send(PipeSide* pipe, FuriString* args, FuriPubSub* event_p
 }
 
 void input_cli(PipeSide* pipe, FuriString* args, void* context) {
-    furi_assert(context);
-    FuriPubSub* event_pubsub = context;
+    UNUSED(context);
+
+    FuriPubSub* event_pubsub = furi_record_open(RECORD_INPUT_EVENTS);
     FuriString* cmd;
     cmd = furi_string_alloc();
 
@@ -122,4 +124,7 @@ void input_cli(PipeSide* pipe, FuriString* args, void* context) {
     } while(false);
 
     furi_string_free(cmd);
+    furi_record_close(RECORD_INPUT_EVENTS);
 }
+
+CLI_COMMAND_INTERFACE(input, input_cli, CliCommandFlagParallelSafe, 2 * 1024, CLI_APPID);

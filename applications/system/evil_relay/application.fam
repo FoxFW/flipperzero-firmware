@@ -1,0 +1,11 @@
+App(
+    appid="evil_relay",
+    name="EvilRelay ISO-DEP",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="evil_relay_app",
+    stack_size=4 * 1024,
+    fap_category="NFC",
+    fap_icon="evil_relay.png",
+    fap_description="ISO-DEP NFC relay emulator; APDUs bridged over UART to a companion ESP32 (Wi-Fi/ESP-NOW)",
+    fap_author="7h30th3r0n3",
+)

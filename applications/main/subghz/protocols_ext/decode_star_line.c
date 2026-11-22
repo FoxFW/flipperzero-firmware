@@ -1,4 +1,4 @@
-/* decode_star_line.fal : SD get_string for star_line (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/star_line.h>
@@ -71,9 +71,6 @@ static uint8_t star_line_custom_to_btn(uint8_t custom, uint8_t original_btn) {
 static void star_line_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderStarLine* instance = input->decoder;
-
-
-    /* key derivation done internally */
 
     subghz_custom_btn_set_original(star_line_btn_to_custom(instance->generic.btn));
     subghz_custom_btn_set_max(4);

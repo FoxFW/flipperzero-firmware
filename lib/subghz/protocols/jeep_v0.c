@@ -5,18 +5,9 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "JeepV0"
-
-// Jeep V0 -- ported from firmware jeep_v0.c via KeeLoq-RX arke_misc.py (JeepV0).
-// 200/400 us Manchester at 433.92 MHz ASK. INVERTED polarity: the duration->event
-// mapping is level-flipped vs the standard Flipper Manchester decoder, and the
-// whole demodulated frame is then bit-inverted. 96-bit frame (12 bytes):
-//   serial(32) | button(16) | 0x07(8) | cnt(8) | hop(32)
-// Gate (structural / fixed-field): byte6 == 0x07 AND the 16-bit button code is one
-// of the four known values. No cleartext counter in the fixed part; `cnt` is the
-// low byte of the fixed portion, hop is the 32-bit rolling tail. Decode-only
-// (rolling code -> no clone); .encoder = NULL.
 
 #define JEEP_V0_TE_SHORT    200
 #define JEEP_V0_TE_LONG     400
@@ -41,8 +32,8 @@ struct SubGhzProtocolDecoderJeepV0 {
     uint16_t preamble_count;
     ManchesterState manchester_state;
 
-    uint64_t data_lo; // first 64 demodulated bits (serial|btn|0x07|cnt), post-invert
-    uint32_t data_32; // last 32 demodulated bits (hop), post-invert
+    uint64_t data_lo;
+    uint32_t data_32;
     uint16_t bit_count;
 
     uint32_t serial;
@@ -53,7 +44,6 @@ struct SubGhzProtocolDecoderJeepV0 {
     bool frame_ok;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderJeepV0);
-
 
 typedef enum {
     JeepV0StepReset = 0,
@@ -66,8 +56,8 @@ static bool jeep_v0_button_known(uint16_t code) {
 }
 
 static void jeep_v0_finish(SubGhzProtocolDecoderJeepV0* instance) {
-    // Whole frame is bit-inverted after demodulation (firmware behaviour).
-    uint64_t data = ~instance->data_lo; // 64-bit logical fixed portion
+
+    uint64_t data = ~instance->data_lo;
     uint32_t hop = (uint32_t)(~instance->data_32);
 
     uint32_t serial = (uint32_t)(data >> 32);
@@ -77,7 +67,6 @@ static void jeep_v0_finish(SubGhzProtocolDecoderJeepV0* instance) {
 
     bool frame_ok = (b6 == 0x07U) && jeep_v0_button_known(btn_code);
 
-    // reset accumulator for next frame
     instance->parser_step = JeepV0StepReset;
     instance->preamble_count = 0;
     instance->data_lo = 0;
@@ -93,7 +82,7 @@ static void jeep_v0_finish(SubGhzProtocolDecoderJeepV0* instance) {
     instance->hop = hop;
     instance->frame_ok = true;
 
-    instance->generic.data = data; // top-64 logical frame
+    instance->generic.data = data;
     instance->generic.data_count_bit = JEEP_V0_DATA_BITS;
     instance->generic.serial = serial;
     instance->generic.btn = (uint8_t)(btn_code & 0xFFU);
@@ -113,8 +102,6 @@ void* subghz_protocol_decoder_jeep_v0_alloc(SubGhzEnvironment* environment) {
     instance->manchester_state = ManchesterStateMid1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_jeep_v0_reset(void* context) {
     furi_check(context);
@@ -139,7 +126,7 @@ void subghz_protocol_decoder_jeep_v0_feed(void* context, bool level, uint32_t du
 
     switch(instance->parser_step) {
     case JeepV0StepReset:
-        // NB: firmware does not inspect level here, only the short-timing gate.
+
         if(is_short) {
             instance->preamble_count = 1;
             instance->te_last = duration;
@@ -151,7 +138,7 @@ void subghz_protocol_decoder_jeep_v0_feed(void* context, bool level, uint32_t du
         if(is_short) {
             instance->preamble_count++;
         } else if(is_long && instance->preamble_count >= JEEP_V0_PREAMBLE_MIN) {
-            // Prime Manchester with the long sync edge (INVERTED polarity).
+
             instance->manchester_state = ManchesterStateMid1;
             ManchesterEvent prime =
                 level ? ManchesterEventLongHigh : ManchesterEventLongLow;
@@ -169,9 +156,7 @@ void subghz_protocol_decoder_jeep_v0_feed(void* context, bool level, uint32_t du
         break;
 
     case JeepV0StepData: {
-        // INVERTED polarity event mapping (opposite of standard Manchester):
-        //   short -> level ? ShortHigh : ShortLow
-        //   long  -> level ? LongHigh  : LongLow
+
         ManchesterEvent event = ManchesterEventReset;
         if(is_short) {
             event = level ? ManchesterEventShortHigh : ManchesterEventShortLow;
@@ -206,8 +191,6 @@ void subghz_protocol_decoder_jeep_v0_feed(void* context, bool level, uint32_t du
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_jeep_v0_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -226,6 +209,17 @@ SubGhzProtocolStatus subghz_protocol_decoder_jeep_v0_serialize(
        !flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Hop", &hop, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[12];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    fdata[8] = (uint8_t)(instance->hop >> 24);
+    fdata[9] = (uint8_t)(instance->hop >> 16);
+    fdata[10] = (uint8_t)(instance->hop >> 8);
+    fdata[11] = (uint8_t)(instance->hop);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -273,11 +267,15 @@ const SubGhzProtocolDecoder subghz_protocol_jeep_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_jeep_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_jeep_v0 = {
     .name = JEEP_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_jeep_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_jeep_v0_encoder_ext.vtable,
 };

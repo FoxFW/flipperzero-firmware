@@ -1,4 +1,4 @@
-/* decode_telcoma_edge.fal : SD get_string for telcoma_edge (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/telcoma_edge.h>

@@ -316,8 +316,6 @@ static void hitag2_hell_draw_callback(Canvas* canvas, void* context) {
             elements_multiline_text_aligned(
                 canvas, 64, 14, AlignCenter, AlignTop, app->message);
 
-            /* Two Fox-style buttons side by side with a small gap: Add Signal (left, default),
-             * Dict Only (right). Left/Right selects; the selected one is drawn filled. */
             const uint8_t bw = 56;
             const uint8_t bh = 13;
             const uint8_t gap = 6;

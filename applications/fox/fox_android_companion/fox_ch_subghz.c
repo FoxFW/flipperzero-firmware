@@ -15,7 +15,6 @@
 #include "fox_progress.h"
 #include "fox_watchdog.h"
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,10 +23,9 @@
 
 #define FOX_RX_TMP_NAME "fox_io_rx"
 #define FOX_RX_TMP_PATH EXT_PATH("subghz/fox_io_rx.sub")
-// "recording is live now" marker — the app polls for it to start its capture timer aligned with the
-// real record window (hiding the FAP-boot lag between appStart and the first sample).
+
 #define FOX_RX_MARK EXT_PATH("apps_data/fox_companion/rx_live.txt")
-// App drops this file (its on-screen Stop button) to end the record early; we finish + save now.
+
 #define FOX_RX_STOP EXT_PATH("apps_data/fox_companion/rx_stop.txt")
 
 static FuriHalSubGhzPreset fox_preset_enum(int idx) {
@@ -155,7 +153,7 @@ static bool fox_do_rx(
     if(ok) {
         subghz_devices_start_async_rx(device, subghz_worker_rx_callback, worker);
         subghz_worker_start(worker);
-        // Tell the app the radio is live and recording NOW (see FOX_RX_MARK).
+
         {
             Storage* mstg = furi_record_open(RECORD_STORAGE);
             File* mf = storage_file_alloc(mstg);
@@ -166,16 +164,13 @@ static bool fox_do_rx(
             storage_file_free(mf);
             furi_record_close(RECORD_STORAGE);
         }
-        // Determinate progress page on the Flipper for the known record window; Back stops early.
+
         FoxProgress* prog = fox_progress_begin("SubGHz\nOperation\nin Progress!");
-        // The app can end the record early via its Stop button by dropping FOX_RX_STOP; poll it here
-        // and finish now, saving whatever's been captured so far — the same shorter-capture path as an
-        // on-device Back/cancel. Open storage once for the poll; clear any stale flag first.
+
         Storage* stop_stg = furi_record_open(RECORD_STORAGE);
         storage_simply_remove(stop_stg, FOX_RX_STOP);
         uint32_t start = furi_get_tick();
-        // RSSI squelch: only record while the signal is stronger than the threshold, so the capture
-        // isn't filled with background noise. Same pause/resume mechanism the Flipper's Read RAW uses.
+
         bool paused = false;
         bool stop_req = false;
         uint8_t stop_check = 0;
@@ -187,15 +182,15 @@ static bool fox_do_rx(
                 subghz_protocol_raw_save_to_file_pause((SubGhzProtocolDecoderRAW*)raw, want_pause);
                 paused = want_pause;
             }
-            if(++stop_check >= 5) { // ~every 100ms; no need to stat the SD every 20ms tick
+            if(++stop_check >= 5) {
                 stop_check = 0;
                 if(storage_file_exists(stop_stg, FOX_RX_STOP)) stop_req = true;
             }
             fox_progress_set(prog, (float)(furi_get_tick() - start) / (float)ms);
-            fox_watchdog_kick(); // progress -> the watchdog won't reset us mid-capture
+            fox_watchdog_kick();
             furi_delay_ms(20);
         }
-        storage_simply_remove(stop_stg, FOX_RX_STOP); // don't let the flag abort the next capture
+        storage_simply_remove(stop_stg, FOX_RX_STOP);
         furi_record_close(RECORD_STORAGE);
         subghz_worker_stop(worker);
         subghz_devices_stop_async_rx(device);
@@ -204,7 +199,7 @@ static bool fox_do_rx(
         Storage* tmp_storage = furi_record_open(RECORD_STORAGE);
         storage_simply_remove(tmp_storage, FOX_RX_TMP_PATH);
         furi_record_close(RECORD_STORAGE);
-        fox_progress_end(prog); // page disappears; a cancel just means a shorter capture
+        fox_progress_end(prog);
     }
 
     furi_string_free(preset.name);
@@ -253,7 +248,7 @@ static bool fox_do_sweep(
 
     subghz_devices_reset(device);
     subghz_devices_idle(device);
-    fox_load_preset(device, 1); // AM650 — wideband enough for an RSSI sweep
+    fox_load_preset(device, 1);
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     FuriString* spec = furi_string_alloc();
@@ -271,7 +266,7 @@ static bool fox_do_sweep(
             float rssi = subghz_devices_get_rssi(device);
             subghz_devices_idle(device);
             furi_string_cat_printf(spec, "%lu %d\n", (unsigned long)f, (int)rssi);
-            fox_watchdog_kick(); // a long/continuous sweep is legit progress, not a hang
+            fox_watchdog_kick();
         }
         File* out = storage_file_alloc(storage);
         if(storage_file_open(out, outpath, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
@@ -281,8 +276,8 @@ static bool fox_do_sweep(
         storage_file_free(out);
 
         pass++;
-        if(passes != 0 && pass >= passes) break; // finite passes done
-        if(storage_file_exists(storage, furi_string_get_cstr(stop_path))) break; // app asked to stop
+        if(passes != 0 && pass >= passes) break;
+        if(storage_file_exists(storage, furi_string_get_cstr(stop_path))) break;
         furi_delay_ms(10);
     }
 
@@ -294,7 +289,6 @@ static bool fox_do_sweep(
     return true;
 }
 
-// Detect whether an external CC1101 module is attached (used by the DEVICE receiver status).
 bool fox_subghz_external_present(void) {
     subghz_devices_init();
     const SubGhzDevice* d = radio_device_loader_set(NULL, SubGhzRadioDeviceTypeExternalCC1101);
@@ -319,7 +313,7 @@ int32_t fox_subghz_channel(const char* args) {
     if(strcmp(mode, "RX") == 0) {
         unsigned long freq = 0, ms = 0;
         int dev = 0, preset = 1;
-        int rssi_thr = -65; // dBm squelch; ignore anything weaker (noise). Optional 6th arg overrides.
+        int rssi_thr = -65;
         char outpath[256] = {0};
         int n = sscanf(
             args, "%*s %lu %d %lu %255s %d %d", &freq, &dev, &ms, outpath, &preset, &rssi_thr);
@@ -387,7 +381,6 @@ int32_t fox_subghz_channel(const char* args) {
     return rc;
 }
 
-// Live count of sub-GHz protocols in this firmware build (grows as protocols are added).
 size_t fox_subghz_protocol_count(void) {
     return subghz_protocol_registry_count(&subghz_protocol_registry);
 }

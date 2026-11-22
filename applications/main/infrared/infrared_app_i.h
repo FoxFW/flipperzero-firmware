@@ -114,6 +114,7 @@ struct InfraredApp {
     InfraredAppState app_state;
 
     void* rpc_ctx;
+    bool start_focus_raw_edit;
 };
 
 typedef enum {

@@ -99,9 +99,7 @@ bool desktop_scene_main_on_event(void* context, SceneManagerEvent event) {
             break;
 
         case DesktopMainEventOpenArchive:
-            /* Down-short: now a configurable favorite, default FFB. Repurposes the
-             * otherwise-dead RightLong slot (Right-long is hardcoded to wallpaper).
-             * open_app_or_profile() falls back to ffb.fap when the slot is cleared. */
+
             desktop_scene_main_open_app_or_profile(
                 desktop, &desktop->settings.favorite_apps[FavoriteAppRightLong]);
             consumed = true;

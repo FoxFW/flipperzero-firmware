@@ -5,15 +5,9 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "AudiV2"
-
-// Audi V2 -- ported from firmware audi_v2.c via KeeLoq-RX arke_vag.py (class AudiV2).
-// OOK/ASK, Manchester te_short=280 / te_long=560, INVERTED polarity (level ->
-// ShortHigh). Preamble = >=40 short pulses then one long (which primes the
-// Manchester decoder); then a 72-bit Manchester frame = 64-bit key + 8-bit trailer.
-// The trailer == 0x93 is used by the firmware as an 8-bit frame check (crc_ok). The
-// 64-bit body is encrypted -> no clone. Decode-only; .encoder = NULL.
 
 #define AUDI_V2_TE_SHORT  280
 #define AUDI_V2_TE_LONG   560
@@ -37,14 +31,13 @@ struct SubGhzProtocolDecoderAudiV2 {
     ManchesterState manchester_state;
     uint8_t parser_step;
     uint16_t preamble_count;
-    uint64_t gdata; // first 64 bits
-    uint64_t acc; // running accumulator
+    uint64_t gdata;
+    uint64_t acc;
     uint16_t bit_count;
     uint8_t trailer;
     bool crc_ok;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderAudiV2);
-
 
 typedef enum {
     AudiV2StepReset = 0,
@@ -52,8 +45,6 @@ typedef enum {
     AudiV2StepData = 2,
 } AudiV2Step;
 
-// Manchester event classification -- INVERTED polarity (level -> ShortHigh),
-// mirrors arke _audi_event().
 static ManchesterEvent audi_v2_event(uint32_t duration, bool level) {
     if(DURATION_DIFF(duration, AUDI_V2_TE_SHORT) <= AUDI_V2_TE_DELTA) {
         return level ? ManchesterEventShortHigh : ManchesterEventShortLow;
@@ -69,9 +60,9 @@ static void audi_v2_complete(SubGhzProtocolDecoderAudiV2* instance) {
     uint8_t trailer = (uint8_t)(instance->acc & 0xFFU);
     instance->trailer = trailer;
     instance->crc_ok = (trailer == AUDI_V2_TRAILER);
-    if(!instance->crc_ok) return; // firmware emits only on a valid trailer
+    if(!instance->crc_ok) return;
 
-    instance->generic.data = instance->gdata; // top 64 bits
+    instance->generic.data = instance->gdata;
     instance->generic.data_count_bit = AUDI_V2_DATA_BITS;
     instance->generic.serial = 0;
     instance->generic.btn = 0;
@@ -91,8 +82,6 @@ void* subghz_protocol_decoder_audi_v2_alloc(SubGhzEnvironment* environment) {
     instance->manchester_state = ManchesterStateMid1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_audi_v2_reset(void* context) {
     furi_check(context);
@@ -115,7 +104,7 @@ void subghz_protocol_decoder_audi_v2_feed(void* context, bool level, uint32_t du
 
     switch(instance->parser_step) {
     case AudiV2StepReset:
-        // any short starts the preamble
+
         if(DURATION_DIFF(duration, AUDI_V2_TE_SHORT) <= AUDI_V2_TE_DELTA) {
             instance->preamble_count = 1;
             instance->parser_step = AudiV2StepPreamble;
@@ -132,7 +121,7 @@ void subghz_protocol_decoder_audi_v2_feed(void* context, bool level, uint32_t du
             instance->acc = 0;
             instance->bit_count = 0;
             instance->gdata = 0;
-            // prime Manchester with the long pulse that terminated the preamble
+
             manchester_advance(
                 ManchesterStateMid1,
                 level ? ManchesterEventLongHigh : ManchesterEventLongLow,
@@ -178,8 +167,6 @@ void subghz_protocol_decoder_audi_v2_feed(void* context, bool level, uint32_t du
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_audi_v2_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -192,6 +179,14 @@ SubGhzProtocolStatus subghz_protocol_decoder_audi_v2_serialize(
 
     uint32_t trailer = instance->trailer;
     if(!flipper_format_write_uint32(flipper_format, "Trailer", &trailer, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[9];
+    uint64_t gd = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(gd >> (56 - b * 8));
+    fdata[8] = instance->trailer;
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -234,11 +229,15 @@ const SubGhzProtocolDecoder subghz_protocol_audi_v2_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_audi_v2_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_audi_v2 = {
     .name = AUDI_V2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_audi_v2_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_audi_v2_encoder_ext.vtable,
 };

@@ -15,7 +15,7 @@
 typedef struct SubGhzProtocolDecoderHondaStatic SubGhzProtocolDecoderHondaStatic;
 typedef struct SubGhzProtocolEncoderHondaStatic SubGhzProtocolEncoderHondaStatic;
 
-extern const SubGhzProtocol honda_static_protocol;
+extern const SubGhzProtocol subghz_protocol_honda_static;
 
 void* subghz_protocol_decoder_honda_static_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_honda_static_free(void* context);

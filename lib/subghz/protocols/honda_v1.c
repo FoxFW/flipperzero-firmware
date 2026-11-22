@@ -284,7 +284,7 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v1_decoder = {
 
 static const SubGhzEncoderExternal subghz_protocol_honda_v1_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_honda_v1");
 
-const SubGhzProtocol honda_v1_protocol = {
+const SubGhzProtocol subghz_protocol_honda_v1 = {
     .name = HONDA_V1_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
@@ -301,7 +301,7 @@ void* subghz_protocol_decoder_honda_v1_alloc(SubGhzEnvironment* environment) {
     furi_check(instance);
     memset(instance, 0, sizeof(*instance));
 
-    instance->base.protocol = &honda_v1_protocol;
+    instance->base.protocol = &subghz_protocol_honda_v1;
     instance->generic.protocol_name = instance->base.protocol->name;
 
     return instance;

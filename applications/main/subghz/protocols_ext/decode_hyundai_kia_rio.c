@@ -1,4 +1,4 @@
-/* decode_hyundai_kia_rio.fal : SD get_string for hyundai_kia_rio (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/hyundai_kia_rio.h>

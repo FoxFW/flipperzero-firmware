@@ -698,8 +698,8 @@ static void byte_input_reset_model_input_data(ByteInputModel* model) {
     model->bytes_count = 0;
     model->selected_high_nibble = true;
     model->selected_byte = 0;
-    model->selected_row = 0;
-    model->selected_column = 0;
+    model->selected_row = 1;
+    model->selected_column = 8;
     model->first_visible_byte = 0;
 }
 

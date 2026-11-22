@@ -15,7 +15,7 @@
 
 #define FORD_PROTOCOL_V2_NAME "Ford V2"
 
-extern const SubGhzProtocol ford_protocol_v2;
+extern const SubGhzProtocol subghz_protocol_ford_v2;
 extern const SubGhzProtocolDecoder subghz_protocol_ford_v2_decoder;
 extern const SubGhzProtocolEncoder subghz_protocol_ford_v2_encoder;
 

@@ -32,10 +32,13 @@ typedef struct {
     uint32_t predefined_index;
     bool delete_old_signals;
     bool auto_save;
-    bool capture_unknown_raw; /* Unknown RAW +21 protocol capture on Read screen */
+    bool capture_unknown_raw;
+    bool show_psa_encrypted;
+    bool combine_repeats;
     float hopping_threshold;
     bool enable_preset_hopping;
     float preset_hopping_threshold;
+    uint32_t preset_hopper_mode;
     bool leds_and_amp;
     uint8_t  tx_power;
     uint32_t visualizer_display_mode;
@@ -54,6 +57,17 @@ typedef struct {
     uint32_t dual_int_preset_index;
     uint32_t dual_ext_frequency;
     uint32_t dual_ext_preset_index;
+    uint32_t dual_int_jamming;
+    uint32_t dual_int_jam_frequency;
+    uint32_t dual_int_jam_preset_index;
+    uint32_t dual_ext_jamming;
+    uint32_t dual_ext_jam_frequency;
+    uint32_t dual_ext_jam_preset_index;
+    uint32_t dual_int_rssi;
+    uint32_t dual_ext_rssi;
+    uint32_t dual_rssi_adaptive;
+    uint32_t read_rssi_adaptive;
+    uint32_t readraw_rssi_adaptive;
 } SubGhzLastSettings;
 
 void subghz_last_settings_set_protocol_filter(SubGhzLastSettings* s,

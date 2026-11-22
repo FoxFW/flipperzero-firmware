@@ -1,4 +1,4 @@
-/* decode_astrostart.fal : SD get_string for astrostart (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/astrostart.h>
@@ -27,20 +27,18 @@ static bool subghz_protocol_astrostart_check(
     uint8_t* btn,
     uint8_t* crc) {
     uint8_t bytes[7];
-    bytes[0] = (uint8_t)(data >> 44); /* button          bits 0..7   */
-    bytes[1] = (uint8_t)(data >> 36); /* ~button         bits 8..15  */
-    bytes[2] = (uint8_t)(data >> 28); /* id[31..24]      bits 16..23 */
-    bytes[3] = (uint8_t)(data >> 20); /* id[23..16]      bits 24..31 */
-    bytes[4] = (uint8_t)(data >> 12); /* id[15..8]       bits 32..39 */
-    bytes[5] = (uint8_t)(data >> 4); /* id[7..0]        bits 40..47 */
-    uint8_t rx_checksum = (uint8_t)(data & 0x0F); /* checksum bits 48..51 */
+    bytes[0] = (uint8_t)(data >> 44);
+    bytes[1] = (uint8_t)(data >> 36);
+    bytes[2] = (uint8_t)(data >> 28);
+    bytes[3] = (uint8_t)(data >> 20);
+    bytes[4] = (uint8_t)(data >> 12);
+    bytes[5] = (uint8_t)(data >> 4);
+    uint8_t rx_checksum = (uint8_t)(data & 0x0F);
 
-    /* 1) button must be the bitwise inverse of the next byte */
     if(bytes[0] != (uint8_t)(~bytes[1] & 0xFF)) {
         return false;
     }
 
-    /* 2) nibble-sum checksum over the four ID bytes */
     uint8_t expected = 0;
     for(int i = 2; i < 6; i++) {
         expected = (expected + (bytes[i] >> 4)) & 0x0F;
@@ -83,8 +81,6 @@ static void astrostart_decode(const SubGhzDecodeInput* input, FuriString* output
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderAstrostart* instance = input->decoder;
 
-
-    /* Recover fields for display (also covers loaded/deserialized frames). */
     uint32_t serial = instance->generic.serial;
     uint8_t btn = instance->generic.btn;
     uint8_t crc = instance->generic.crc;

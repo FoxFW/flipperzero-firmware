@@ -48,46 +48,26 @@ static bool ma_preset_enabled(uint8_t idx) {
 #define RSSI_MAX      (-60.0f)
 #define RSSI_SCALE    2.3f
 #define TRIGGER_STEP  1.0f
-#define NOISE_MARGIN_DEFAULT 8.0f  // trigger = noise_floor + this many dB (default)
-#define NOISE_MARGIN_MIN     2.0f  // T-/+T adjust range for the margin
+#define NOISE_MARGIN_DEFAULT 8.0f
+#define NOISE_MARGIN_MIN     2.0f
 #define NOISE_MARGIN_MAX     30.0f
-#define NF_ALPHA             0.15f // ambient noise-floor EMA rate (idle sweeps)
+#define NF_ALPHA             0.15f
 #define MAX_HISTORY   4
 #define REDRAW_MS     80u
 
-// Big-name box idle-cycle period: while there is no confident detection the box
-// sweeps the candidate presets on a wall clock (independent of the measurement
-// sweep) so the idle display reads at a comfortable ~0.5s/step.
 #define ANIM_MS       350u
 
-// ---------------------------------------------------------------------------
-// Modulation Analyzer = "which exact preset does this signal demodulate best
-// under?".  RSSI is PRE-demodulator, so it can only ever see raw carrier power
-// and cannot tell AM270 from AM650 (same carrier, different RX filter) or one
-// FSK deviation from another.  The only way to resolve the EXACT modulation is
-// to actually demodulate the signal under each candidate preset and measure how
-// clean the result is.  So the engine (ma_scan_thread) sweeps every enabled
-// preset, reconfigures the CC1101 to it, captures the demodulated pulse train
-// for DWELL_MS via furi_hal_subghz_start_async_rx(), and scores how "structured"
-// that pulse train is:
-//   - a WELL-MATCHED preset -> many pulses whose durations cluster into a few
-//     discrete symbol widths, with little sub-symbol glitch noise => high score.
-//   - a MISMATCHED preset   -> merged/clipped pulses (filter too narrow), or a
-//     spray of random short glitches (too wide / wrong FSK deviation) => low.
-// AM-vs-FM falls out for free: an FM burst produces almost no structured pulses
-// under any AM/OOK slicer and vice-versa, so the right FAMILY always wins before
-// the right member does.  The preset with the best score is the exact answer.
-#define DWELL_MS        100u   // async-rx capture window per preset, per sweep step
-#define SYM_MIN_US       80u   // shortest plausible data symbol (below = glitch)
-#define SYM_MAX_US     8000u   // longest plausible data symbol (above = gap/idle)
-#define GLITCH_US        60u   // durations under this are noise, not data
-#define MIN_CLEAN         8u   // need at least this many clean pulses to score at all
-#define MIN_LEADER_SCORE  4.0f // leader must beat this to be called a detection
-#define TIE_FRAC          0.80f // same-family score >= this x best => method-2 tie-break band
-#define SCORE_DECAY       0.5f // per-sweep max-hold decay (best capture in a press sticks)
-#define RELEASE_SWEEPS    1u   // sweeps of no-signal before a press is committed to history
-#define MA_HIST_BINS     14u   // log2 duration-histogram bins (peakedness measure)
-#define MA_MAX_CAND      24u   // most presets we will sweep in one pass
+#define DWELL_MS        100u
+#define SYM_MIN_US       80u
+#define SYM_MAX_US     8000u
+#define GLITCH_US        60u
+#define MIN_CLEAN         8u
+#define MIN_LEADER_SCORE  4.0f
+#define TIE_FRAC          0.80f
+#define SCORE_DECAY       0.5f
+#define RELEASE_SWEEPS    1u
+#define MA_HIST_BINS     14u
+#define MA_MAX_CAND      24u
 
 #define MODANA_FREQ_FILE EXT_PATH("subghz/.modana_freq")
 #define LAST_SETTINGS_PATH EXT_PATH("subghz/assets/last_subghz.settings")
@@ -99,24 +79,18 @@ static inline bool feq(float a, float b) { return fabsf(a-b) < 0.001f; }
 typedef enum { ScreenFreqSetup, ScreenScanning } AppScreen;
 typedef enum { FeedbackMute=0, FeedbackSound, FeedbackAll, FeedbackVibro, FeedbackCount } FeedbackLevel;
 
-// Per-dwell demod-pulse accumulator. Written ONLY by the capture ISR
-// (ma_capture_cb) between start_async_rx() and stop_async_rx(); read by the scan
-// thread after stop_async_rx() (a barrier), so no lock is needed - but the
-// fields are volatile because the ISR and thread touch them on different sides
-// of that barrier.
 typedef struct {
-    volatile uint32_t edges;              // every edge the slicer produced
-    volatile uint32_t clean;              // edges with a plausible symbol duration
-    volatile uint32_t glitch;             // edges shorter than GLITCH_US (noise)
-    volatile uint16_t hist[MA_HIST_BINS]; // log2 histogram of clean durations
+    volatile uint32_t edges;
+    volatile uint32_t clean;
+    volatile uint32_t glitch;
+    volatile uint16_t hist[MA_HIST_BINS];
 } MaDwellStat;
 
-// One swept candidate preset and its rolling quality score.
 typedef struct {
     uint8_t preset_idx;
-    float   score;       // max-hold-with-decay across sweeps (the ranking value)
-    float   last_score;  // most recent single-dwell score (diagnostic/display)
-    float   rssi;        // RSSI sampled during its last dwell
+    float   score;
+    float   last_score;
+    float   rssi;
 } MaCand;
 
 typedef struct {
@@ -133,25 +107,24 @@ typedef struct {
     uint8_t    cursor;
 
     uint32_t   scan_freq;
-    uint8_t    preset_idx;      // freq-setup default / mod-filter skip only
+    uint8_t    preset_idx;
     float      current_rssi;
     float      rssi_last;
-    float      trigger;         // manual margin (dB) above the noise floor
-    float      noise_floor;     // auto-tracked ambient RSSI baseline (EMA, idle)
-    uint8_t    confidence;      // 0-100: how clearly leader beat other families
+    float      trigger;
+    float      noise_floor;
+    uint8_t    confidence;
 
-    // Demod-sweep engine state.
-    bool       scan_stop;        // tells the worker thread to exit (app teardown)
-    MaDwellStat dwell;           // current capture accumulator (ISR writes)
+    bool       scan_stop;
+    MaDwellStat dwell;
     MaCand     cand[MA_MAX_CAND];
     uint8_t    ncand;
-    uint8_t    testing_slot;     // candidate currently being measured (idle animation)
-    int8_t     leader_slot;      // best candidate, or -1 when none is confident
-    int8_t     runner_slot;      // same-family runner-up for alternation, or -1
-    bool       signal_present;   // a confident detection exists this sweep
-    bool       press_active;     // a held press is in progress (for 1-commit-per-press)
-    uint8_t    press_leader;     // preset idx latched while the press was strongest
-    uint8_t    no_signal_sweeps; // consecutive no-signal sweeps (release debounce)
+    uint8_t    testing_slot;
+    int8_t     leader_slot;
+    int8_t     runner_slot;
+    bool       signal_present;
+    bool       press_active;
+    uint8_t    press_leader;
+    uint8_t    no_signal_sweeps;
 
     uint8_t    history[MAX_HISTORY];
     uint8_t    history_count[MAX_HISTORY];
@@ -290,7 +263,6 @@ static void write_result_to_settings(ModAnalApp* app, uint32_t freq_hz, uint8_t 
     furi_record_close(RECORD_STORAGE);
 }
 
-// Commit one resolved preset index into the rolling history (one entry/press).
 static void ma_commit_history(ModAnalApp* app, uint8_t nf) {
     bool in_arr = false;
     for(uint8_t i = 0; i < MAX_HISTORY; i++) {
@@ -326,11 +298,6 @@ static void ma_commit_history(ModAnalApp* app, uint8_t nf) {
     app->show_frame = (app->history_len > 0);
 }
 
-// ---- Demod-quality scoring ------------------------------------------------
-
-// Capture ISR: called from the TIM2 input-capture interrupt for every edge of
-// the demodulated data line while async RX is running. MUST stay tiny and
-// integer-only (no floats, no SPI, no blocking). It only bins the edge.
 static void ma_capture_cb(bool level, uint32_t duration, void* ctx) {
     UNUSED(level);
     MaDwellStat* d = ctx;
@@ -341,7 +308,7 @@ static void ma_capture_cb(bool level, uint32_t duration, void* ctx) {
     }
     if(duration >= SYM_MIN_US && duration <= SYM_MAX_US) {
         d->clean++;
-        uint32_t v = duration / SYM_MIN_US; // >= 1
+        uint32_t v = duration / SYM_MIN_US;
         uint32_t b = 0;
         while(v > 1 && b < MA_HIST_BINS - 1) {
             v >>= 1;
@@ -351,14 +318,11 @@ static void ma_capture_cb(bool level, uint32_t duration, void* ctx) {
     }
 }
 
-// Turn one dwell's accumulated pulse stats into a single "how cleanly did this
-// preset demodulate" score. Rewards many clean pulses that concentrate into a
-// couple of histogram bins (sharp symbol clustering) and punishes glitch noise.
 static float ma_dwell_score(const MaDwellStat* d) {
     uint32_t clean = d->clean;
     if(clean < MIN_CLEAN) return 0.0f;
 
-    uint32_t top1 = 0, top2 = 0; // two most-populated duration bins
+    uint32_t top1 = 0, top2 = 0;
     for(uint32_t i = 0; i < MA_HIST_BINS; i++) {
         uint32_t h = d->hist[i];
         if(h >= top1) {
@@ -368,22 +332,12 @@ static float ma_dwell_score(const MaDwellStat* d) {
             top2 = h;
         }
     }
-    float peak = (float)(top1 + top2) / (float)clean;                 // 0..1 clustering
+    float peak = (float)(top1 + top2) / (float)clean;
     float noise = (d->edges > 0) ? (float)d->glitch / (float)d->edges : 1.0f;
     float score = (float)clean * peak * (1.0f - noise);
     return (score > 0.0f) ? score : 0.0f;
 }
 
-// The sweep worker. Owns the radio while scanning: for each enabled preset it
-// reconfigures the CC1101, captures DWELL_MS of demodulated pulses, scores them,
-// and (per sweep) elects the best-scoring preset as the current modulation. The
-// GUI thread never touches the radio, so there is no start/stop race.
-// --- Method-2 selectivity helpers: parse a preset NAME ("AM270", "FM238",
-// "FM12K") into a family (leading letters) and a tightness value (trailing
-// number; a trailing K/k multiplies by 1000, so FM12K ranks WIDER than FM476).
-// Smaller tightness = narrower RX bandwidth / smaller FSK deviation = the more
-// selective, "tighter" match. Only ever compared within one family, so the
-// AM-vs-FM number-scale mismatch never matters. ---
 static uint32_t ma_preset_tightness(const char* name) {
     if(!name) return 0xFFFFFFFFu;
     const char* p = name;
@@ -469,7 +423,6 @@ static int32_t ma_scan_thread(void* ctx) {
             furi_mutex_release(app->mutex);
         }
 
-        // End of sweep: elect a leader and run the per-press commit edge.
         bool play_feedback = false;
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         int best = -1;
@@ -480,11 +433,7 @@ static int32_t ma_scan_thread(void* ctx) {
                 best = i;
             }
         }
-        // Method 2 (selectivity cross-check): among SAME-family presets that
-        // also decoded well (score >= TIE_FRAC * best), the signal fits the
-        // tighter filter too, so the tightest becomes the leader; a wider
-        // same-family sibling that also decoded is kept as the runner-up for
-        // the ambiguity (alternation) display.
+
         int leader = best;
         int runner = -1;
         if(best >= 0) {
@@ -517,14 +466,13 @@ static int32_t ma_scan_thread(void* ctx) {
         app->runner_slot = present ? (int8_t)runner : -1;
         app->signal_present = present;
         app->rssi_last = sweep_max_rssi;
-        // Auto-calibrate the ambient noise floor from IDLE sweeps only (never
-        // while a signal is present, or the floor would climb to the signal).
+
         if(!present) {
             if(app->noise_floor <= RSSI_MIN) app->noise_floor = sweep_max_rssi;
             else app->noise_floor += (sweep_max_rssi - app->noise_floor) * NF_ALPHA;
             if(app->noise_floor < RSSI_MIN) app->noise_floor = RSSI_MIN;
         }
-        // Confidence: how clearly the leader beat the best OTHER-family preset.
+
         uint8_t conf = 0;
         if(present && leader >= 0) {
             const char* lfam =
@@ -548,7 +496,7 @@ static int32_t ma_scan_thread(void* ctx) {
         app->confidence = conf;
 
         if(present) {
-            if(!app->press_active) play_feedback = true; // rising edge of a press
+            if(!app->press_active) play_feedback = true;
             app->press_active = true;
             app->press_leader = (leader >= 0) ? app->cand[leader].preset_idx : 0;
             app->no_signal_sweeps = 0;
@@ -680,19 +628,12 @@ static void draw_scanning(Canvas* canvas, ModAnalApp* app) {
 
     draw_feedback_icon(canvas, 117, 0, app->feedback);
 
-    // Big name box: a confident detection shows the WINNING preset (inverted);
-    // otherwise the box idle-cycles the candidates on a ~0.5s wall clock so the
-    // analyzer always looks alive and legible. The small number is that preset's
-    // demod-quality score ("q"), which is what the engine actually ranks on - a
-    // live readout for tuning and for judging confidence.
     uint8_t disp_idx = app->preset_idx;
     bool    is_inverted = false;
 
     if(app->signal_present && app->leader_slot >= 0 && app->leader_slot < (int8_t)app->ncand) {
         int8_t show = app->leader_slot;
-        // Genuine same-family ambiguity: a runner-up that also decoded well
-        // exists, so alternate leader/runner every ANIM_MS to read e.g.
-        // "FM238 / FM476" = "it's one of these two" (hardware can't split them).
+
         if(app->runner_slot >= 0 && app->runner_slot < (int8_t)app->ncand) {
             uint32_t at = furi_ms_to_ticks(ANIM_MS);
             if(at == 0) at = 1;
@@ -721,7 +662,7 @@ static void draw_scanning(Canvas* canvas, ModAnalApp* app) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 8, 20, preset_display_name);
     {
-        // Live signal level (dBm) in the box, replacing the old raw q score.
+
         canvas_set_font(canvas, FontSecondary);
         float box_dbm = app->signal_present ? app->rssi_last : app->current_rssi;
         if(!feq(box_dbm, 0.0f)) {
@@ -819,15 +760,12 @@ static ModAnalApp* app_alloc(void) {
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
     view_port_update(app->view_port);
 
-    // One sweep worker for the app lifetime; it idles while on the setup screen.
     app->scan_thread = furi_thread_alloc_ex("MaScan", 2048, ma_scan_thread, app);
     furi_thread_start(app->scan_thread);
 
     return app;
 }
 
-// Build the candidate set (every enabled preset) and reset the engine, then hand
-// the radio to the worker by switching to the scanning screen.
 static void start_scanning(ModAnalApp* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->scan_freq = digits_to_hz(app->freq_digits);
@@ -841,7 +779,7 @@ static void start_scanning(ModAnalApp* app) {
         app->cand[app->ncand].rssi = RSSI_MIN;
         app->ncand++;
     }
-    if(app->ncand == 0) { // nothing enabled: fall back to preset 0 so the app still runs
+    if(app->ncand == 0) {
         app->cand[0].preset_idx = 0;
         app->cand[0].score = 0.0f;
         app->cand[0].last_score = 0.0f;
@@ -862,8 +800,6 @@ static void start_scanning(ModAnalApp* app) {
     furi_mutex_release(app->mutex);
 }
 
-// Hand the radio back: the worker sees the screen change, finishes its current
-// dwell and idles the radio itself (the GUI thread must not touch the radio).
 static void stop_scanning(ModAnalApp* app) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->screen = ScreenFreqSetup;
@@ -987,7 +923,6 @@ int32_t subghz_modulation_analyzer_app(void* p) {
         view_port_update(app->view_port);
     }
 
-    // Stop the worker (it idles the radio on exit) before we sleep the radio.
     app->scan_stop = true;
     furi_thread_join(app->scan_thread);
     furi_hal_subghz_idle();
@@ -1022,7 +957,6 @@ int32_t subghz_modulation_analyzer_app(void* p) {
         furi_record_close(RECORD_LOADER);
     }
 
-    // scan_thread already joined above; free it and the rest.
     furi_thread_free(app->scan_thread);
     app->scan_thread = NULL;
     gui_remove_view_port(app->gui, app->view_port);

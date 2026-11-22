@@ -1,5 +1,5 @@
-/* enc_peugot_v0.fal : SD encoder for peugot_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_peugot_v0__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_peugot_v0__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_peugot_v0__subghz_protocol_encoder_common_yield
@@ -30,7 +30,7 @@ struct SubGhzProtocolEncoderPeugotV0 {
     SubGhzProtocolBlockEncoder encoder;
     SubGhzBlockGeneric generic;
 
-    uint16_t data_16;  // Bits 64-79 for encoding
+    uint16_t data_16;
 };
 
 static const SubGhzBlockConst subghz_protocol_peugot_v0_const = {
@@ -40,16 +40,8 @@ static const SubGhzBlockConst subghz_protocol_peugot_v0_const = {
     .min_count_bit_for_found = PEUGOT_V0_DATA_BITS,
 };
 
-/**
- * Build one complete frame into the upload buffer.
- * Signal: [80x SHORT pairs (preamble)][Manchester FE sync + 80 data bits][END GAP]
- */
 static void subghz_protocol_encoder_peugot_v0_get_upload(SubGhzProtocolEncoderPeugotV0* instance);
 
-/**
- * Build one complete frame into the upload buffer.
- * Signal: [80x SHORT pairs (preamble)][Manchester FE sync + 80 data bits][END GAP]
- */
 static void subghz_protocol_encoder_peugot_v0_get_upload(SubGhzProtocolEncoderPeugotV0* instance) {
     furi_assert(instance);
     size_t index = 0;
@@ -57,30 +49,25 @@ static void subghz_protocol_encoder_peugot_v0_get_upload(SubGhzProtocolEncoderPe
     const uint32_t te_short = (uint32_t)subghz_protocol_peugot_v0_const.te_short;
     const uint32_t te_long = (uint32_t)subghz_protocol_peugot_v0_const.te_long;
 
-    // PREAMBLE: 80 SHORT pairs (= 80 Manchester 1-bits)
     for(int p = 0; p < 80; p++) {
         instance->encoder.upload[index++] = level_duration_make(true, te_short);
         instance->encoder.upload[index++] = level_duration_make(false, te_short);
     }
 
-    // FE sync (8 bits) + 80 data bits = 88 bits Manchester encoded
-    // After preamble of 1s, Manchester state is Mid1
     uint8_t manchester_state = ManchesterStateMid1;
 
-    // FE = 11111110 (8 bits sync)
     uint8_t sync_byte = 0xFE;
 
-    // Total: 8 (sync) + 80 (data) = 88 bits
     for(int i = 87; i >= 0; i--) {
         bool bit;
         if(i >= 80) {
-            // Sync bits: FE byte, bits 7..0 (from MSB to LSB)
+
             bit = (sync_byte >> (i - 80)) & 1;
         } else if(i >= 16) {
-            // Data bits 63..0 from generic.data
+
             bit = (instance->generic.data >> (i - 16)) & 1;
         } else {
-            // Data bits 79-64 from data_16 (bits 15..0)
+
             bit = (instance->data_16 >> i) & 1;
         }
 
@@ -111,14 +98,12 @@ static void subghz_protocol_encoder_peugot_v0_get_upload(SubGhzProtocolEncoderPe
         }
     }
 
-    // END GAP
     bool end_level = (manchester_state == ManchesterStateMid1);
     instance->encoder.upload[index++] = level_duration_make(end_level, (uint32_t)6000);
 
     instance->encoder.size_upload = index;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -126,13 +111,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -150,14 +133,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
 
     return ret;
 }
-
-// ============================================================================
-// DISPLAY
-// ============================================================================
-
-// ============================================================================
-// ENCODER IMPLEMENTATION
-// ============================================================================
 
 void* subghz_protocol_encoder_peugot_v0_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -192,12 +167,10 @@ SubGhzProtocolStatus
             break;
         }
 
-        // Read Key2
         uint32_t key2 = 0;
         flipper_format_read_uint32(flipper_format, "Key2", &key2, 1);
         instance->data_16 = (uint16_t)(key2 & 0xFFFF);
 
-        // Optional repeat parameter
         flipper_format_read_uint32(
             flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
 
@@ -218,7 +191,6 @@ static const SubGhzProtocolEncoder enc_peugot_v0_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_peugot_v0 = {
     .name = SUBGHZ_PROTOCOL_PEUGOT_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -2,21 +2,23 @@
 #include <gui/view.h>
 
 #define SGRID_IDX_READ          0
-#define SGRID_IDX_SAVED         1
-#define SGRID_IDX_READRAW       2
-#define SGRID_IDX_ADDMAN        3
-#define SGRID_IDX_RADIOSETTINGS 4
-#define SGRID_IDX_FREQANA       5
-#define SGRID_IDX_MODANA        6
-#define SGRID_IDX_JAMMER        7
-#define SGRID_IDX_SUBRATT       8
-#define SGRID_IDX_TPMS          9
-#define SGRID_IDX_PROTOCOLS     10
-#define SGRID_IDX_MODLIST       11
-#define SGRID_IDX_KEELOQ        12
-#define SGRID_IDX_KEELOQBF      13
-#define SGRID_IDX_READDUAL      14
-#define SGRID_BTN_COUNT         15
+#define SGRID_IDX_READRAW       1
+#define SGRID_IDX_READDUAL      2
+#define SGRID_IDX_RAWDUAL       3
+#define SGRID_IDX_SAVED         4
+#define SGRID_IDX_ADDMAN        5
+#define SGRID_IDX_RADIOSETTINGS 6
+#define SGRID_IDX_FREQANA       8
+#define SGRID_IDX_MODANA        9
+#define SGRID_IDX_SIGNALGRABBER 7
+#define SGRID_IDX_JAMMER        10
+#define SGRID_IDX_SUBRATT       11
+#define SGRID_IDX_TPMS          12
+#define SGRID_IDX_PROTOCOLS     13
+#define SGRID_IDX_MODLIST       14
+#define SGRID_IDX_KEELOQ        15
+#define SGRID_IDX_KEELOQBF      16
+#define SGRID_BTN_COUNT         17
 
 #ifdef __cplusplus
 extern "C" {

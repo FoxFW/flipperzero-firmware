@@ -1,4 +1,4 @@
-/* decode_came_twee.fal : SD get_string for came_twee (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/came_twee.h>
@@ -48,6 +48,9 @@ static void subghz_protocol_came_twee_remote_controller(SubGhzBlockGeneric* inst
 static void subghz_protocol_came_twee_remote_controller(SubGhzBlockGeneric* instance) {
 
     uint8_t cnt_parcel = (uint8_t)(instance->data & 0xF);
+    if(cnt_parcel >= COUNT_OF(came_twee_magic_numbers_xor)) {
+        cnt_parcel = COUNT_OF(came_twee_magic_numbers_xor) - 1;
+    }
     uint32_t data = (uint32_t)(instance->data & 0x0FFFFFFFF);
 
     data = (data ^ came_twee_magic_numbers_xor[cnt_parcel]);

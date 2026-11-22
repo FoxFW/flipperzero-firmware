@@ -9,7 +9,7 @@
 #include "views/desktop_view_main.h"
 #include "views/desktop_view_lock_menu.h"
 #include "views/desktop_view_debug.h"
-#include "views/desktop_view_slideshow.h"
+#include "helpers/update_flag.h"
 #include "views/desktop_view_clock_lock.h"
 
 #include <gui/gui.h>
@@ -31,7 +31,6 @@ typedef enum {
     DesktopViewIdPopup,
     DesktopViewIdPinInput,
     DesktopViewIdPinTimeout,
-    DesktopViewIdSlideshow,
     DesktopViewIdClockLock,
     DesktopViewIdTotal,
 } DesktopViewId;
@@ -55,7 +54,6 @@ struct Desktop {
     DesktopViewLocked* locked_view;
     DesktopMainView* main_view;
     DesktopViewPinTimeout* pin_timeout_view;
-    DesktopSlideshowView* slideshow_view;
     DesktopViewPinInput* pin_input_view;
     DesktopClockLockView* clock_lock_view;
 
@@ -71,7 +69,6 @@ struct Desktop {
     FuriThread* wifi_recheck_thread;
     bool wifi_connected;
     bool cc1101_connected;
-    bool pending_slideshow;
 
     View* wallpaper_view;
     uint8_t* wallpaper_data;
@@ -97,6 +94,11 @@ struct Desktop {
     bool in_transition;
     bool app_running;
     bool locked;
+    bool gate_held_for_wizard;
+    ViewPort* wizard_cover_vp;
+    uint8_t wizard_spin_frame;
+    bool wizard_pending;
+    uint32_t wizard_wait_start;
 
     FuriTimer* alarm_check_timer;
     uint16_t alarm_last_checked_stamp;

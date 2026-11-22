@@ -1,4 +1,4 @@
-/* decode_somfy_keytis.fal : SD get_string for somfy_keytis (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/somfy_keytis.h>
@@ -61,7 +61,6 @@ static const char* subghz_protocol_somfy_keytis_get_name_button(uint8_t btn) {
 static void somfy_keytis_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSomfyKeytis* instance = input->decoder;
-
 
     subghz_protocol_somfy_keytis_check_remote_controller(&instance->generic);
 

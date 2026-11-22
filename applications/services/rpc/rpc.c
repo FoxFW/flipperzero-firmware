@@ -172,12 +172,6 @@ void rpc_session_set_terminated_callback(
     furi_mutex_release(session->callbacks_mutex);
 }
 
-/* Doesn't forbid using rpc_feed_bytes() after session close - it's safe.
- * Because any bytes received in buffer will be flushed before next session.
- * If bytes get into stream buffer before it's get emptied and this
- * command is gets processed - it's safe either way. But case of it is quite
- * odd: client sends close request and sends command after.
- */
 size_t rpc_session_feed(
     RpcSession* session,
     const uint8_t* encoded_bytes,
@@ -223,7 +217,7 @@ bool rpc_pb_stream_read(pb_istream_t* istream, pb_byte_t* buf, size_t count) {
             }
         }
         if(session->decode_error) {
-            /* never go out till RPC_EVENT_DISCONNECT come */
+
             bytes_received = 0;
         }
         if(count == bytes_received) {
@@ -237,11 +231,11 @@ bool rpc_pb_stream_read(pb_istream_t* istream, pb_byte_t* buf, size_t count) {
                     bytes_received = 0;
                     break;
                 } else {
-                    /* Save disconnect flag and continue reading buffer */
+
                     furi_thread_flags_set(furi_thread_get_id(session->thread), RpcEvtDisconnect);
                 }
             } else if(flags & RpcEvtNewData) {
-                // Just wake thread up
+
             }
         }
     }
@@ -298,12 +292,7 @@ static int32_t rpc_session_worker(void* context) {
                 handler->message_handler(&session->decoded_message, handler->context);
                 furi_check(furi_mutex_release(rpc->busy_mutex) == FuriStatusOk);
             } else if(session->decoded_message.which_content == 0) {
-                /* Receiving zeroes means message is 0-length, which
-                 * is valid for proto3: all fields are filled with default values.
-                 * 0 - is default value for which_content field.
-                 * Mark it as decode error, because there is no content message
-                 * in Main message with tag 0.
-                 */
+
                 message_decode_failed = true;
             } else if(!handler && !session->terminate) {
                 FURI_LOG_E(
@@ -322,18 +311,7 @@ static int32_t rpc_session_worker(void* context) {
         if(message_decode_failed) {
             furi_stream_buffer_reset(session->stream);
             if(!session->terminate) {
-                /* Protobuf can't determine start and end of message.
-                 * Handle this by adding varint at beginning
-                 * of a message (PB_ENCODE_DELIMITED). But decoding fail
-                 * means we can't be sure next bytes are varint for next
-                 * message, so the only way to close session.
-                 * RPC itself can't make decision to close session. It has
-                 * to notify:
-                 * 1) down layer (transport)
-                 * 2) other side (companion app)
-                 * Who are responsible to handle RPC session lifecycle.
-                 * Companion receives 2 messages: ERROR_DECODE and session_closed.
-                 */
+
                 FURI_LOG_E(TAG, "Decode failed, error: \'%.128s\'", PB_GET_ERROR(&istream));
                 session->decode_error = true;
                 rpc_send_and_release_empty(session, 0, PB_CommandStatus_ERROR_DECODE);
@@ -344,7 +322,7 @@ static int32_t rpc_session_worker(void* context) {
                 furi_mutex_release(session->callbacks_mutex);
 
                 if(session->owner == RpcOwnerBle) {
-                    // Disconnect BLE session
+
                     FURI_LOG_E("RPC", "BLE session closed due to a decode error");
                     Bt* bt = furi_record_open(RECORD_BT);
                     bt_profile_restore_default(bt);

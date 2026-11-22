@@ -10,6 +10,7 @@
 
 #include <stm32wbxx_ll_dma.h>
 #include <furi_hal_cortex.h>
+#include <fox_fusion.h>
 
 #include <furi.h>
 #include <cc1101.h>
@@ -565,6 +566,7 @@ static bool subghz_device_cc1101_ext_stop_debug(void) {
 static void subghz_device_cc1101_ext_capture_ISR(void* context) {
     UNUSED(context);
     if(!furi_hal_gpio_read(subghz_device_cc1101_ext->g0_pin)) {
+        if(fox_fusion_armed) fox_fusion_push_ext(true);
         if(subghz_device_cc1101_ext->async_rx.capture_callback) {
             if(subghz_device_cc1101_ext->async_mirror_pin != NULL)
                 furi_hal_gpio_write(subghz_device_cc1101_ext->async_mirror_pin, false);
@@ -575,6 +577,7 @@ static void subghz_device_cc1101_ext_capture_ISR(void* context) {
                 (void*)subghz_device_cc1101_ext->async_rx.capture_callback_context);
         }
     } else {
+        if(fox_fusion_armed) fox_fusion_push_ext(false);
         if(subghz_device_cc1101_ext->async_rx.capture_callback) {
             if(subghz_device_cc1101_ext->async_mirror_pin != NULL)
                 furi_hal_gpio_write(subghz_device_cc1101_ext->async_mirror_pin, true);

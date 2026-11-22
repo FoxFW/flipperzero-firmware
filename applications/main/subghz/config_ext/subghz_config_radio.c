@@ -1,8 +1,4 @@
-/* FoxFW2.0 config-externalization Stage 2 (2026-10-31).
- * Radio/ext-module settings scene as an on-demand .fal. Reaches SubGhz AND
- * furi_hal state only through SubGhzConfigHostApi; never includes subghz_i.h or
- * any furi_hal header. Faithful port of the former resident
- * subghz_scene_radio_settings.c. */
+
 
 #include "../helpers/subghz_config_scene.h"
 #include <lib/toolbox/value_index.h>

@@ -2,7 +2,7 @@ App(
     appid="fox_tpms",
     name="Fox TPMS",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     targets=["f7"],
     entry_point="tpms_app",
     requires=["gui"],

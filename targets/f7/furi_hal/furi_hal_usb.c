@@ -94,8 +94,16 @@ static void wkup_evt(usbd_device* dev, uint8_t event, uint8_t ep);
  * itself is just a usbd_connect(false) right after set_config -- the same
  * path the RAM-defrag reseat already uses. */
 #define FOX_USB_GATE_TIMEOUT_MS 8000u
+/* Fixed USB-off cap while the Fox Setup wizard runs. This must stay BELOW
+ * qFlipper's post-flash reconnect watchdog (a longer hold makes qFlipper give
+ * up and show "Unknown Error"), yet long enough to cover the first-boot DB-load
+ * window that fragments the heap. Set once when the wizard starts and never
+ * extended by wizard activity, so release is at boot+cap or wizard-exit,
+ * whichever comes first. Tune to the device's measured qFlipper timeout. */
+#define FOX_USB_GATE_WIZARD_MS  300000u
 static volatile bool fox_usb_gate_armed = false;
 static volatile bool fox_usb_gate_released = false;
+static volatile bool fox_usb_host_seen_flag = false;
 static FuriTimer* fox_usb_gate_timer = NULL;
 
 void furi_hal_usb_init(void) {
@@ -228,6 +236,14 @@ void furi_hal_usb_enable(void) {
     furi_hal_usb_send_message(&msg);
 }
 
+bool furi_hal_usb_host_seen(void) {
+    return fox_usb_host_seen_flag;
+}
+
+void furi_hal_usb_host_seen_reset(void) {
+    fox_usb_host_seen_flag = false;
+}
+
 void furi_hal_usb_boot_gate_release(void) {
     bool was_armed = fox_usb_gate_armed;
     fox_usb_gate_released = true;
@@ -238,6 +254,14 @@ void furi_hal_usb_boot_gate_release(void) {
      * furi_hal_usb_enable() is a no-op, so this is always safe. */
     if(was_armed) {
         furi_hal_usb_enable();
+    }
+}
+
+void furi_hal_usb_boot_gate_hold(void) {
+    if(fox_usb_gate_released) return;
+    if(fox_usb_gate_timer != NULL) {
+        furi_timer_stop(fox_usb_gate_timer);
+        furi_timer_start(fox_usb_gate_timer, furi_ms_to_ticks(FOX_USB_GATE_WIZARD_MS));
     }
 }
 
@@ -292,6 +316,7 @@ static usbd_respond usb_descriptor_get(usbd_ctlreq* req, void** address, uint16_
 
     switch(dtype) {
     case USB_DTYPE_DEVICE:
+        fox_usb_host_seen_flag = true;
         furi_thread_flags_set(furi_thread_get_id(usb.thread), UsbEventRequest);
         if(usb.callback != NULL) {
             usb.callback(FuriHalUsbStateEventDescriptorRequest, usb.callback_context);
@@ -331,6 +356,7 @@ static void reset_evt(usbd_device* dev, uint8_t event, uint8_t ep) {
     UNUSED(dev);
     UNUSED(event);
     UNUSED(ep);
+    fox_usb_host_seen_flag = true;
     furi_thread_flags_set(furi_thread_get_id(usb.thread), UsbEventReset);
     if(usb.callback != NULL) {
         usb.callback(FuriHalUsbStateEventReset, usb.callback_context);

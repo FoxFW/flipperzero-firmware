@@ -14,6 +14,8 @@
 #include <lib/subghz/subghz_worker.h>
 #include <lib/subghz/environment.h>
 #include <lib/subghz/protocols/raw.h>
+#include <lib/subghz/receiver.h>
+#include <lib/subghz/protocols/protocol_items.h>
 #include <lib/toolbox/stream/stream.h>
 #include <lib/toolbox/stream/file_stream.h>
 #include <lib/toolbox/strint.h>
@@ -26,31 +28,23 @@
 #define GRAB_TMP_NAME    "fox_grab_tmp"
 #define GRAB_TMP_PATH    EXT_PATH("subghz/fox_grab_tmp.sub")
 #define GRAB_SAVE_DIR    EXT_PATH("subghz")
-#define GRAB_CAPTURE_MS  2000u   /* recording window AFTER the signal is seen */
-#define GRAB_WAIT_MS     6000u   /* listen this long for the fob after the countdown */
-#define GRAB_RSSI_MARGIN 10.0f   /* dB above the sampled noise floor = signal present */
-#define GRAB_GAP_US      8000    /* inter-frame gap threshold (us) */
-#define GRAB_MIN_EDGES   16      /* a valid frame needs at least this many edges */
-#define GRAB_MAX_EDGES   512     /* cap for the saved repeats (3 frames ~= 160; 2 KB buf) */
-#define GRAB_FRAMES_TARGET 3     /* save this many repeats (decoders need >=2 identical) */
-#define GRAB_FRAMES_MIN    2     /* ...accept this many if the window ran short */
+#define GRAB_CAPTURE_MS  2000u
+#define GRAB_WAIT_MS     6000u
+#define GRAB_RSSI_MARGIN 10.0f
+#define GRAB_GAP_US      8000
+#define GRAB_MIN_EDGES   16
+#define GRAB_MAX_EDGES   512
+#define GRAB_FRAMES_TARGET 3
+#define GRAB_FRAMES_MIN    2
 
-/* ---- fine frequency refine + AM/FM spectral pre-pick ---------------------
- * Technique lifted from the PP Remote Analyzer worker. After the coarse band is
- * locked, sweep +/-300 kHz in 20 kHz steps at a narrow OOK BW to nail the exact
- * center, and use the peak-vs-neighbour spectral shape to guess AM(OOK = sharp
- * spike) vs FM(2FSK = broad) so the capture tries the right modulation family
- * first instead of brute-forcing all. A wrong guess only costs ordering: the
- * other family is still tried afterwards. Thresholds are tune-on-hardware. */
-#define GRAB_FINE_STEP_HZ   20000      /* 20 kHz steps */
-#define GRAB_FINE_POINTS    31         /* +/-300 kHz / 20 kHz, inclusive = 31 points */
-#define GRAB_FINE_SETTLE_MS 2          /* per-point RX settle before the RSSI read */
-#define GRAB_FINE_PRESET    FuriHalSubGhzPresetOok270Async /* narrow OOK => spectral res */
-#define GRAB_AM_PEAK_DB     6.0f        /* peak clears BOTH neighbours by this => AM/OOK */
+#define GRAB_FINE_STEP_HZ   20000
+#define GRAB_FINE_POINTS    31
+#define GRAB_FINE_SETTLE_MS 2
+#define GRAB_FINE_PRESET    FuriHalSubGhzPresetOok270Async
+#define GRAB_AM_PEAK_DB     6.0f
 
-/* ---- modulation table (edited in Config; Left on Start opens Config) ----- */
 typedef struct {
-    const char*         name;   /* short label + filename suffix */
+    const char*         name;
     FuriHalSubGhzPreset preset;
 } GrabMod;
 static const GrabMod GRAB_MODS[] = {
@@ -62,7 +56,6 @@ static const GrabMod GRAB_MODS[] = {
 };
 #define GRAB_MOD_COUNT ((int)(sizeof(GRAB_MODS) / sizeof(GRAB_MODS[0])))
 
-/* ---- frequency table (edited in Config) --------------------------------- */
 typedef struct {
     uint32_t    freq;
     const char* name;
@@ -83,13 +76,13 @@ static const GrabFreq GRAB_FREQS[] = {
 };
 #define GRAB_FREQ_COUNT ((int)(sizeof(GRAB_FREQS) / sizeof(GRAB_FREQS[0])))
 
-/* Config defaults: 433.92/315/868.35/434.42 enabled; AM650/AM270/FM476 enabled. */
 #define GRAB_FREQ_MASK_DEFAULT 0x000Fu
 #define GRAB_MOD_MASK_DEFAULT  0x000Bu
-#define GRAB_CFG_PATH  EXT_PATH("subghz/.fox_grabber.cfg")
-#define GRAB_CFG_MAGIC 0x47524231u /* 'GRB1' */
+#define GRAB_CFG_DIR   EXT_PATH("subghz/assets/settings")
+#define GRAB_CFG_PATH  GRAB_CFG_DIR "/.fox_grabber.cfg"
+#define GRAB_CFG_OLD   EXT_PATH("subghz/.fox_grabber.cfg")
+#define GRAB_CFG_MAGIC 0x47524231u
 
-/* ---- screens / stages --------------------------------------------------- */
 typedef enum {
     GrabScreenStart,
     GrabScreenConfig,
@@ -117,37 +110,82 @@ typedef struct {
 
     GrabScreen screen;
     GrabStage  stage;
-    bool       header_pleasewait; /* "Please Wait!" vs "Press & Hold KeyFob!" */
-    int        countdown;         /* 3..1 during pre-read countdown, else 0 */
+    bool       header_pleasewait;
+    int        countdown;
     bool       exit_requested;
-    bool       open_in_subghz;  /* Right on Result -> launch SubGHz at saved_name */
+    bool       open_in_subghz;
 
     uint32_t   locked_freq;
-    int        locked_preset;     /* -1 none */
-    uint32_t   freq_mask;         /* enabled GRAB_FREQS bits (Config) */
-    uint32_t   mod_mask;          /* enabled GRAB_MODS bits  (Config) */
-    int        cfg_cursor;        /* Config list cursor: freqs then mods */
-    int        cfg_top;           /* Config list scroll offset */
-    int        result_rc;         /* 0 ok, <0 error */
+    int        locked_preset;
+    uint32_t   freq_mask;
+    uint32_t   mod_mask;
+    int        cfg_cursor;
+    int        cfg_top;
+    int        result_rc;
     char       saved_name[64];
+    char       saved_freq[12];
+    char       saved_mod[12];
+    char       saved_proto[24];
+    int        result_sel;
+    int        start_sel;
+    int        err_sel;
+    bool       dev_inited;
+    uint32_t   name_scroll;
 } GrabApp;
 
-/* ---- capture (RAW -> temp .sub), lifted from fox_subghz_io's fox_do_rx --- */
+#define GRAB_PROTO_SZ 24
+
+typedef struct {
+    void*           raw;
+    SubGhzReceiver* receiver;
+} GrabFeed;
+
+static void grab_feed_cb(void* ctx, bool level, uint32_t duration) {
+    GrabFeed* fd = ctx;
+    subghz_protocol_decoder_raw_feed(fd->raw, level, duration);
+    subghz_receiver_decode(fd->receiver, level, duration);
+}
+
+static void grab_overrun_cb(void* ctx) {
+    GrabFeed* fd = ctx;
+    subghz_protocol_decoder_raw_reset(fd->raw);
+    subghz_receiver_reset(fd->receiver);
+}
+
+static void grab_rx_cb(
+    SubGhzReceiver* receiver, SubGhzProtocolDecoderBase* decoder_base, void* ctx) {
+    char* out = ctx;
+    if(out && out[0] == '\0' && decoder_base && decoder_base->protocol &&
+       decoder_base->protocol->name) {
+        strncpy(out, decoder_base->protocol->name, GRAB_PROTO_SZ - 1);
+        out[GRAB_PROTO_SZ - 1] = '\0';
+    }
+    subghz_receiver_reset(receiver);
+}
+
 static bool grab_capture(
     const SubGhzDevice* device,
     uint32_t freq,
     FuriHalSubGhzPreset preset,
     const char* preset_name,
-    uint32_t ms) {
+    uint32_t ms,
+    char* proto_out) {
     SubGhzEnvironment* env = subghz_environment_alloc();
     void* raw = subghz_protocol_decoder_raw_alloc(env);
 
+    subghz_environment_set_protocol_registry(env, &subghz_protocol_registry);
+    SubGhzReceiver* receiver = subghz_receiver_alloc_init(env);
+    subghz_receiver_set_filter(receiver, SubGhzProtocolFlag_Decodable);
+    if(proto_out) proto_out[0] = '\0';
+    subghz_receiver_set_rx_callback(receiver, grab_rx_cb, proto_out);
+    GrabFeed feed = {.raw = raw, .receiver = receiver};
+
     SubGhzWorker* worker = subghz_worker_alloc();
     subghz_worker_set_overrun_callback(
-        worker, (SubGhzWorkerOverrunCallback)subghz_protocol_decoder_raw_reset);
+        worker, (SubGhzWorkerOverrunCallback)grab_overrun_cb);
     subghz_worker_set_pair_callback(
-        worker, (SubGhzWorkerPairCallback)subghz_protocol_decoder_raw_feed);
-    subghz_worker_set_context(worker, raw);
+        worker, (SubGhzWorkerPairCallback)grab_feed_cb);
+    subghz_worker_set_context(worker, &feed);
 
     SubGhzRadioPreset rp;
     rp.name = furi_string_alloc_set(preset_name);
@@ -176,16 +214,12 @@ static bool grab_capture(
 
     furi_string_free(rp.name);
     subghz_worker_free(worker);
+    subghz_receiver_free(receiver);
     subghz_protocol_decoder_raw_free(raw);
     subghz_environment_free(env);
     return ok;
 }
 
-/* ---- segment ONE frame out of the temp .sub and write it to out_path -----
- * Copies the temp's header verbatim (so Frequency/Preset/Protocol are exactly
- * what the proven RAW writer produced), then streams the RAW_Data values and
- * slices the run of edges between the first two inter-frame gaps = one press.
- * Returns 0 on success, <0 on error (-2 = no clean frame found).            */
 static int grab_segment_and_save(const char* out_path) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     Stream* in = file_stream_alloc(storage);
@@ -193,9 +227,9 @@ static int grab_segment_and_save(const char* out_path) {
     FuriString* line = furi_string_alloc();
     int32_t* frame = malloc(sizeof(int32_t) * GRAB_MAX_EDGES);
     int fcount = 0;
-    int frames = 0;         /* complete repeats captured (guards seen while collecting) */
-    int last_guard_end = 0; /* fcount just after the most recent guard (whole-frame trim) */
-    int state = 0; /* 0 seek-first-gap, 1 collecting, 2 target reached, 3 overflow */
+    int frames = 0;
+    int last_guard_end = 0;
+    int state = 0;
     int rc = -1;
 
     do {
@@ -206,7 +240,7 @@ static int grab_segment_and_save(const char* out_path) {
         while(stream_read_line(in, line)) {
             char* rd = strstr(furi_string_get_cstr(line), "RAW_Data:");
             if(!rd) {
-                /* header line: copy verbatim (normalise the newline) */
+
                 furi_string_trim(line);
                 stream_write_string(out, line);
                 stream_write_cstring(out, "\n");
@@ -218,9 +252,7 @@ static int grab_segment_and_save(const char* out_path) {
                 bool is_gap = (d < 0) && (-d >= GRAB_GAP_US);
                 if(state == 0) {
                     if(is_gap) {
-                        /* keep the leading guard gap as frame[0]: Princeton and
-                         * most OOK decoders must see a guard BEFORE the bits to
-                         * leave their reset state, else they collect nothing. */
+
                         frame[fcount++] = d;
                         last_guard_end = fcount;
                         state = 1;
@@ -229,12 +261,11 @@ static int grab_segment_and_save(const char* out_path) {
                     if(fcount < GRAB_MAX_EDGES) {
                         frame[fcount++] = d;
                     } else {
-                        state = 3; /* out of room: stop, keep whole frames so far */
+                        state = 3;
                         break;
                     }
                     if(is_gap) {
-                        /* end of one repeat. Decoders (Princeton et al.) only emit
-                         * after TWO identical frames, so keep several repeats. */
+
                         frames++;
                         last_guard_end = fcount;
                         if(frames >= GRAB_FRAMES_TARGET) {
@@ -248,10 +279,9 @@ static int grab_segment_and_save(const char* out_path) {
             if(state >= 2) break;
         }
 
-        /* keep whole frames only: drop any trailing partial after the last guard */
         if(last_guard_end > 0) fcount = last_guard_end;
         if(frames < GRAB_FRAMES_MIN || fcount < GRAB_MIN_EDGES) {
-            rc = -2; /* not enough clean repeats -- no file written */
+            rc = -2;
             break;
         }
 
@@ -271,7 +301,7 @@ static int grab_segment_and_save(const char* out_path) {
     stream_free(in);
     file_stream_close(out);
     stream_free(out);
-    if(rc != 0) storage_simply_remove(storage, out_path); /* no junk header-only .sub */
+    if(rc != 0) storage_simply_remove(storage, out_path);
     furi_record_close(RECORD_STORAGE);
     return rc;
 }
@@ -280,16 +310,19 @@ static void grab_set(GrabApp* app, GrabScreen screen, GrabStage stage) {
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->screen = screen;
     app->stage = stage;
+    if(screen == GrabScreenStart) app->start_sel = 1;
+    if(screen == GrabScreenResult) app->err_sel = 1;
+    if(screen == GrabScreenResult) app->result_sel = 1;
     furi_mutex_release(app->mutex);
 }
 
-/* ---- Config persistence (tiny binary file on SD) ------------------------ */
 static void grab_cfg_load(GrabApp* app) {
     app->freq_mask = GRAB_FREQ_MASK_DEFAULT;
     app->mod_mask  = GRAB_MOD_MASK_DEFAULT;
     Storage* st = furi_record_open(RECORD_STORAGE);
     File* f = storage_file_alloc(st);
-    if(storage_file_open(f, GRAB_CFG_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+    if(storage_file_open(f, GRAB_CFG_PATH, FSAM_READ, FSOM_OPEN_EXISTING) ||
+       storage_file_open(f, GRAB_CFG_OLD, FSAM_READ, FSOM_OPEN_EXISTING)) {
         uint32_t magic = 0; uint16_t fm = 0; uint8_t mm = 0;
         if(storage_file_read(f, &magic, sizeof(magic)) == sizeof(magic) && magic == GRAB_CFG_MAGIC &&
            storage_file_read(f, &fm, sizeof(fm)) == sizeof(fm) &&
@@ -306,6 +339,8 @@ static void grab_cfg_load(GrabApp* app) {
 static void grab_cfg_save(GrabApp* app) {
     Storage* st = furi_record_open(RECORD_STORAGE);
     File* f = storage_file_alloc(st);
+    storage_simply_mkdir(st, GRAB_CFG_DIR);
+    storage_simply_remove(st, GRAB_CFG_OLD);
     if(storage_file_open(f, GRAB_CFG_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
         uint32_t magic = GRAB_CFG_MAGIC;
         uint16_t fm = (uint16_t)app->freq_mask;
@@ -319,17 +354,13 @@ static void grab_cfg_save(GrabApp* app) {
     furi_record_close(RECORD_STORAGE);
 }
 
-/* AM(OOK) presets vs FM(2FSK/MSK) — used to order the mod sweep from the
- * spectral AM/FM guess. */
 static bool grab_mod_is_am(FuriHalSubGhzPreset p) {
     return p == FuriHalSubGhzPresetOok650Async || p == FuriHalSubGhzPresetOok270Async;
 }
 
-/* ---- worker: (phase 2) capture -> segment -> save ------------------------ */
 static int32_t grab_worker(void* ctx) {
     GrabApp* app = ctx;
 
-    /* Snapshot the enabled Config set (freqs + mods to test). */
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     uint32_t fmask = app->freq_mask;
     uint32_t mmask = app->mod_mask;
@@ -351,7 +382,7 @@ static int32_t grab_worker(void* ctx) {
         if((mmask >> i) & 1u) mods[nmod++] = i;
     }
     if(nfreq == 0 || nmod == 0) {
-        app->result_rc = -4; /* nothing enabled in Config */
+        app->result_rc = -4;
         grab_set(app, GrabScreenResult, GrabStageError);
         return 0;
     }
@@ -364,11 +395,8 @@ static int32_t grab_worker(void* ctx) {
     }
     subghz_devices_begin(device);
 
-    /* Reference preset for the freq sweep = first enabled modulation. */
     const FuriHalSubGhzPreset ref_preset = GRAB_MODS[mods[0]].preset;
 
-    /* Sample the ambient noise floor on each enabled freq BEFORE the press
-     * (during the countdown the fob is still off). */
     float noise[GRAB_FREQ_COUNT];
     subghz_devices_reset(device);
     subghz_devices_idle(device);
@@ -387,7 +415,6 @@ static int32_t grab_worker(void* ctx) {
     }
     subghz_devices_idle(device);
 
-    /* Countdown so the user knows when to press; buzz on each number. */
     for(int n = 3; n >= 1; n--) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         app->screen = GrabScreenProgress;
@@ -403,14 +430,9 @@ static int32_t grab_worker(void* ctx) {
     app->stage = GrabStageFreq;
     furi_mutex_release(app->mutex);
 
-    /* Hold a vibrate + blink the RX LED while we sweep for the signal. The
-     * vibrate STOPPING = "you can let go". */
     notification_message(app->notifications, &sequence_set_vibro_on);
     notification_message(app->notifications, &sequence_blink_start_cyan);
 
-    /* FREQ sweep: each pass measure RSSI on every enabled freq and lock the one with the
-     * STRONGEST margin over its own noise floor (not merely the first above it) = the real
-     * transmitter, so a weak adjacent band can't win just by being earlier in the list. */
     int fi = -1;
     uint32_t wait_start = furi_get_tick();
     while(fi < 0 && (furi_get_tick() - wait_start) < furi_ms_to_ticks(GRAB_WAIT_MS)) {
@@ -431,12 +453,10 @@ static int32_t grab_worker(void* ctx) {
     }
     subghz_devices_idle(device);
 
-    int rc = -3; /* never saw the fob on any enabled freq */
+    int rc = -3;
     char path[96];
     if(fi >= 0) {
-        /* FINE REFINE + AM/FM SPECTRAL: narrow-BW sweep +/-300 kHz / 20 kHz around
-         * the coarse peak. Keep the fine peak as the capture frequency, and judge
-         * AM(sharp spike) vs FM(broad) from the peak-vs-neighbour shape. */
+
         uint32_t cap_freq = freqs[fi];
         bool is_am = false;
         bool have_spectral = false;
@@ -464,7 +484,7 @@ static int32_t grab_worker(void* ctx) {
             }
             uint32_t pf = (uint32_t)(base + peak_s * GRAB_FINE_STEP_HZ);
             if(subghz_devices_is_frequency_valid(device, pf)) cap_freq = pf;
-            /* sharp peak (clears BOTH neighbours by >=GRAB_AM_PEAK_DB) => AM/OOK */
+
             if(peak_s > 0 && peak_s < GRAB_FINE_POINTS - 1 && fine_r[peak_s - 1] > -199.0f &&
                fine_r[peak_s + 1] > -199.0f) {
                 float dl = fine_r[peak_s] - fine_r[peak_s - 1];
@@ -475,8 +495,6 @@ static int32_t grab_worker(void* ctx) {
             subghz_devices_idle(device);
         }
 
-        /* Order the modulation sweep: with a confident spectral guess, try that
-         * family first (1-2 presets); otherwise keep the Config order. */
         int order[GRAB_MOD_COUNT];
         int no = 0;
         if(have_spectral) {
@@ -488,11 +506,9 @@ static int32_t grab_worker(void* ctx) {
             for(int k = 0; k < nmod; k++) order[no++] = mods[k];
         }
 
-        /* MOD sweep: on the fine-locked freq, try the ordered modulations and keep
-         * the FIRST that yields a clean, decodable burst = the winner. */
         DateTime dt;
         furi_hal_rtc_get_datetime(&dt);
-        rc = -2; /* signal seen but no mod produced a clean frame */
+        rc = -2;
         for(int k = 0; k < no; k++) {
             int m = order[k];
             furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -500,8 +516,10 @@ static int32_t grab_worker(void* ctx) {
             app->header_pleasewait = false;
             furi_mutex_release(app->mutex);
 
+            char proto[GRAB_PROTO_SZ] = {0};
             bool cap = grab_capture(
-                device, cap_freq, GRAB_MODS[m].preset, GRAB_MODS[m].name, GRAB_CAPTURE_MS);
+                device, cap_freq, GRAB_MODS[m].preset, GRAB_MODS[m].name, GRAB_CAPTURE_MS,
+                proto);
             if(!cap) continue;
 
             furi_mutex_acquire(app->mutex, FuriWaitForever);
@@ -521,6 +539,15 @@ static int32_t grab_worker(void* ctx) {
 
             if(one == 0) {
                 rc = 0;
+                strncpy(app->saved_freq, fnames[fi], sizeof(app->saved_freq) - 1);
+                strncpy(app->saved_mod, GRAB_MODS[m].name, sizeof(app->saved_mod) - 1);
+
+                if(proto[0]) {
+                    strncpy(app->saved_proto, proto, sizeof(app->saved_proto) - 1);
+                } else {
+                    app->saved_proto[0] = '\0';
+                }
+                app->saved_proto[sizeof(app->saved_proto) - 1] = '\0';
                 break;
             }
         }
@@ -537,6 +564,7 @@ static int32_t grab_worker(void* ctx) {
     if(rc == 0) {
         strncpy(app->saved_name, path, sizeof(app->saved_name) - 1);
         app->saved_name[sizeof(app->saved_name) - 1] = '\0';
+        app->result_sel = 1;
         app->stage = GrabStageDone;
     } else {
         app->stage = GrabStageError;
@@ -546,7 +574,6 @@ static int32_t grab_worker(void* ctx) {
     return 0;
 }
 
-/* ---- draw ---------------------------------------------------------------- */
 static const char* grab_stage_text(GrabStage s) {
     switch(s) {
     case GrabStageFreq:    return "Detecting Freq.";
@@ -557,14 +584,54 @@ static const char* grab_stage_text(GrabStage s) {
     }
 }
 
+#define GRAB_BTN_H 13
+
+static void grab_two_btn(Canvas* c, bool focus_left, const char* left, const char* right) {
+    int y = 50, gap = 4;
+    int w = (128 - gap * 3) / 2;
+    int lx = gap, rx = gap * 2 + w;
+    canvas_set_font(c, FontSecondary);
+    canvas_set_color(c, ColorBlack);
+    if(focus_left)
+        canvas_draw_rbox(c, lx, y, w, GRAB_BTN_H, 3);
+    else
+        canvas_draw_rframe(c, lx, y, w, GRAB_BTN_H, 3);
+    if(focus_left) canvas_set_color(c, ColorWhite);
+    canvas_draw_str_aligned(c, lx + w / 2, y + GRAB_BTN_H / 2, AlignCenter, AlignCenter, left);
+    canvas_set_color(c, ColorBlack);
+    if(!focus_left)
+        canvas_draw_rbox(c, rx, y, w, GRAB_BTN_H, 3);
+    else
+        canvas_draw_rframe(c, rx, y, w, GRAB_BTN_H, 3);
+    if(!focus_left) canvas_set_color(c, ColorWhite);
+    canvas_draw_str_aligned(c, rx + w / 2, y + GRAB_BTN_H / 2, AlignCenter, AlignCenter, right);
+    canvas_set_color(c, ColorBlack);
+}
+
+static void grab_three_btn(Canvas* c, int focus, const char* a, const char* b, const char* cc) {
+    int y = 50, gap = 4;
+    int w = (128 - gap * 4) / 3;
+    int x[3] = {gap, gap * 2 + w, gap * 3 + w * 2};
+    const char* lbl[3] = {a, b, cc};
+    canvas_set_font(c, FontSecondary);
+    for(int i = 0; i < 3; i++) {
+        canvas_set_color(c, ColorBlack);
+        if(i == focus)
+            canvas_draw_rbox(c, x[i], y, w, GRAB_BTN_H, 3);
+        else
+            canvas_draw_rframe(c, x[i], y, w, GRAB_BTN_H, 3);
+        if(i == focus) canvas_set_color(c, ColorWhite);
+        canvas_draw_str_aligned(
+            c, x[i] + w / 2, y + GRAB_BTN_H / 2, AlignCenter, AlignCenter, lbl[i]);
+    }
+    canvas_set_color(c, ColorBlack);
+}
 static void draw_start(Canvas* c, GrabApp* app) {
-    UNUSED(app);
     canvas_draw_icon(c, 2, 14, &I_fox_32x32);
     canvas_set_font(c, FontPrimary);
     canvas_draw_str(c, 42, 26, "Press & Hold");
     canvas_draw_str(c, 42, 40, "KeyFob!");
-    elements_button_left(c, "Config");
-    elements_button_center(c, "Start");
+    grab_two_btn(c, app->start_sel == 0, "Config", "Start");
 }
 
 static void draw_config(Canvas* c, GrabApp* app) {
@@ -605,7 +672,7 @@ static void draw_config(Canvas* c, GrabApp* app) {
 static void draw_progress(Canvas* c, GrabApp* app) {
     canvas_set_font(c, FontPrimary);
     if(app->countdown > 0) {
-        char buf[24]; /* -Werror=format-truncation: fit worst-case %d */
+        char buf[24];
         snprintf(buf, sizeof(buf), "Press in %d", app->countdown);
         canvas_draw_str_aligned(c, 64, 26, AlignCenter, AlignCenter, buf);
         canvas_set_font(c, FontSecondary);
@@ -616,23 +683,31 @@ static void draw_progress(Canvas* c, GrabApp* app) {
     canvas_draw_str_aligned(c, 64, 6, AlignCenter, AlignTop, hdr);
     canvas_set_font(c, FontSecondary);
     canvas_draw_str_aligned(c, 64, 32, AlignCenter, AlignCenter, grab_stage_text(app->stage));
-    /* crude phase-2 progress hint; real bar + Fox buttons land in the UI phase */
+
     uint8_t w = (app->stage == GrabStageAnalyze) ? 108 : 54;
     canvas_draw_frame(c, 10, 46, 108, 8);
     canvas_draw_box(c, 10, 46, w, 8);
 }
 
 static void draw_result(Canvas* c, GrabApp* app) {
-    canvas_set_font(c, FontPrimary);
     if(app->result_rc == 0) {
         const char* base = strrchr(app->saved_name, '/');
         base = base ? base + 1 : app->saved_name;
-        canvas_draw_str_aligned(c, 64, 8, AlignCenter, AlignTop, "Saved!");
+        canvas_set_font(c, FontPrimary);
+        canvas_draw_str_aligned(c, 64, 6, AlignCenter, AlignTop, "Saved!");
         canvas_set_font(c, FontSecondary);
-        canvas_draw_str_aligned(c, 64, 24, AlignCenter, AlignCenter, base);
-        canvas_draw_str_aligned(c, 64, 37, AlignCenter, AlignCenter, "OK: grab another");
-        elements_button_left(c, "Discard");
-        elements_button_right(c, "Open");
+        elements_scrollable_text_line_str(
+            c, 64, 22, 120, base, app->name_scroll / 3, false, true);
+        char fl[40];
+        snprintf(fl, sizeof(fl), "Freq: %s %s", app->saved_freq, app->saved_mod);
+        canvas_draw_str_aligned(c, 64, 31, AlignCenter, AlignCenter, fl);
+        if(app->saved_proto[0]) {
+            char pl[40];
+            snprintf(pl, sizeof(pl), "ID: %s", app->saved_proto);
+            canvas_draw_str_aligned(c, 64, 42, AlignCenter, AlignCenter, pl);
+        }
+        int rs = (app->result_sel < 0 || app->result_sel > 2) ? 1 : app->result_sel;
+        grab_three_btn(c, rs, "New", "Open", "Exit");
     } else {
         const char* msg = (app->result_rc == -2) ? "No clean frame" :
                           (app->result_rc == -3) ? "No signal seen" :
@@ -640,10 +715,11 @@ static void draw_result(Canvas* c, GrabApp* app) {
         const char* hint =
             (app->result_rc == -4) ? "Pick freqs + mods" :
             (app->result_rc == -3) ? "Hold fob / check freqs" : "Hold the fob longer";
-        canvas_draw_str_aligned(c, 64, 10, AlignCenter, AlignTop, msg);
+        canvas_set_font(c, FontPrimary);
+        canvas_draw_str_aligned(c, 64, 8, AlignCenter, AlignTop, msg);
         canvas_set_font(c, FontSecondary);
         canvas_draw_str_aligned(c, 64, 30, AlignCenter, AlignCenter, hint);
-        canvas_draw_str_aligned(c, 64, 56, AlignCenter, AlignBottom, "OK: retry   Back: exit");
+        grab_two_btn(c, app->err_sel == 0, "Exit", "Retry");
     }
 }
 
@@ -667,7 +743,6 @@ static void input_cb(InputEvent* event, void* ctx) {
     furi_message_queue_put(queue, event, FuriWaitForever);
 }
 
-/* ---- lifecycle ----------------------------------------------------------- */
 static void grab_start_worker(GrabApp* app) {
     if(app->worker) return;
     app->header_pleasewait = false;
@@ -675,6 +750,10 @@ static void grab_start_worker(GrabApp* app) {
     app->countdown = 3;
     app->screen = GrabScreenProgress;
     app->stage = GrabStageRead;
+    if(!app->dev_inited) {
+        subghz_devices_init();
+        app->dev_inited = true;
+    }
     app->worker = furi_thread_alloc_ex("FoxGrabWork", 2048, grab_worker, app);
     furi_thread_start(app->worker);
 }
@@ -694,6 +773,7 @@ static GrabApp* grab_alloc(void) {
     app->screen        = GrabScreenStart;
     app->stage         = GrabStageIdle;
     app->locked_preset = -1;
+    app->start_sel     = 1;
     grab_cfg_load(app);
 
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
@@ -724,7 +804,6 @@ static void grab_free(GrabApp* app) {
 
 int32_t fox_subghz_grabber_app(void* p) {
     UNUSED(p);
-    subghz_devices_init();
     GrabApp* app = grab_alloc();
 
     InputEvent event;
@@ -737,7 +816,7 @@ int32_t fox_subghz_grabber_app(void* p) {
                 int rc = app->result_rc;
                 furi_mutex_release(app->mutex);
                 if(screen == GrabScreenConfig) {
-                    /* Config list: Up/Down move, OK toggles, Back saves + returns. */
+
                     const int total = GRAB_FREQ_COUNT + GRAB_MOD_COUNT;
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
                     if(event.key == InputKeyUp) {
@@ -761,32 +840,53 @@ int32_t fox_subghz_grabber_app(void* p) {
                     if(screen != GrabScreenProgress) app->exit_requested = true;
                 } else if(event.key == InputKeyOk) {
                     if(screen == GrabScreenStart) {
-                        grab_start_worker(app);
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        int s = app->start_sel;
+                        if(s == 0) {
+                            app->cfg_cursor = 0;
+                            app->cfg_top = 0;
+                            app->screen = GrabScreenConfig;
+                        }
+                        furi_mutex_release(app->mutex);
+                        if(s != 0) grab_start_worker(app);
+                    } else if(screen == GrabScreenResult && rc != 0) {
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        int s = app->err_sel;
+                        furi_mutex_release(app->mutex);
+                        if(s == 0)
+                            app->exit_requested = true;
+                        else
+                            grab_set(app, GrabScreenStart, GrabStageIdle);
                     } else if(screen == GrabScreenResult) {
-                        grab_set(app, GrabScreenStart, GrabStageIdle); /* grab another */
+                        furi_mutex_acquire(app->mutex, FuriWaitForever);
+                        int sel = app->result_sel;
+                        furi_mutex_release(app->mutex);
+                        if(sel == 0) {
+                            grab_set(app, GrabScreenStart, GrabStageIdle);
+                        } else if(sel == 1) {
+                            app->open_in_subghz = true;
+                            app->exit_requested = true;
+                        } else {
+                            app->exit_requested = true;
+                        }
                     }
-                } else if(screen == GrabScreenResult && rc == 0) {
-                    if(event.key == InputKeyLeft) {
-                        /* Discard: delete the saved .sub, back to Start. */
-                        Storage* st = furi_record_open(RECORD_STORAGE);
-                        storage_simply_remove(st, app->saved_name);
-                        furi_record_close(RECORD_STORAGE);
-                        grab_set(app, GrabScreenStart, GrabStageIdle);
-                    } else if(event.key == InputKeyRight) {
-                        /* Open the grab in SubGHz, then exit the grabber. */
-                        app->open_in_subghz = true;
-                        app->exit_requested = true;
-                    }
-                } else if(screen == GrabScreenStart && event.key == InputKeyLeft) {
-                    /* Left opens Config (like SubGHz Read's Config button). */
+                } else if(
+                    (screen == GrabScreenStart || screen == GrabScreenResult) &&
+                    (event.key == InputKeyLeft || event.key == InputKeyRight)) {
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
-                    app->cfg_cursor = 0;
-                    app->cfg_top = 0;
-                    app->screen = GrabScreenConfig;
+                    if(screen == GrabScreenStart) {
+                        app->start_sel = (event.key == InputKeyLeft) ? 0 : 1;
+                    } else if(rc != 0) {
+                        app->err_sel = (event.key == InputKeyLeft) ? 0 : 1;
+                    } else {
+                        if(event.key == InputKeyLeft && app->result_sel > 0) app->result_sel--;
+                        if(event.key == InputKeyRight && app->result_sel < 2) app->result_sel++;
+                    }
                     furi_mutex_release(app->mutex);
                 }
             }
         }
+        app->name_scroll++;
         view_port_update(app->view_port);
     }
 
@@ -795,17 +895,29 @@ int32_t fox_subghz_grabber_app(void* p) {
     strncpy(open_path, app->saved_name, sizeof(open_path) - 1);
     open_path[sizeof(open_path) - 1] = '\0';
 
+    bool dev_inited = app->dev_inited;
     grab_free(app);
-    subghz_devices_deinit();
+    if(dev_inited) subghz_devices_deinit();
 
+    Loader* loader = furi_record_open(RECORD_LOADER);
     if(open) {
-        /* Hand the just-grabbed .sub to SubGHz (RAW -> Read RAW/send view). Use the launch
-         * QUEUE, not a detached start: the loader is still locked by this FAP, so a direct
-         * start is rejected and we would just fall back to the apps list. The queued launch
-         * fires AFTER we exit (same mechanism FFB uses to open files). */
-        Loader* loader = furi_record_open(RECORD_LOADER);
-        loader_enqueue_launch(loader, "Sub-GHz", open_path, LoaderDeferredLaunchFlagGui);
-        furi_record_close(RECORD_LOADER);
+        Storage* grab_storage = furi_record_open(RECORD_STORAGE);
+        storage_simply_remove(grab_storage, "/ext/subghz/.focus_menu");
+        File* focus_f = storage_file_alloc(grab_storage);
+        if(storage_file_open(
+               focus_f, "/ext/subghz/.focus_file", FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+            const char* rr_prefix = "rawreturn:";
+            storage_file_write(focus_f, rr_prefix, strlen(rr_prefix));
+            storage_file_write(focus_f, open_path, strlen(open_path));
+        }
+        storage_file_close(focus_f);
+        storage_file_free(focus_f);
+        furi_record_close(RECORD_STORAGE);
+        loader_enqueue_launch(loader, "Sub-GHz", NULL, LoaderDeferredLaunchFlagGui);
+    } else {
+
+        loader_enqueue_launch(loader, "Sub-GHz", NULL, LoaderDeferredLaunchFlagGui);
     }
+    furi_record_close(RECORD_LOADER);
     return 0;
 }

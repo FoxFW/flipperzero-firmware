@@ -13,7 +13,7 @@
 
 #define TAG "SubGhzProtocolDitecGOL4"
 
-static bool ditec_gol4_raw_replay = false; // #16: TxRaw verbatim replay (freeze counter)
+static bool ditec_gol4_raw_replay = false;
 
 #define DITEC_GOL4_UPLOAD_SIZE 128
 #define GOL4_RAW_BYTES 7
@@ -62,7 +62,6 @@ const SubGhzProtocolDecoder subghz_protocol_ditec_gol4_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     void* ditec_gol4_raw_replay;
 } enc_ditec_gol4_host_t;
@@ -194,7 +193,7 @@ static void subghz_protocol_ditec_gol4_encode_key(SubGhzBlockGeneric* instance) 
     }
 
     if(ditec_gol4_raw_replay) {
-        /* #16: freeze counter on TxRaw verbatim replay */
+
     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
         if(!subghz_block_generic_global_counter_override_get(&instance->cnt)) {

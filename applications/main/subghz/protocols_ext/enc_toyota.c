@@ -1,5 +1,5 @@
-/* enc_toyota.fal : SD encoder for toyota (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_toyota_alloc enc_toyota__subghz_protocol_encoder_toyota_alloc
 #define subghz_protocol_encoder_toyota_deserialize enc_toyota__subghz_protocol_encoder_toyota_deserialize
 #define subghz_protocol_encoder_toyota_free enc_toyota__subghz_protocol_encoder_toyota_free
@@ -47,17 +47,13 @@ static const SubGhzBlockConst toyota_const_b = {
     .min_count_bit_for_found = 67,
 };
 
-/* Frame bit j (0 = first on air). Bits 0..63 come from data (MSB first), the
- * remainder from data_2 (MSB first over its bit_count-64 bits). */
 static inline uint8_t toyota_frame_bit(uint64_t data, uint64_t data_2, uint8_t bit_count, uint8_t j);
 static bool subghz_protocol_encoder_toyota_get_upload(SubGhzProtocolEncoderToyota* inst);
 
-/* Frame bit j (0 = first on air). Bits 0..63 come from data (MSB first), the
- * remainder from data_2 (MSB first over its bit_count-64 bits). */
 static inline uint8_t toyota_frame_bit(uint64_t data, uint64_t data_2, uint8_t bit_count, uint8_t j) {
     if(j < 64) return (uint8_t)((data >> (63 - j)) & 1U);
     uint8_t tb = (uint8_t)(bit_count - 64);
-    uint8_t k  = (uint8_t)(j - 64);               /* 0..tb-1 */
+    uint8_t k  = (uint8_t)(j - 64);
     return (uint8_t)((data_2 >> (tb - 1 - k)) & 1U);
 }
 
@@ -66,7 +62,7 @@ static bool subghz_protocol_encoder_toyota_get_upload(SubGhzProtocolEncoderToyot
     const uint8_t  bit_count = inst->generic.data_count_bit;
     const uint64_t data      = inst->generic.data;
     const uint64_t data_2    = inst->generic.data_2;
-    /* cnt carries the decoder's variant: 2 = C, otherwise B (A is unreachable) */
+
     const bool     variant_c = (inst->generic.cnt == 2);
 
     if(bit_count < 64 || bit_count > TOYOTA_C_FRAME_BITS) {
@@ -99,7 +95,7 @@ static bool subghz_protocol_encoder_toyota_get_upload(SubGhzProtocolEncoderToyot
         }
         up[idx++] = level_duration_make(true,  c->te_short);
         up[idx++] = level_duration_make(false, (TOYOTA_B_SYNC_GAP_MIN + TOYOTA_B_SYNC_GAP_MAX) / 2);
-        /* NRZ: one pulse per bit, alternating level; width encodes the bit */
+
         bool lvl = true;
         for(uint8_t j = 0; j < bit_count && idx < cap; j++) {
             uint8_t b = toyota_frame_bit(data, data_2, bit_count, j);
@@ -146,7 +142,7 @@ SubGhzProtocolStatus
             ret = SubGhzProtocolStatusErrorValueBitCount;
             break;
         }
-        /* Optional trailing bits + optional Repeat */
+
         uint32_t tail = 0;
         if(!flipper_format_rewind(flipper_format) ||
            !flipper_format_read_uint32(flipper_format, "Tail", &tail, 1)) {
@@ -196,7 +192,6 @@ static const SubGhzProtocolEncoder enc_toyota_vt = {
     .yield = subghz_protocol_encoder_toyota_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_toyota = {
     .name = SUBGHZ_PROTOCOL_TOYOTA_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -65,14 +65,14 @@ const SubGhzProtocolDecoder subghz_protocol_bmw_cas4_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
-static const SubGhzEncoderExternal subghz_protocol_bmw_cas4_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_bmw_cas4");
+static const SubGhzEncoderExternal subghz_protocol_bmw_cas4_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
 
 const SubGhzProtocol subghz_protocol_bmw_cas4 = {
     .name = BMW_CAS4_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_bmw_cas4_decoder,
     .encoder = &subghz_protocol_bmw_cas4_encoder_ext.vtable,
 };

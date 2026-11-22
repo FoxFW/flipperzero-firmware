@@ -1,11 +1,4 @@
-/*
- * ESL protocol helpers.
- *
- * This layer turns barcodes, pixels, and payload bytes into the frames
- * that the Flipper sends over IR to the tag.
- *
- * SPDX-License-Identifier: GPL-3.0-only
- */
+
 
 #pragma once
 

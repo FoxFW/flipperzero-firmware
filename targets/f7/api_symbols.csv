@@ -270,6 +270,7 @@ Header,+,lib/toolbox/pretty_format.h,,
 Header,+,lib/toolbox/protocols/protocol_dict.h,,
 Header,+,lib/toolbox/pulse_protocols/pulse_glue.h,,
 Header,+,lib/toolbox/saved_struct.h,,
+Header,+,lib/toolbox/settings_helpers/submenu_based.h,,
 Header,+,lib/toolbox/simple_array.h,,
 Header,+,lib/toolbox/str_buffer.h,,
 Header,+,lib/toolbox/stream/buffered_file_stream.h,,
@@ -315,6 +316,7 @@ Header,+,targets/f7/furi_hal/furi_hal_usb_cdc.h,,
 Header,+,targets/f7/platform_specific/cxx_virtual_stub.h,,
 Header,+,targets/f7/platform_specific/intrinsic_export.h,,
 Header,+,targets/f7/platform_specific/math_wrapper.h,,
+Header,+,targets/furi_hal_include/fox_fusion.h,,
 Header,+,targets/furi_hal_include/furi_hal.h,,
 Header,+,targets/furi_hal_include/furi_hal_adc.h,,
 Header,+,targets/furi_hal_include/furi_hal_bt.h,,
@@ -970,7 +972,7 @@ Function,+,cli_print_usage,void,"const char*, const char*, const char*"
 Function,+,cli_registry_add_command,void,"CliRegistry*, const char*, CliCommandFlag, CliCommandExecuteCallback, void*"
 Function,+,cli_registry_add_command_ex,void,"CliRegistry*, const char*, CliCommandFlag, CliCommandExecuteCallback, void*, size_t"
 Function,+,cli_registry_alloc,CliRegistry*,
-Function,-,cli_registry_delete_command,void,"CliRegistry*, const char*"
+Function,+,cli_registry_delete_command,void,"CliRegistry*, const char*"
 Function,+,cli_registry_free,void,CliRegistry*
 Function,+,cli_registry_reload_external_commands,void,"CliRegistry*, const CliCommandExternalConfig*"
 Function,+,cli_registry_remove_external_commands,void,CliRegistry*
@@ -1245,6 +1247,8 @@ Function,+,file_browser_free,void,FileBrowser*
 Function,+,file_browser_get_view,View*,FileBrowser*
 Function,+,file_browser_set_callback,void,"FileBrowser*, FileBrowserCallback, void*"
 Function,+,file_browser_set_item_callback,void,"FileBrowser*, FileBrowserLoadItemCallback, void*"
+Function,+,file_browser_set_sort_by_name,void,"FileBrowser*, _Bool"
+Function,+,file_browser_set_sort_mode,void,"FileBrowser*, uint8_t, _Bool"
 Function,+,file_browser_start,void,"FileBrowser*, FuriString*"
 Function,+,file_browser_stop,void,FileBrowser*
 Function,+,file_browser_worker_alloc,BrowserWorker*,"FuriString*, const char*, const char*, _Bool, _Bool"
@@ -1304,7 +1308,7 @@ Function,+,flipper_format_free,void,FlipperFormat*
 Function,+,flipper_format_get_raw_stream,Stream*,FlipperFormat*
 Function,+,flipper_format_get_value_count,_Bool,"FlipperFormat*, const char*, uint32_t*"
 Function,+,flipper_format_insert_or_update_bool,_Bool,"FlipperFormat*, const char*, const _Bool*, const uint16_t"
-Function,-,flipper_format_insert_or_update_float,_Bool,"FlipperFormat*, const char*, const float*, const uint16_t"
+Function,+,flipper_format_insert_or_update_float,_Bool,"FlipperFormat*, const char*, const float*, const uint16_t"
 Function,+,flipper_format_insert_or_update_hex,_Bool,"FlipperFormat*, const char*, const uint8_t*, const uint16_t"
 Function,-,flipper_format_insert_or_update_int32,_Bool,"FlipperFormat*, const char*, const int32_t*, const uint16_t"
 Function,-,flipper_format_insert_or_update_string,_Bool,"FlipperFormat*, const char*, FuriString*"
@@ -1377,9 +1381,22 @@ Function,+,fox_escrow_execute_wipe,void,
 Function,+,fox_escrow_load_and_verify,_Bool,FoxEscrowData*
 Function,+,fox_escrow_save_state,_Bool,const FoxEscrowData*
 Function,+,fox_escrow_trigger_wiper_screen,void,
+Function,+,fox_fusion_arm,_Bool,
+Function,+,fox_fusion_count_ext,size_t,
+Function,+,fox_fusion_count_int,size_t,
+Function,+,fox_fusion_disarm,void,
+Function,+,fox_fusion_drain_ext,size_t,"FoxFusionEdge*, size_t"
+Function,+,fox_fusion_drain_int,size_t,"FoxFusionEdge*, size_t"
+Function,+,fox_fusion_free,void,
+Function,+,fox_fusion_overflow_ext,uint32_t,
+Function,+,fox_fusion_overflow_int,uint32_t,
+Function,+,fox_fusion_push_ext,void,_Bool
+Function,+,fox_fusion_push_int,void,_Bool
 Function,+,fox_recovery_check_and_reset,_Bool,
 Function,+,fox_recovery_generate_file,_Bool,uint8_t
 Function,+,fox_recovery_validate_and_register_token,_Bool,const char*
+Function,+,fox_rpc_usb_session_active_since,uint32_t,
+Function,+,fox_rpc_usb_session_is_active,_Bool,
 Function,+,fox_settings_get_notification_text,uint8_t,
 Function,+,fox_settings_import_override,_Bool,
 Function,+,fox_settings_read,_Bool,
@@ -1555,10 +1572,10 @@ Function,+,furi_hal_dma_init_early,void,
 Function,-,furi_hal_flash_erase,void,uint8_t
 Function,-,furi_hal_flash_get_base,size_t,
 Function,-,furi_hal_flash_get_cycles_count,size_t,
-Function,-,furi_hal_flash_get_free_end_address,const void*,
+Function,+,furi_hal_flash_get_free_end_address,const void*,
 Function,-,furi_hal_flash_get_free_page_count,size_t,
 Function,-,furi_hal_flash_get_free_page_start_address,size_t,
-Function,-,furi_hal_flash_get_free_start_address,const void*,
+Function,+,furi_hal_flash_get_free_start_address,const void*,
 Function,-,furi_hal_flash_get_page_number,int16_t,size_t
 Function,-,furi_hal_flash_get_page_size,size_t,
 Function,-,furi_hal_flash_get_read_block_size,size_t,
@@ -1909,13 +1926,16 @@ Function,+,furi_hal_subghz_tx,_Bool,
 Function,+,furi_hal_subghz_write_packet,void,"const uint8_t*, uint8_t"
 Function,+,furi_hal_switch,void,void*
 Function,+,furi_hal_usb_boot_gate_arm,void,
+Function,+,furi_hal_usb_boot_gate_hold,void,
 Function,+,furi_hal_usb_boot_gate_release,void,
 Function,+,furi_hal_usb_ccid_insert_smartcard,void,
 Function,+,furi_hal_usb_ccid_remove_smartcard,void,
 Function,+,furi_hal_usb_ccid_set_callbacks,void,"CcidCallbacks*, void*"
 Function,+,furi_hal_usb_disable,void,
-Function,-,furi_hal_usb_enable,void,
+Function,+,furi_hal_usb_enable,void,
 Function,+,furi_hal_usb_get_config,FuriHalUsbInterface*,
+Function,+,furi_hal_usb_host_seen,_Bool,
+Function,+,furi_hal_usb_host_seen_reset,void,
 Function,-,furi_hal_usb_init,void,
 Function,+,furi_hal_usb_is_locked,_Bool,
 Function,+,furi_hal_usb_lock,void,
@@ -2774,6 +2794,8 @@ Function,+,memcmp,int,"const void*, const void*, size_t"
 Function,+,memcpy,void*,"void*, const void*, size_t"
 Function,-,memmem,void*,"const void*, size_t, const void*, size_t"
 Function,-,memmgr_alloc_from_pool,void*,size_t
+Function,+,memmgr_defrag_suppress_consume,_Bool,
+Function,+,memmgr_defrag_suppress_once,void,
 Function,+,memmgr_get_free_heap,size_t,
 Function,+,memmgr_get_minimum_free_heap,size_t,
 Function,+,memmgr_get_total_heap,size_t,
@@ -3009,7 +3031,7 @@ Function,+,nfc_device_get_name,const char*,"const NfcDevice*, NfcDeviceNameType"
 Function,+,nfc_device_get_protocol,NfcProtocol,const NfcDevice*
 Function,+,nfc_device_get_protocol_name,const char*,NfcProtocol
 Function,+,nfc_device_get_uid,const uint8_t*,"const NfcDevice*, size_t*"
-Function,-,nfc_device_is_equal,_Bool,"const NfcDevice*, const NfcDevice*"
+Function,+,nfc_device_is_equal,_Bool,"const NfcDevice*, const NfcDevice*"
 Function,+,nfc_device_is_equal_data,_Bool,"const NfcDevice*, NfcProtocol, const NfcDeviceData*"
 Function,+,nfc_device_load,_Bool,"NfcDevice*, const char*"
 Function,-,nfc_device_reset,void,NfcDevice*
@@ -3815,6 +3837,7 @@ Function,+,subghz_receiver_decode,void,"SubGhzReceiver*, _Bool, uint32_t"
 Function,+,subghz_receiver_detach_decoder,_Bool,"SubGhzReceiver*, SubGhzProtocolDecoderBase*"
 Function,+,subghz_receiver_free,void,SubGhzReceiver*
 Function,+,subghz_receiver_reset,void,SubGhzReceiver*
+Function,+,subghz_receiver_reset_decode_result,void,SubGhzReceiver*
 Function,+,subghz_receiver_reset_except_by_name,void,"SubGhzReceiver*, const char*"
 Function,+,subghz_receiver_search_decoder_base_by_name,SubGhzProtocolDecoderBase*,"SubGhzReceiver*, const char*"
 Function,+,subghz_receiver_set_filter,void,"SubGhzReceiver*, SubGhzProtocolFlag"
@@ -3831,6 +3854,8 @@ Function,+,subghz_setting_get_frequency_count,size_t,SubGhzSetting*
 Function,+,subghz_setting_get_frequency_default_index,uint32_t,SubGhzSetting*
 Function,+,subghz_setting_get_hopper_frequency,uint32_t,"SubGhzSetting*, size_t"
 Function,+,subghz_setting_get_hopper_frequency_count,size_t,SubGhzSetting*
+Function,+,subghz_setting_get_hopper_preset2_count,size_t,SubGhzSetting*
+Function,+,subghz_setting_get_hopper_preset2_index,size_t,"SubGhzSetting*, size_t"
 Function,+,subghz_setting_get_hopper_preset_count,size_t,SubGhzSetting*
 Function,+,subghz_setting_get_hopper_preset_index,size_t,"SubGhzSetting*, size_t"
 Function,+,subghz_setting_get_inx_preset_by_name,int,"SubGhzSetting*, const char*"
@@ -3867,6 +3892,7 @@ Function,+,subghz_worker_set_context,void,"SubGhzWorker*, void*"
 Function,-,subghz_worker_set_filter,void,"SubGhzWorker*, uint16_t"
 Function,+,subghz_worker_set_overrun_callback,void,"SubGhzWorker*, SubGhzWorkerOverrunCallback"
 Function,+,subghz_worker_set_pair_callback,void,"SubGhzWorker*, SubGhzWorkerPairCallback"
+Function,+,subghz_worker_set_priority,void,"SubGhzWorker*, FuriThreadPriority"
 Function,+,subghz_worker_start,void,SubGhzWorker*
 Function,+,subghz_worker_stop,void,SubGhzWorker*
 Function,+,submenu_add_item,void,"Submenu*, const char*, uint32_t, SubmenuItemCallback, void*"
@@ -3882,6 +3908,13 @@ Function,+,submenu_reset,void,Submenu*
 Function,+,submenu_set_header,void,"Submenu*, const char*"
 Function,+,submenu_set_orientation,void,"Submenu*, ViewOrientation"
 Function,+,submenu_set_selected_item,void,"Submenu*, uint32_t"
+Function,+,submenu_settings_helpers_alloc,SubmenuSettingsHelper*,const SubmenuSettingsHelperDescriptor*
+Function,+,submenu_settings_helpers_app_start,_Bool,"SubmenuSettingsHelper*, void*"
+Function,+,submenu_settings_helpers_assign_objects,void,"SubmenuSettingsHelper*, ViewDispatcher*, SceneManager*, Submenu*, uint32_t, uint32_t"
+Function,+,submenu_settings_helpers_free,void,SubmenuSettingsHelper*
+Function,+,submenu_settings_helpers_scene_enter,void,SubmenuSettingsHelper*
+Function,+,submenu_settings_helpers_scene_event,_Bool,"SubmenuSettingsHelper*, SceneManagerEvent"
+Function,+,submenu_settings_helpers_scene_exit,void,SubmenuSettingsHelper*
 Function,-,system,int,const char*
 Function,-,tan,double,double
 Function,-,tanf,float,float
@@ -5220,6 +5253,7 @@ Variable,-,ble_profile_hid,const FuriHalBleProfileTemplate*,
 Variable,+,ble_profile_serial,const FuriHalBleProfileTemplate* const,
 Variable,-,compress_config_heatshrink_default,const CompressConfigHeatshrink,
 Variable,+,firmware_api_interface,const ElfApiInterface* const,
+Variable,+,fox_fusion_armed,volatile _Bool,
 Variable,+,furi_hal_i2c_bus_external,FuriHalI2cBus,
 Variable,+,furi_hal_i2c_bus_power,FuriHalI2cBus,
 Variable,+,furi_hal_i2c_handle_external,const FuriHalI2cBusHandle,

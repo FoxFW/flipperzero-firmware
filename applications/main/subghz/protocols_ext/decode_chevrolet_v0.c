@@ -1,4 +1,4 @@
-/* decode_chevrolet_v0.fal : SD get_string for chevrolet_v0 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/chevrolet_v0.h>
@@ -14,14 +14,14 @@ struct SubGhzProtocolDecoderChevroletV0 {
     SubGhzBlockGeneric generic;
 
     ManchesterState manchester_state;
-    uint32_t data_header; // 32-bit preamble / high shift register
-    uint16_t bit_count; // preamble bit counter
-    uint16_t data_count; // collected data bits
+    uint32_t data_header;
+    uint16_t bit_count;
+    uint16_t data_count;
 
-    uint32_t serial; // 24-bit
-    uint8_t btn; // 4-bit
-    uint64_t hop; // 36-bit
-    uint32_t seed; // low 32 bits of payload
+    uint32_t serial;
+    uint8_t btn;
+    uint64_t hop;
+    uint32_t seed;
 };
 
 static const char* chevrolet_v0_button_name(uint8_t btn);

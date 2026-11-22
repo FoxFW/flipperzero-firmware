@@ -90,13 +90,7 @@ int32_t namechanger_on_system_start(void* p) {
     }
 
     if(namechanger_init()) {
-        /* cli_vcp already brought USB up with the FACTORY name (storage wasn't mounted
-         * yet), so the CDC serial is flip_<factory>. Rebuild it now with the custom name
-         * while the boot gate still holds the pullup down, so the host's FIRST enumeration
-         * is flip_<customname>. Without this, boot enumerates the factory-name serial (one
-         * COM) and the first USB reseat rebuilds it as the custom-name serial (a different
-         * COM) -- the COM drift seen only on renamed units. reinit respects the boot gate
-         * (USB stays down until desktop releases it), so nothing enumerates early. */
+
         furi_hal_usb_reinit();
 
         Bt* bt = furi_record_open(RECORD_BT);

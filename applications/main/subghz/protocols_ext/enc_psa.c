@@ -1,5 +1,5 @@
-/* enc_psa.fal : SD encoder for psa (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_psa_alloc enc_psa__subghz_protocol_encoder_psa_alloc
 #define subghz_protocol_encoder_psa_deserialize enc_psa__subghz_protocol_encoder_psa_deserialize
 #define subghz_protocol_encoder_psa_free enc_psa__subghz_protocol_encoder_psa_free
@@ -744,7 +744,6 @@ static const SubGhzProtocolEncoder enc_psa_vt = {
     .yield = subghz_protocol_encoder_psa_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_psa = {
     .name = SUBGHZ_PROTOCOL_PSA_NAME,
     .type = SubGhzProtocolTypeDynamic,

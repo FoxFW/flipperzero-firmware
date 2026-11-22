@@ -4,18 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "MitsubishiV1"
-
-// Mitsubishi V1 -- ported from firmware mitsubishi_v1.c via KeeLoq-RX
-// arke_mitsu_bmw.py. 2-FSK Manchester, te 200/400 us, delta 100. 96-bit frame:
-//   [sync32 = 0x1E4C11A7][fix8 = 0xE0][btn4][cnt10][hop42].
-// Half-bit toggle Manchester (a LONG pulse = one bit = the pulse level; two
-// SHORT pulses = one bit = the 2nd short's level). No per-fob serial (only the
-// constant 0xE0 fix byte) and NO CRC/checksum -> structural gate only. Hardening:
-// the fix byte MUST equal 0xE0 (documented invariant across 6 captures / 111
-// presses); anything else is a foreign signal and is dropped. Rolling hop is
-// encrypted (counter not extractable). Decode-only; .encoder = NULL.
 
 #define MITSUBISHI_V1_DATA_BITS 96
 #define MITSUBISHI_V1_ALL_BITS_MAX 200
@@ -28,7 +19,6 @@ static const SubGhzBlockConst subghz_protocol_mitsubishi_v1_const = {
     .min_count_bit_for_found = MITSUBISHI_V1_DATA_BITS,
 };
 
-// 32-bit sync word 0x1E4C11A7, MSB-first.
 static const uint8_t mitsubishi_v1_sync[32] = {0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 0,
                                                0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0,
                                                0, 1, 1, 0, 1, 0, 0, 1, 1, 1};
@@ -38,7 +28,7 @@ struct SubGhzProtocolDecoderMitsubishiV1 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 = Reset, 1 = Collect
+    uint8_t step;
     bool half;
     uint8_t all_bits[MITSUBISHI_V1_ALL_BITS_MAX];
     uint16_t bit_count;
@@ -46,13 +36,10 @@ struct SubGhzProtocolDecoderMitsubishiV1 {
     uint8_t fix;
     uint8_t btn;
     uint16_t cnt;
-    uint64_t hop; // 42-bit encrypted rolling code
+    uint64_t hop;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMitsubishiV1);
 
-
-// Scan collected bits for the 32-bit sync word; return its start index or -1.
-// Mirrors arke MitsubishiV1._find_sync (need = 56 bits after the 32-bit sync).
 static int32_t mitsubishi_v1_find_sync(const uint8_t* bits, uint16_t n) {
     const int32_t need = 56;
     int32_t search_end = (int32_t)n - 32 - need;
@@ -75,8 +62,6 @@ static void mitsubishi_v1_reset_accum(SubGhzProtocolDecoderMitsubishiV1* instanc
     instance->bit_count = 0;
 }
 
-// Mirror of arke MitsubishiV1._process_frame: locate sync, bound the frame,
-// extract fix/btn/cnt/hop, apply the 0xE0 invariant gate, then emit.
 static void mitsubishi_v1_process_frame(SubGhzProtocolDecoderMitsubishiV1* instance) {
     uint16_t n = instance->bit_count;
     if(n < 88) return;
@@ -88,14 +73,12 @@ static void mitsubishi_v1_process_frame(SubGhzProtocolDecoderMitsubishiV1* insta
     if(data_len > 96) data_len = 96;
     if(data_len < 88) return;
 
-    // first up-to-64 bits -> data (includes the 32 sync bits at the top)
     uint64_t data = 0;
     int32_t take = data_len < 64 ? data_len : 64;
     for(int32_t i = 0; i < take; i++) {
         data = (data << 1) | (instance->all_bits[data_start + i] & 1U);
     }
 
-    // hop = 42 bits starting at frame bit 54
     uint64_t hop = 0;
     int32_t hop_bits = 0;
     int32_t hop_end = data_len < 96 ? data_len : 96;
@@ -105,14 +88,12 @@ static void mitsubishi_v1_process_frame(SubGhzProtocolDecoderMitsubishiV1* insta
     }
     if(hop_bits < 42) hop <<= (42 - hop_bits);
 
-    uint8_t fix = (uint8_t)((data >> 24) & 0xFFU); // frame bits 32..39
-    uint8_t btn = (uint8_t)((data >> 20) & 0x0FU); // frame bits 40..43
-    uint16_t cnt = (uint16_t)((data >> 10) & 0x3FFU); // frame bits 44..53
+    uint8_t fix = (uint8_t)((data >> 24) & 0xFFU);
+    uint8_t btn = (uint8_t)((data >> 20) & 0x0FU);
+    uint16_t cnt = (uint16_t)((data >> 10) & 0x3FFU);
 
     mitsubishi_v1_reset_accum(instance);
 
-    // Hardening gate: the fix byte is a constant 0xE0 invariant. Reject anything
-    // else (and, by the same rule, the degenerate values).
     if(fix != MITSUBISHI_V1_FIX_INVARIANT) return;
 
     instance->fix = fix;
@@ -122,7 +103,7 @@ static void mitsubishi_v1_process_frame(SubGhzProtocolDecoderMitsubishiV1* insta
 
     instance->generic.data = data;
     instance->generic.data_count_bit = MITSUBISHI_V1_DATA_BITS;
-    instance->generic.serial = fix; // V1 exposes no per-fob serial; surface the fix byte
+    instance->generic.serial = fix;
     instance->generic.btn = btn;
     instance->generic.cnt = cnt;
     instance->decoder.decode_data = data;
@@ -141,8 +122,6 @@ void* subghz_protocol_decoder_mitsubishi_v1_alloc(SubGhzEnvironment* environment
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_mitsubishi_v1_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderMitsubishiV1* instance = context;
@@ -154,33 +133,32 @@ void subghz_protocol_decoder_mitsubishi_v1_reset(void* context) {
 void subghz_protocol_decoder_mitsubishi_v1_feed(void* context, bool level, uint32_t duration) {
     furi_check(context);
     SubGhzProtocolDecoderMitsubishiV1* instance = context;
-    uint32_t te_s = subghz_protocol_mitsubishi_v1_const.te_short; // 200
-    uint32_t te_l = subghz_protocol_mitsubishi_v1_const.te_long; // 400
-    uint32_t te_d = subghz_protocol_mitsubishi_v1_const.te_delta; // 100
+    uint32_t te_s = subghz_protocol_mitsubishi_v1_const.te_short;
+    uint32_t te_l = subghz_protocol_mitsubishi_v1_const.te_long;
+    uint32_t te_d = subghz_protocol_mitsubishi_v1_const.te_delta;
 
     if(instance->step == 0) {
-        // Reset -- start on the first plausible SHORT/LONG, then fall through.
+
         if(duration >= (te_s - te_d) && duration <= (te_l + te_d)) {
             instance->step = 1;
             instance->bit_count = 0;
             instance->half = false;
-            // fall through: process this first pulse in Collect
+
         } else {
             return;
         }
     }
 
-    // Collect
     if(instance->bit_count >= (MITSUBISHI_V1_ALL_BITS_MAX - 1)) {
         mitsubishi_v1_process_frame(instance);
         return;
     }
-    if(duration < (te_s / 2)) return; // glitch -> ignore, keep state
+    if(duration < (te_s / 2)) return;
 
     bool is_long = (duration > ((te_s + te_l) / 2)) && (duration <= (te_l + te_d));
     bool is_short = (duration >= (te_s - te_d)) && (duration <= ((te_s + te_l) / 2));
 
-    if(duration > (te_l + te_d)) { // gap / frame end
+    if(duration > (te_l + te_d)) {
         mitsubishi_v1_process_frame(instance);
         return;
     }
@@ -197,8 +175,6 @@ void subghz_protocol_decoder_mitsubishi_v1_feed(void* context, bool level, uint3
         }
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_mitsubishi_v1_serialize(
     void* context,
@@ -220,6 +196,18 @@ SubGhzProtocolStatus subghz_protocol_decoder_mitsubishi_v1_serialize(
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "HopHi", &hop_hi, 1) ||
        !flipper_format_write_uint32(flipper_format, "HopLo", &hop_lo, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[12];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    uint32_t hoplo = (uint32_t)(instance->hop & 0xFFFFFFFFUL);
+    fdata[8] = (uint8_t)(hoplo >> 24);
+    fdata[9] = (uint8_t)(hoplo >> 16);
+    fdata[10] = (uint8_t)(hoplo >> 8);
+    fdata[11] = (uint8_t)(hoplo);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -267,13 +255,16 @@ const SubGhzProtocolDecoder subghz_protocol_mitsubishi_v1_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_mitsubishi_v1_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_mitsubishi_v1 = {
     .name = MITSUBISHI_V1_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    // 2-FSK -> add SubGhzProtocolFlag_FM
+
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mitsubishi_v1_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_mitsubishi_v1_encoder_ext.vtable,
 };

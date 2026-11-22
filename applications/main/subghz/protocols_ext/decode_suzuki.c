@@ -1,4 +1,4 @@
-/* decode_suzuki.fal : SD get_string for suzuki (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/suzuki.h>
@@ -73,7 +73,6 @@ static void suzuki_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSuzuki* instance = input->decoder;
 
-    
     uint64_t data = instance->generic.data;
 
     subghz_custom_btn_set_max(4);
@@ -90,10 +89,10 @@ static void suzuki_decode(const SubGhzDecodeInput* input, FuriString* output) {
     uint32_t key_high = (data >> 32) & 0xFFFFFFFF;
     uint32_t key_low = data & 0xFFFFFFFF;
     uint8_t received_crc = (data >> 4) & 0xFF;
-    
+
     uint8_t calculated_crc = suzuki_calculate_crc(data);
     bool crc_valid = (received_crc == calculated_crc);
-    
+
     furi_string_cat_printf(
         output,
         "%s %dbit\r\n"

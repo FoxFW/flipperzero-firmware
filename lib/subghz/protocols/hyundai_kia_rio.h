@@ -10,15 +10,12 @@
 #include <lib/subghz/blocks/math.h>
 #include <flipper_format/flipper_format.h>
 
-
-// Ported from KAT (src/protocols/hyundai_kia_rio.rs). 64-bit PWM, 32-bit serial +
-// 16-bit button mask + 16-bit checksum (~(serial ^ serial>>16 ^ mask)).
 #define HYUNDAI_KIA_RIO_PROTOCOL_NAME "Hyundai/Kia RIO"
 
 typedef struct SubGhzProtocolDecoderHyundaiKiaRio SubGhzProtocolDecoderHyundaiKiaRio;
 typedef struct SubGhzProtocolEncoderHyundaiKiaRio SubGhzProtocolEncoderHyundaiKiaRio;
 
-extern const SubGhzProtocol hyundai_kia_rio_protocol;
+extern const SubGhzProtocol subghz_protocol_hyundai_kia_rio;
 
 void* subghz_protocol_decoder_hyundai_kia_rio_alloc(SubGhzEnvironment* environment);
 void subghz_protocol_decoder_hyundai_kia_rio_free(void* context);

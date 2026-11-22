@@ -42,6 +42,7 @@ typedef struct File File;
 typedef struct {
     uint8_t flags;
     uint64_t size;
+    uint32_t date;
 } FileInfo;
 
 const char* filesystem_api_error_get_desc(FS_Error error_id);

@@ -4,17 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "HondaV7"
-
-// Honda V7 -- ported from firmware honda_v7.c via KeeLoq-RX arke_honda.py (class HondaV7).
-// OOK PWM, te 250/480 us, te_delta 100. 88-bit frame, LSB-first per byte; each decoded
-// byte is bit-reversed (rev8) to its "natural" form. A bit is one PWM symbol: a high+low
-// pair both SHORT -> 0, both LONG -> 1. Fields (natural bytes):
-//   button = nat[0]>>4 (4b), serial = (nat[0]&0xF)<<24 | nat[1..3] (28b),
-//   counter = nat[4..6] (24b), mode = nat[7]>>4 (4b), checksum = nat[8].
-// Integrity: XOR(nat[0..7]) == checksum (nat[8]). Genuine 8-bit XOR checksum gate.
-// Decode-only (rolling counter encrypted upstream); .encoder = NULL.
 
 #define HV7_TS          250
 #define HV7_TL          480
@@ -47,10 +39,9 @@ struct SubGhzProtocolDecoderHondaV7 {
     uint8_t mode;
     uint8_t crc;
     bool crc_ok;
-    uint32_t tail; // natural[8..10] (24 bits incl checksum)
+    uint32_t tail;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV7);
-
 
 typedef enum {
     HondaV7StepReset = 0,
@@ -58,7 +49,6 @@ typedef enum {
     HondaV7StepData = 2,
 } HondaV7Step;
 
-// rev8: reverse the 8 bits of a byte (matches arke_core.rev8).
 static uint8_t honda_v7_rev8(uint8_t b) {
     uint8_t r = 0;
     for(uint8_t i = 0; i < 8; i++) {
@@ -67,7 +57,6 @@ static uint8_t honda_v7_rev8(uint8_t b) {
     return r;
 }
 
-// classify duration: 1 short, 2 long, 0 invalid.
 static uint8_t honda_v7_classify(uint32_t dur) {
     if(DURATION_DIFF(dur, HV7_TS) <= HV7_TD) return 1;
     if(DURATION_DIFF(dur, HV7_TL) <= HV7_TD) return 2;
@@ -131,8 +120,6 @@ void* subghz_protocol_decoder_honda_v7_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_v7_reset(void* context) {
     furi_check(context);
@@ -216,8 +203,6 @@ void subghz_protocol_decoder_honda_v7_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v7_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -240,6 +225,15 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v7_serialize(
        !flipper_format_write_uint32(flipper_format, "Mode", &mode, 1) ||
        !flipper_format_write_uint32(flipper_format, "CRC", &crc, 1) ||
        !flipper_format_write_uint32(flipper_format, "Tail", &tail, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[11];
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(instance->generic.data >> (56 - b * 8));
+    fdata[8] = (uint8_t)(instance->tail >> 16);
+    fdata[9] = (uint8_t)(instance->tail >> 8);
+    fdata[10] = (uint8_t)(instance->tail);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -291,11 +285,15 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v7_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v7_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v7 = {
     .name = HONDA_V7_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v7_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v7_encoder_ext.vtable,
 };

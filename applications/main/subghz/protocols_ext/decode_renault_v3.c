@@ -1,4 +1,4 @@
-/* decode_renault_v3.fal : SD get_string for renault_v3 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/blocks/bitbuf.h>
@@ -9,7 +9,7 @@
 #include <lib/subghz/blocks/math.h>
 
 #define RENAULT_V3_ARR_SIZE      256
-#define RENAULT_V3_FRAME_BYTES   20 // 160 bits
+#define RENAULT_V3_FRAME_BYTES   20
 
 struct SubGhzProtocolDecoderRenaultV3 {
     SubGhzProtocolDecoderBase base;
@@ -22,8 +22,8 @@ struct SubGhzProtocolDecoderRenaultV3 {
     uint16_t all_bit_count;
 
     uint16_t serial;
-    uint8_t variant; // 0 = TypeA, 1 = TypeB
-    uint8_t frame_bytes[RENAULT_V3_FRAME_BYTES]; // full MSB-first frame from sync
+    uint8_t variant;
+    uint8_t frame_bytes[RENAULT_V3_FRAME_BYTES];
     uint16_t frame_bit_len;
 };
 

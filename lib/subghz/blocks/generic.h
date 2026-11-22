@@ -26,9 +26,9 @@ struct SubGhzBlockGeneric {
     uint8_t cnt_2;
     uint32_t seed;
     uint8_t status;
-    uint8_t crc;        // FoxFW: computed CRC for display (applab-derived decoders)
-    uint8_t crc_check;   // FoxFW: 1 = CRC/validation passed
-    uint8_t extra_check; // FoxFW: 1 = protocol-specific extra validation passed
+    uint8_t crc;
+    uint8_t crc_check;
+    uint8_t extra_check;
 };
 
 typedef struct SubGhzBlockGenericGlobal SubGhzBlockGenericGlobal;

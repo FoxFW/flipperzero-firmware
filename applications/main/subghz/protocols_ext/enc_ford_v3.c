@@ -1,6 +1,6 @@
-/* enc_ford_v3.fal : SD encoder for ford_v3 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define ford_protocol_v3 enc_ford_v3__ford_protocol_v3
+
+
+#define subghz_protocol_ford_v3 enc_ford_v3__ford_protocol_v3
 #define subghz_protocol_encoder_common_free enc_ford_v3__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_ford_v3__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_ford_v3_alloc enc_ford_v3__subghz_protocol_encoder_ford_v3_alloc
@@ -35,7 +35,7 @@ typedef struct SubGhzProtocolEncoderFordV3 {
     SubGhzBlockGeneric generic;
 
     uint8_t raw_bytes[FORD_V3_DATA_BYTES];
-} 
+}
 SubGhzProtocolEncoderFordV3;
 
 static inline void ford_v3_encoder_add_level(
@@ -105,7 +105,6 @@ static void ford_v3_encoder_build_upload(SubGhzProtocolEncoderFordV3* instance) 
     }
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -113,7 +112,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -137,7 +135,7 @@ void* subghz_protocol_encoder_ford_v3_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolEncoderFordV3* instance = calloc(1, sizeof(SubGhzProtocolEncoderFordV3));
     furi_check(instance);
 
-    instance->base.protocol = &ford_protocol_v3;
+    instance->base.protocol = &subghz_protocol_ford_v3;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = FORD_V3_ENCODER_DEFAULT_REPEAT;
     instance->encoder.upload = calloc(FORD_V3_ENC_ALLOC_ELEMS, sizeof(LevelDuration));
@@ -201,8 +199,7 @@ static const SubGhzProtocolEncoder enc_ford_v3_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol ford_protocol_v3 = {
+const SubGhzProtocol subghz_protocol_ford_v3 = {
     .name = FORD_PROTOCOL_V3_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |

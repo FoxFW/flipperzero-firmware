@@ -9,7 +9,7 @@ App(
         "dialogs",
     ],
     stack_size=1 * 1024,
-    order=10,
+    order=15,
     fap_libs=["assets"],
     fap_category="assets",
 )

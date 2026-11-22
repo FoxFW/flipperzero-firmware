@@ -14,7 +14,7 @@
 
 #define FORD_PROTOCOL_V3_NAME "Ford V3"
 
-extern const SubGhzProtocol ford_protocol_v3;
+extern const SubGhzProtocol subghz_protocol_ford_v3;
 extern const SubGhzProtocolDecoder subghz_protocol_ford_v3_decoder;
 extern const SubGhzProtocolEncoder subghz_protocol_ford_v3_encoder;
 

@@ -5,6 +5,8 @@
 #define TAG "SubGhzSceneReceiverDual"
 
 static SubGhzRadioDeviceType s_dual_restore_device = SubGhzRadioDeviceTypeInternal;
+static bool s_dual_paused = false;
+static bool s_dual_pause_on_return = false;
 
 static void subghz_scene_receiver_dual_view_callback(SubGhzCustomEvent event, void* context) {
     furi_assert(context);
@@ -56,6 +58,24 @@ static void subghz_scene_receiver_dual_apply_presets(SubGhz* subghz) {
         last->dual_ext_frequency,
         subghz_setting_get_preset_data(setting, last->dual_ext_preset_index),
         subghz_setting_get_preset_data_size(setting, last->dual_ext_preset_index));
+
+    last->dual_int_jam_preset_index = subghz_scene_receiver_dual_valid_preset(
+        setting, last->dual_int_jam_preset_index, SUBGHZ_LAST_SETTING_DEFAULT_DUAL_INT_PRESET);
+    last->dual_ext_jam_preset_index = subghz_scene_receiver_dual_valid_preset(
+        setting, last->dual_ext_jam_preset_index, SUBGHZ_LAST_SETTING_DEFAULT_DUAL_EXT_PRESET);
+    subghz_txrx_dual_set_jam(
+        subghz->txrx,
+        last->dual_int_jamming,
+        last->dual_int_jam_frequency,
+        subghz_setting_get_preset_data(setting, last->dual_int_jam_preset_index),
+        subghz_setting_get_preset_data_size(setting, last->dual_int_jam_preset_index),
+        last->dual_ext_jamming,
+        last->dual_ext_jam_frequency,
+        subghz_setting_get_preset_data(setting, last->dual_ext_jam_preset_index),
+        subghz_setting_get_preset_data_size(setting, last->dual_ext_jam_preset_index));
+
+    subghz_txrx_dual_set_rssi(
+        subghz->txrx, last->dual_int_rssi, last->dual_ext_rssi, last->dual_rssi_adaptive);
 }
 
 static void subghz_scene_receiver_dual_update_statusbar(SubGhz* subghz) {
@@ -68,16 +88,27 @@ static void subghz_scene_receiver_dual_update_statusbar(SubGhz* subghz) {
 
     SubGhzRadioPreset int_preset = subghz_txrx_get_preset(subghz->txrx);
     SubGhzRadioPreset ext_preset = subghz_txrx_dual_get_ext_preset(subghz->txrx);
-    FuriString* int_str = furi_string_alloc_printf(
-        "%lu.%02lu %s",
-        int_preset.frequency / 1000000 % 1000,
-        int_preset.frequency / 10000 % 100,
-        furi_string_get_cstr(int_preset.name));
-    FuriString* ext_str = furi_string_alloc_printf(
-        "%lu.%02lu %s",
-        ext_preset.frequency / 1000000 % 1000,
-        ext_preset.frequency / 10000 % 100,
-        furi_string_get_cstr(ext_preset.name));
+    SubGhzLastSettings* ls = subghz->last_settings;
+    FuriString* int_str = ls->dual_int_jamming ?
+        furi_string_alloc_printf(
+            "%lu.%02lu JAM",
+            ls->dual_int_jam_frequency / 1000000 % 1000,
+            ls->dual_int_jam_frequency / 10000 % 100) :
+        furi_string_alloc_printf(
+            "%lu.%02lu %s",
+            int_preset.frequency / 1000000 % 1000,
+            int_preset.frequency / 10000 % 100,
+            furi_string_get_cstr(int_preset.name));
+    FuriString* ext_str = ls->dual_ext_jamming ?
+        furi_string_alloc_printf(
+            "%lu.%02lu JAM",
+            ls->dual_ext_jam_frequency / 1000000 % 1000,
+            ls->dual_ext_jam_frequency / 10000 % 100) :
+        furi_string_alloc_printf(
+            "%lu.%02lu %s",
+            ext_preset.frequency / 1000000 % 1000,
+            ext_preset.frequency / 10000 % 100,
+            furi_string_get_cstr(ext_preset.name));
     subghz_view_receiver_set_dual_info(
         subghz->subghz_receiver, furi_string_get_cstr(int_str), furi_string_get_cstr(ext_str));
     furi_string_free(int_str);
@@ -127,6 +158,11 @@ void subghz_scene_receiver_dual_on_enter(void* context) {
 
     subghz_view_receiver_set_callback(
         subghz->subghz_receiver, subghz_scene_receiver_dual_view_callback, subghz);
+
+    s_dual_paused = false;
+    subghz->dual_defer_view = true;
+    subghz->dual_view_rebuild = false;
+    subghz->dual_view_shown = subghz_history_get_item(history);
     subghz_txrx_set_rx_callback(subghz->txrx, subghz_scene_receiver_dual_rx_callback, subghz);
 
     if(!subghz_txrx_dual_rx_start(subghz->txrx)) {
@@ -146,6 +182,14 @@ void subghz_scene_receiver_dual_on_enter(void* context) {
     subghz_scene_receiver_dual_update_statusbar(subghz);
     subghz_view_receiver_set_lock(subghz->subghz_receiver, subghz_is_locked(subghz));
     view_dispatcher_switch_to_view(subghz->view_dispatcher, SubGhzViewIdReceiver);
+
+    if(s_dual_pause_on_return) {
+        s_dual_pause_on_return = false;
+        s_dual_paused = true;
+        subghz->state_notifications = SubGhzNotificationStateIDLE;
+        subghz_txrx_set_rx_callback(subghz->txrx, NULL, subghz);
+        subghz_view_receiver_set_dual_paused(subghz->subghz_receiver, true);
+    }
 }
 
 bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event) {
@@ -159,15 +203,10 @@ bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event)
             subghz->state_notifications = SubGhzNotificationStateIDLE;
             subghz_scene_receiver_dual_stop(subghz, s_dual_restore_device);
             subghz_txrx_set_rx_callback(subghz->txrx, NULL, subghz);
-            if(subghz_rx_key_state_get(subghz) == SubGhzRxKeyStateAddKey) {
-                subghz_rx_key_state_set(subghz, SubGhzRxKeyStateExit);
-                scene_manager_next_scene(subghz->scene_manager, SubGhzSceneNeedSaving);
-            } else {
-                subghz_rx_key_state_set(subghz, SubGhzRxKeyStateIDLE);
-                subghz_txrx_set_default_preset(subghz->txrx, subghz->last_settings->frequency);
-                scene_manager_search_and_switch_to_previous_scene(
-                    subghz->scene_manager, SubGhzSceneStart);
-            }
+            subghz_rx_key_state_set(subghz, SubGhzRxKeyStateIDLE);
+            subghz_txrx_set_default_preset(subghz->txrx, subghz->last_settings->frequency);
+            scene_manager_search_and_switch_to_previous_scene(
+                subghz->scene_manager, SubGhzSceneStart);
             consumed = true;
             break;
         case SubGhzCustomEventViewReceiverOK: {
@@ -200,6 +239,7 @@ bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event)
             consumed = true;
             break;
         case SubGhzCustomEventViewReceiverConfig:
+            s_dual_pause_on_return = s_dual_paused;
             subghz->state_notifications = SubGhzNotificationStateIDLE;
             subghz_scene_receiver_dual_stop(subghz, SubGhzRadioDeviceTypeInternal);
             scene_manager_next_scene(subghz->scene_manager, SubGhzSceneReceiverDualConfig);
@@ -213,6 +253,21 @@ bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event)
             subghz_unlock(subghz);
             consumed = true;
             break;
+        case SubGhzCustomEventViewReceiverPause:
+            s_dual_paused = !s_dual_paused;
+            if(s_dual_paused) {
+                subghz->state_notifications = SubGhzNotificationStateIDLE;
+                subghz_txrx_set_rx_callback(subghz->txrx, NULL, subghz);
+            } else {
+                subghz_txrx_set_rx_callback(
+                    subghz->txrx, subghz_scene_receiver_dual_rx_callback, subghz);
+                if(!subghz_history_get_text_space_left(subghz->history, NULL)) {
+                    subghz->state_notifications = SubGhzNotificationStateRx;
+                }
+            }
+            subghz_view_receiver_set_dual_paused(subghz->subghz_receiver, s_dual_paused);
+            consumed = true;
+            break;
         default:
             break;
         }
@@ -221,10 +276,38 @@ bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event)
             subghz_scene_receiver_process_auto_save(subghz);
         }
         subghz_history_flush(subghz->history);
-        subghz_receiver_rssi(
-            subghz->subghz_receiver, subghz_txrx_radio_device_get_rssi(subghz->txrx));
-        subghz_receiver_rssi_ext(
-            subghz->subghz_receiver, subghz_txrx_dual_get_rssi_ext(subghz->txrx));
+        {
+            subghz_txrx_dual_lock(subghz->txrx);
+            const uint16_t n = subghz_history_get_item(subghz->history);
+            const uint16_t prev_shown = subghz->dual_view_shown;
+            if(subghz->dual_view_rebuild || n != subghz->dual_view_shown) {
+                if(subghz->dual_view_rebuild || n < subghz->dual_view_shown) {
+                    subghz_view_receiver_set_history_item_count(subghz->subghz_receiver, n);
+                    subghz->dual_view_rebuild = false;
+                } else {
+                    while(subghz->dual_view_shown < n) {
+                        subghz_view_receiver_add_item_to_menu(subghz->subghz_receiver);
+                        subghz->dual_view_shown++;
+                    }
+                }
+                subghz->dual_view_shown = n;
+            }
+            if(n > prev_shown) {
+                subghz_view_receiver_flash_history(
+                    subghz->subghz_receiver, (uint16_t)(n - prev_shown));
+            }
+            if(prev_shown == 0 && n > 0) {
+                subghz_view_receiver_set_dual_dashboard(subghz->subghz_receiver, false);
+            }
+            subghz_txrx_dual_unlock(subghz->txrx);
+        }
+        subghz_view_receiver_dual_refresh_rows(subghz->subghz_receiver);
+        if(!s_dual_paused) {
+            subghz_receiver_rssi(
+                subghz->subghz_receiver, subghz_txrx_radio_device_get_rssi(subghz->txrx));
+            subghz_receiver_rssi_ext(
+                subghz->subghz_receiver, subghz_txrx_dual_get_rssi_ext(subghz->txrx));
+        }
         subghz_scene_receiver_dual_update_statusbar(subghz);
         subghz_scene_receiver_notify(subghz);
     }
@@ -232,6 +315,8 @@ bool subghz_scene_receiver_dual_on_event(void* context, SceneManagerEvent event)
 }
 
 void subghz_scene_receiver_dual_on_exit(void* context) {
-    UNUSED(context);
+    SubGhz* subghz = context;
+    subghz->dual_defer_view = false;
+    s_dual_paused = false;
     subghz_lowram_softlock_release();
 }

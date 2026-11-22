@@ -1,5 +1,5 @@
-/* enc_suzuki.fal : SD encoder for suzuki (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_stop enc_suzuki__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_suzuki__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_suzuki_alloc enc_suzuki__subghz_protocol_encoder_suzuki_alloc
@@ -85,13 +85,11 @@ static uint8_t suzuki_btn_to_custom(uint8_t btn) {
     }
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -142,7 +140,7 @@ SubGhzProtocolStatus subghz_protocol_encoder_suzuki_deserialize(void *context, F
         if (ret != SubGhzProtocolStatusOk) break;
 
         uint64_t data = instance->generic.data;
-        
+
         instance->generic.cnt = (uint32_t)((data >> 44) & 0xFFFFF);
         instance->generic.serial = (uint32_t)((data >> 16) & 0x0FFFFFFF);
         instance->generic.btn = (uint8_t)((data >> 12) & 0xF);
@@ -172,10 +170,10 @@ SubGhzProtocolStatus subghz_protocol_encoder_suzuki_deserialize(void *context, F
         new_data |= ((uint64_t)(instance->generic.cnt & 0xFFFFF) << 44);
         new_data |= ((uint64_t)(instance->generic.serial & 0x0FFFFFFF) << 16);
         new_data |= ((uint64_t)(instance->generic.btn & 0xF) << 12);
-        
+
         uint8_t crc = suzuki_calculate_crc(new_data);
         new_data |= ((uint64_t)crc << 4);
-        
+
         instance->generic.data = new_data;
 
         if(!flipper_format_rewind(flipper_format)) {
@@ -218,7 +216,7 @@ SubGhzProtocolStatus subghz_protocol_encoder_suzuki_deserialize(void *context, F
 
         for (size_t i = 0; i < bit_count; i++) {
             uint8_t bit = (instance->generic.data >> (63 - i)) & 1;
-            
+
             if (bit) {
                 instance->encoder.upload[index++] = level_duration_make(true, subghz_protocol_suzuki_const.te_long);
             } else {
@@ -248,11 +246,10 @@ static const SubGhzProtocolEncoder enc_suzuki_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_suzuki = {
     .name = SUBGHZ_PROTOCOL_SUZUKI_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_FM | 
+    .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_FM |
             SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = NULL,
     .encoder = &enc_suzuki_vt,

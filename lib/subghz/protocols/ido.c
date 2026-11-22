@@ -1,6 +1,7 @@
 #include "ido.h"
 
 #include "common.h"
+#include "../encode_plugin.h"
 
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
@@ -63,14 +64,17 @@ const SubGhzProtocolEncoder subghz_protocol_ido_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_ido_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_pwm");
+
 const SubGhzProtocol subghz_protocol_ido = {
     .name = SUBGHZ_PROTOCOL_IDO_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
 
     .decoder = &subghz_protocol_ido_decoder,
-    .encoder = &subghz_protocol_ido_encoder,
+    .encoder = &subghz_protocol_ido_encoder_ext.vtable,
 };
 
 void* subghz_protocol_decoder_ido_alloc(SubGhzEnvironment* environment) {

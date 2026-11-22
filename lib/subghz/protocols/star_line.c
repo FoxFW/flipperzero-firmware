@@ -60,7 +60,6 @@ const SubGhzProtocolDecoder subghz_protocol_star_line_decoder = {
     .get_string = subghz_protocol_decoder_star_line_get_string,
 };
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
     __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
@@ -651,8 +650,7 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_star_line_get_string(void* context, FuriString* output) {
     furi_check(context);
     SubGhzProtocolDecoderStarLine* instance = context;
-    // Detect/decode split (FoxFW2.0 v2.1): KeeLoq key derivation needs the live
-    // keystore, so it stays internal; the SD plugin only formats.
+
     subghz_protocol_star_line_check_remote_controller(
         &instance->generic, instance->keystore, &instance->manufacture_name);
     const SubGhzDecodeInput input = {

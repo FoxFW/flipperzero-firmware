@@ -1,5 +1,5 @@
-/* enc_scher_khan.fal : SD encoder for scher_khan (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_scher_khan__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_scher_khan__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_scher_khan__subghz_protocol_encoder_common_yield
@@ -81,7 +81,6 @@ static const SubGhzBlockConst subghz_protocol_scher_khan_const = {
     .min_count_bit_for_found = 35,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool scher_khan_raw_replay__bridge_ty;
 typedef struct {
     void* scher_khan_raw_replay;
@@ -103,7 +102,6 @@ static void scher_khan_pro_encrypt(
 static uint8_t scher_khan_btn_to_custom(uint8_t btn);
 static uint8_t scher_khan_custom_to_btn(uint8_t custom, uint8_t original_btn);
 static uint8_t scher_khan_get_btn_code(uint8_t original_btn);
-// #101: TxRaw verbatim replay (freeze counter)
 
 static bool subghz_protocol_encoder_scher_khan_get_upload(
     SubGhzProtocolEncoderScherKhan* instance,
@@ -232,8 +230,6 @@ static uint8_t scher_khan_custom_to_btn(uint8_t custom, uint8_t original_btn) {
 static uint8_t scher_khan_get_btn_code(uint8_t original_btn) {
     return scher_khan_custom_to_btn(subghz_custom_btn_get(), original_btn);
 }
-
- // #101: TxRaw verbatim replay (freeze counter)
 
 static bool subghz_protocol_encoder_scher_khan_get_upload(
     SubGhzProtocolEncoderScherKhan* instance,
@@ -503,7 +499,6 @@ static void subghz_protocol_scher_khan_check_remote_controller(
     }
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -511,13 +506,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -712,7 +705,6 @@ static const SubGhzProtocolEncoder enc_scher_khan_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_scher_khan = {
     .name = SUBGHZ_PROTOCOL_SCHER_KHAN_NAME,
     .type = SubGhzProtocolTypeDynamic,

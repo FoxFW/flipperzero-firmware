@@ -4,30 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "HondaV6"
-
-// Honda V6 -- ported from firmware honda_v6.c via KeeLoq-RX arke_honda.py (class HondaV6).
-// MULTI-MODAL protocol. This port implements:
-//
-//   434 MHz FSK Manchester path (te 100/200 us, te_delta 45), inlining the standard
-//   toolbox Manchester (arke_core.Manchester) incl. its reset-to-start on a
-//   no-transition event:
-//   * "stock45"  : ~45-bit frame, NO CRC, gated on serial != 0.
-//       norm = lo[44:0]; cnt = norm[44:41]; hop = norm[40:0];
-//       serial = hop >> 9 (32b); button identified from hop bits 34/31/29.
-//   * "pandora"  : ~118..140-bit Pandora-TS skeleton (de-drifted to 135b, skeleton-gated),
-//       NO CRC. Ported best-effort; serial = lo[63:32], counter from the hi word.
-//
-//   313 MHz 3-level "trit" path (arke_honda.py steps 3/4 + _process313), decode-only:
-//   * "313"      : base-3 symbols classified by pulse width (short 800 / mid 1200 /
-//       long 1600 us, +-250). Preamble = >=15 short pulses; then >=30 trits packed
-//       2 bits each (MSB-first) into d2 (trits 0..31) / d1 (trits 32..63). serial =
-//       d2[63:32]; gated on serial != 0, NO CRC. Frequency-agnostic: distinguished by
-//       the preamble/symbol structure, not the radio frequency.
-//
-// No data CRC on any path -> crc_ok is reported false ("CRC:???"); emission is
-// structural/plausibility gated only. Decode-only; .encoder = NULL.
 
 #define HV6_TS      100
 #define HV6_TL      200
@@ -48,11 +27,10 @@
 #define HV6_LONG_HIGH  6
 #define HV6_RESET_EV   8
 
-// 313 MHz 3-level "trit" mode (arke_honda.py HondaV6 steps 3/4, _process313).
 #define HV6_T313_S       800
 #define HV6_T313_M       1200
 #define HV6_T313_L       1600
-#define HV6_T313_D       250
+#define HV6_T313_D       150
 #define HV6_T313_MINPRE  15
 #define HV6_T313_MINTRIT 30
 #define HV6_T313_MAXTRIT 60
@@ -64,7 +42,6 @@ static const SubGhzBlockConst subghz_protocol_honda_v6_const = {
     .min_count_bit_for_found = 45,
 };
 
-// arke_core.Manchester table + behaviour (inlined).
 static const uint8_t hv6_man_table[4] = {0x01, 0x91, 0x9B, 0xFB};
 
 struct SubGhzProtocolDecoderHondaV6 {
@@ -72,7 +49,7 @@ struct SubGhzProtocolDecoderHondaV6 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t parser_step; // 0 reset, 1 checkpre, 2 collect
+    uint8_t parser_step;
     uint32_t header;
     uint8_t man_state;
     uint64_t lo;
@@ -84,16 +61,14 @@ struct SubGhzProtocolDecoderHondaV6 {
     uint32_t serial;
     uint8_t btn;
     uint32_t cnt;
-    uint8_t variant; // 0 stock45, 1 pandora, 2 313 (3-level trit)
-    uint64_t data_hi; // pandora high word / 313 d1 (trits 32..63)
+    uint8_t variant;
+    uint64_t data_hi;
 
-    // 313 MHz 3-level "trit" mode state
     uint16_t trit_count;
-    uint64_t d2; // trits 0..31 packed 2 bits each, MSB-first
-    uint64_t d1; // trits 32..63
+    uint64_t d2;
+    uint64_t d1;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV6);
-
 
 typedef enum {
     HondaV6StepReset = 0,
@@ -103,7 +78,6 @@ typedef enum {
     HondaV6StepData313 = 4,
 } HondaV6Step;
 
-// returns -1 (no bit), 0 (bit 0) or 1 (bit 1); mutates *state. Matches arke_core.Manchester.
 static int hv6_man_advance(uint8_t* state, uint8_t event) {
     if(event == HV6_RESET_EV) {
         *state = 1;
@@ -124,7 +98,6 @@ static void hv6_man_reset(SubGhzProtocolDecoderHondaV6* instance) {
     instance->man_state = 1;
 }
 
-// classify + man.advance for a short/long pulse (caller guarantees validity).
 static int hv6_man_adv(SubGhzProtocolDecoderHondaV6* instance, bool level, uint32_t duration) {
     uint8_t ev;
     if(DURATION_DIFF(duration, HV6_TS) <= HV6_TD) {
@@ -150,7 +123,6 @@ static bool hv6_skeleton_ok(uint64_t hi, uint64_t lo) {
            (hi & 0xFFULL) == 0xFEULL;
 }
 
-// de-drift a short pandora frame to 135 bits (returns true + new hi/lo on skeleton match).
 static bool hv6_undrift(uint64_t hi, uint64_t lo, uint16_t bit_count, uint64_t* nhi, uint64_t* nlo) {
     if(bit_count >= 135 || bit_count < HV6_PAN_MIN) return false;
     int shift = 135 - bit_count;
@@ -216,9 +188,12 @@ static void hv6_emit(
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
 }
 
+static bool hv6_serial_degenerate(uint32_t serial);
+
 static void hv6_process_fsk(SubGhzProtocolDecoderHondaV6* instance) {
     uint16_t bc = instance->bit_count;
-    bool is_stock = (HV6_MIN_BITS <= bc && bc <= 48);
+
+    bool is_stock = (bc == 45);
     bool is_pan = (HV6_PAN_MIN <= bc && bc <= HV6_PAN_MAX);
     if(!is_stock && !is_pan) return;
 
@@ -236,12 +211,14 @@ static void hv6_process_fsk(SubGhzProtocolDecoderHondaV6* instance) {
     }
 
     if(is_stock) {
-        uint64_t norm = lo & 0x1FFFFFFFFFFFULL; // low 45 bits
+        uint64_t norm = lo & 0x1FFFFFFFFFFFULL;
         uint32_t cnt = (uint32_t)((norm >> 41) & 0xF);
-        uint64_t hop = norm & 0x1FFFFFFFFFFULL; // low 41 bits
+        uint64_t hop = norm & 0x1FFFFFFFFFFULL;
         uint8_t btn = hv6_identify_btn(hop);
         uint32_t serial = (uint32_t)(hop >> 9);
         if(serial == 0) return;
+
+        if(hv6_serial_degenerate(serial)) return;
         hv6_emit(instance, 0, serial, btn, cnt, norm, 0, 45);
     } else {
         uint32_t serial = (uint32_t)((lo >> 32) & 0xFFFFFFFFULL);
@@ -250,11 +227,6 @@ static void hv6_process_fsk(SubGhzProtocolDecoderHondaV6* instance) {
     }
 }
 
-// ---- 313 MHz 3-level "trit" mode ----
-// Ported 1:1 from arke_honda.py HondaV6._classify313 / _add_trit / _process313.
-// Pulses are classified into THREE symbol widths (short 800 / mid 1200 / long 1600 us,
-// +-250) yielding base-3 symbols (trits). Trits are packed 2 bits each, MSB-first, into
-// two 64-bit words: d2 holds trits 0..31, d1 holds trits 32..63. Decode-only, no CRC.
 static uint8_t hv6_classify313(uint32_t duration) {
     if(DURATION_DIFF(duration, HV6_T313_S) <= HV6_T313_D) return 0;
     if(DURATION_DIFF(duration, HV6_T313_M) <= HV6_T313_D) return 1;
@@ -273,12 +245,31 @@ static void hv6_add_trit(SubGhzProtocolDecoderHondaV6* instance, uint8_t trit) {
     instance->trit_count++;
 }
 
+static bool hv6_serial_degenerate(uint32_t serial) {
+    uint8_t counts[16] = {0};
+    for(uint8_t i = 0U; i < 8U; i++) counts[(serial >> (4U * i)) & 0x0FU]++;
+    for(uint8_t n = 0U; n < 16U; n++)
+        if(counts[n] >= 6U) return true;
+    return false;
+}
+
 static void hv6_process313(SubGhzProtocolDecoderHondaV6* instance) {
     if(instance->trit_count < HV6_T313_MINTRIT) return;
     uint32_t serial = (uint32_t)((instance->d2 >> 32) & 0xFFFFFFFFULL);
     if(serial == 0) return;
-    // cnt = trit_count (no real rolling counter is extracted; matches the Python port);
-    // data_lo = d2, data_hi = d1; bits = packed data width (trit_count * 2).
+    if(hv6_serial_degenerate(serial)) return;
+
+    {
+        uint16_t tcnt[4] = {0, 0, 0, 0};
+        for(uint16_t i = 0U; i < instance->trit_count; i++) {
+            uint64_t word = (i < 32U) ? instance->d2 : instance->d1;
+            uint16_t idx = (i < 32U) ? i : (uint16_t)(i - 32U);
+            uint8_t tv = (uint8_t)((word >> (62 - idx * 2)) & 0x3U);
+            tcnt[tv]++;
+        }
+        if(tcnt[0] < 2U || tcnt[1] < 2U || tcnt[2] < 2U) return;
+    }
+
     hv6_emit(
         instance,
         2,
@@ -299,8 +290,6 @@ void* subghz_protocol_decoder_honda_v6_alloc(SubGhzEnvironment* environment) {
     instance->man_state = 1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_v6_reset(void* context) {
     furi_check(context);
@@ -340,7 +329,7 @@ void subghz_protocol_decoder_honda_v6_feed(void* context, bool level, uint32_t d
             instance->midgap = false;
             hv6_man_reset(instance);
         }
-        // 313 MHz 3-level preamble: short-313 pulse that is NOT a 434 short.
+
         if(is_s313 && !is_s) {
             instance->parser_step = HondaV6StepPre313;
             instance->header = 1;
@@ -422,8 +411,6 @@ void subghz_protocol_decoder_honda_v6_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v6_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -443,6 +430,32 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v6_serialize(
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Variant", &variant, 1)) {
         return SubGhzProtocolStatusErrorParserOthers;
+    }
+    if(instance->variant == 1) {
+
+        uint16_t dcb = instance->generic.data_count_bit;
+        if(dcb >= 128 && dcb <= 144) {
+            uint16_t lead = (uint16_t)(dcb - 128);
+            uint8_t fr[18];
+            memset(fr, 0, sizeof(fr));
+            uint64_t hi = instance->data_hi;
+            uint64_t lo = instance->generic.data;
+            for(int b = 0; b < 64; b++)
+                if((hi >> (63 - b)) & 1) fr[(lead + b) >> 3] |= (uint8_t)(0x80U >> ((lead + b) & 7));
+            for(int b = 0; b < 64; b++)
+                if((lo >> (63 - b)) & 1)
+                    fr[(lead + 64 + b) >> 3] |= (uint8_t)(0x80U >> ((lead + 64 + b) & 7));
+            if(!flipper_format_write_hex(flipper_format, "Data", fr, (dcb + 7) / 8)) {
+                return SubGhzProtocolStatusErrorParserOthers;
+            }
+        }
+    } else if(instance->variant == 2) {
+
+        uint8_t hib[8];
+        for(int b = 0; b < 8; b++) hib[b] = (uint8_t)(instance->data_hi >> (56 - b * 8));
+        if(!flipper_format_write_hex(flipper_format, "DataHi", hib, 8)) {
+            return SubGhzProtocolStatusErrorParserOthers;
+        }
     }
     return SubGhzProtocolStatusOk;
 }
@@ -485,12 +498,15 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v6_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v6_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v6 = {
     .name = HONDA_V6_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
+    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v6_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v6_encoder_ext.vtable,
 };

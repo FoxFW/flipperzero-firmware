@@ -2,7 +2,7 @@ App(
     appid="subghz_raw_edit",
     name="SubGHz RAW Edit",
     apptype=FlipperAppType.EXTERNAL,
-    icon="I_fox_generic_14x14",  # 14x14 Apps-menu icon; see assets/icons/Fox/fox_generic_14x14.png
+    icon="I_fox_generic_14x14",
     entry_point="subghz_raw_edit_app",
     requires=[
         "gui",

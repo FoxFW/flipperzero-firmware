@@ -1,4 +1,4 @@
-/* decode_audi_v1.fal : SD get_string for audi_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/audi_v1.h>
@@ -58,7 +58,6 @@ static void audi_v1_extract_fields(SubGhzBlockGeneric* generic, uint64_t hop, ui
 static void audi_v1_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderAudiV1* instance = input->decoder;
-
 
     audi_v1_extract_fields(&instance->generic, instance->hop, instance->btn_byte);
 

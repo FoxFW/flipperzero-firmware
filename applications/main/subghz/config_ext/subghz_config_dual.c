@@ -1,18 +1,7 @@
-/* FoxFW2.0 config-externalization Stage 1 PoC (2026-10-31).
- * Dual-RX config scene as an on-demand .fal. Reaches SubGhz state ONLY through
- * SubGhzConfigHostApi; never includes subghz_i.h. The only firmware struct it
- * touches directly is the stable SubGhzLastSettings leaf (dual_* fields).
- * Byte-for-byte behaviour port of the former resident scene. */
+
 
 #include "../helpers/subghz_config_scene.h"
 #include <stdio.h>
-
-enum {
-    DualIntFrequency,
-    DualIntModulation,
-    DualExtFrequency,
-    DualExtModulation,
-};
 
 static const SubGhzConfigHostApi* g_api = NULL;
 
@@ -61,6 +50,23 @@ static void dual_ext_modulation(VariableItem* item) {
     dual_set_modulation(item, &api->get_last_settings(api->ctx)->dual_ext_preset_index);
 }
 
+static void dual_int_jam_frequency(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    dual_set_frequency(item, &api->get_last_settings(api->ctx)->dual_int_jam_frequency);
+}
+static void dual_int_jam_modulation(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    dual_set_modulation(item, &api->get_last_settings(api->ctx)->dual_int_jam_preset_index);
+}
+static void dual_ext_jam_frequency(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    dual_set_frequency(item, &api->get_last_settings(api->ctx)->dual_ext_jam_frequency);
+}
+static void dual_ext_jam_modulation(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    dual_set_modulation(item, &api->get_last_settings(api->ctx)->dual_ext_jam_preset_index);
+}
+
 static void dual_add_frequency(const char* label, uint32_t frequency, VariableItemChangeCallback cb) {
     SubGhzSetting* setting = g_api->get_setting(g_api->ctx);
     VariableItem* item = variable_item_list_add(
@@ -84,16 +90,130 @@ static void dual_add_modulation(const char* label, uint32_t preset_index, Variab
     variable_item_set_current_value_text(item, subghz_setting_get_preset_name(setting, index));
 }
 
+static void dual_build_items(void);
+
+static void dual_add_jam_toggle(const char* label, uint32_t on, VariableItemChangeCallback cb) {
+    VariableItem* item =
+        variable_item_list_add(g_api->get_item_list(g_api->ctx), label, 2, cb, (void*)g_api);
+    variable_item_set_current_value_index(item, on ? 1 : 0);
+    variable_item_set_current_value_text(item, on ? "ON" : "OFF");
+}
+
+static void dual_rebuild_select(uint8_t sel) {
+    VariableItemList* il = g_api->get_item_list(g_api->ctx);
+    variable_item_list_reset(il);
+    dual_build_items();
+    variable_item_list_set_selected_item(il, sel);
+}
+
+static void dual_int_jamming_toggle(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    uint32_t on = variable_item_get_current_value_index(item) ? 1 : 0;
+    api->get_last_settings(api->ctx)->dual_int_jamming = on;
+    variable_item_set_current_value_text(item, on ? "ON" : "OFF");
+    dual_rebuild_select(0);
+}
+
+static void dual_ext_jamming_toggle(VariableItem* item) {
+    const SubGhzConfigHostApi* api = variable_item_get_context(item);
+    SubGhzLastSettings* last = api->get_last_settings(api->ctx);
+    uint32_t on = variable_item_get_current_value_index(item) ? 1 : 0;
+    last->dual_ext_jamming = on;
+    variable_item_set_current_value_text(item, on ? "ON" : "OFF");
+
+    uint8_t ext_toggle_idx = (uint8_t)(1 + (last->dual_int_jamming ? 5 : 3));
+    dual_rebuild_select(ext_toggle_idx);
+}
+
+#define DUAL_RSSI_COUNT 12
+static const int16_t dual_rssi_dbm[DUAL_RSSI_COUNT] =
+    {-100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45};
+static const char* const dual_onoff[2] = {"OFF", "ON"};
+
+static void dual_rssi_text(VariableItem* item, uint32_t idx) {
+    if(idx >= DUAL_RSSI_COUNT) idx = DUAL_RSSI_COUNT - 1;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%d dB", (int)dual_rssi_dbm[idx]);
+    variable_item_set_current_value_text(item, buf);
+}
+
+static void dual_int_rssi_changed(VariableItem* item) {
+    uint32_t idx = variable_item_get_current_value_index(item);
+    g_api->get_last_settings(g_api->ctx)->dual_int_rssi = idx;
+    dual_rssi_text(item, idx);
+}
+
+static void dual_ext_rssi_changed(VariableItem* item) {
+    uint32_t idx = variable_item_get_current_value_index(item);
+    g_api->get_last_settings(g_api->ctx)->dual_ext_rssi = idx;
+    dual_rssi_text(item, idx);
+}
+
+static void dual_adaptive_changed(VariableItem* item) {
+    uint32_t on = variable_item_get_current_value_index(item) ? 1 : 0;
+    g_api->get_last_settings(g_api->ctx)->dual_rssi_adaptive = on;
+    variable_item_set_current_value_text(item, dual_onoff[on]);
+}
+
+static void dual_unknown_raw_changed(VariableItem* item) {
+    uint32_t on = variable_item_get_current_value_index(item) ? 1 : 0;
+    g_api->get_last_settings(g_api->ctx)->capture_unknown_raw = on == 1;
+    variable_item_set_current_value_text(item, dual_onoff[on]);
+}
+
+static void dual_psa_changed(VariableItem* item) {
+    uint32_t on = variable_item_get_current_value_index(item) ? 1 : 0;
+    g_api->get_last_settings(g_api->ctx)->show_psa_encrypted = on == 1;
+    variable_item_set_current_value_text(item, dual_onoff[on]);
+}
+
+static void dual_add_rssi(const char* label, uint32_t idx, VariableItemChangeCallback cb) {
+    VariableItem* item =
+        variable_item_list_add(g_api->get_item_list(g_api->ctx), label, DUAL_RSSI_COUNT, cb, (void*)g_api);
+    if(idx >= DUAL_RSSI_COUNT) idx = DUAL_RSSI_COUNT - 1;
+    variable_item_set_current_value_index(item, (uint8_t)idx);
+    dual_rssi_text(item, idx);
+}
+
+static void dual_add_onoff(const char* label, uint32_t on, VariableItemChangeCallback cb) {
+    VariableItem* item =
+        variable_item_list_add(g_api->get_item_list(g_api->ctx), label, 2, cb, (void*)g_api);
+    variable_item_set_current_value_index(item, on ? 1 : 0);
+    variable_item_set_current_value_text(item, dual_onoff[on ? 1 : 0]);
+}
+
+static void dual_build_items(void) {
+    SubGhzLastSettings* last = g_api->get_last_settings(g_api->ctx);
+
+    dual_add_jam_toggle("Int Jamming", last->dual_int_jamming, dual_int_jamming_toggle);
+    if(last->dual_int_jamming) {
+        dual_add_frequency("Int Jam Freq", last->dual_int_jam_frequency, dual_int_jam_frequency);
+        dual_add_modulation("Int Jam Mod", last->dual_int_jam_preset_index, dual_int_jam_modulation);
+    }
+    dual_add_frequency("Int Frequency", last->dual_int_frequency, dual_int_frequency);
+    dual_add_modulation("Int Modulation", last->dual_int_preset_index, dual_int_modulation);
+    dual_add_rssi("Int RSSI", last->dual_int_rssi, dual_int_rssi_changed);
+
+    dual_add_jam_toggle("Ext Jamming", last->dual_ext_jamming, dual_ext_jamming_toggle);
+    if(last->dual_ext_jamming) {
+        dual_add_frequency("Ext Jam Freq", last->dual_ext_jam_frequency, dual_ext_jam_frequency);
+        dual_add_modulation("Ext Jam Mod", last->dual_ext_jam_preset_index, dual_ext_jam_modulation);
+    }
+    dual_add_frequency("Ext Frequency", last->dual_ext_frequency, dual_ext_frequency);
+    dual_add_modulation("Ext Modulation", last->dual_ext_preset_index, dual_ext_modulation);
+    dual_add_rssi("Ext RSSI", last->dual_ext_rssi, dual_ext_rssi_changed);
+
+    dual_add_onoff("Adaptive RSSI", last->dual_rssi_adaptive, dual_adaptive_changed);
+    dual_add_onoff("Unknown RAW", last->capture_unknown_raw ? 1 : 0, dual_unknown_raw_changed);
+    dual_add_onoff("PSA (encrypted)", last->show_psa_encrypted ? 1 : 0, dual_psa_changed);
+}
+
 static void dual_plugin_set_host_api(const SubGhzConfigHostApi* api) {
     g_api = api;
 }
 
 static void dual_plugin_on_enter(void) {
-    SubGhzLastSettings* last = g_api->get_last_settings(g_api->ctx);
-    dual_add_frequency("Int Frequency", last->dual_int_frequency, dual_int_frequency);
-    dual_add_modulation("Int Modulation", last->dual_int_preset_index, dual_int_modulation);
-    dual_add_frequency("Ext Frequency", last->dual_ext_frequency, dual_ext_frequency);
-    dual_add_modulation("Ext Modulation", last->dual_ext_preset_index, dual_ext_modulation);
+    dual_build_items();
     g_api->switch_to_item_list_view(g_api->ctx);
 }
 

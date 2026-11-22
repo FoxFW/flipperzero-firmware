@@ -4,22 +4,12 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "HondaV8"
 
-// Honda V8 -- ported from firmware honda_v8.c via KeeLoq-RX arke_honda.py (class HondaV8).
-// KeeLoq inverted PWM, base symbol 400 us (te_delta 150), sync >= 2500 us. 66-bit frame,
-// LSB-first; low-pulse width encodes the bit (short -> 0, long -> 1). The accumulated 64
-// bits are bit-reversed to "raw". Fields: button=raw>>60 (4b), serial=raw>>32 (28b),
-// enc = raw[31:0] (32-bit KeeLoq ciphertext).
-// Integrity = decryption match: for each Honda mfr key (21-entry table, probed in a fixed
-// order), KeeLoq-decrypt (528 rounds, NLF 0x3A5C742E) the ciphertext and require
-//   (dec & 0xF) == button  AND  ((dec>>4)&0xFF) == ((serial>>20)&0xFF)  (discriminant)
-// and reject the all-zero (dec rc==0 && disc==0) case. Counter = (dec>>16)&0xFFFF, gated
-// by a rolling window (1 <= delta <= 128). Decode-only; .encoder = NULL.
-
 #define HV8_TE_BASE  400
-#define HV8_TE_DELTA 150
+#define HV8_TE_DELTA 100
 #define HV8_SYNC_MIN 2500
 #define HV8_FRAME_BITS 66
 #define HV8_ROLL_WIN 128
@@ -33,7 +23,6 @@ static const SubGhzBlockConst subghz_protocol_honda_v8_const = {
     .min_count_bit_for_found = HV8_FRAME_BITS,
 };
 
-// Honda manufacturer key table (low, high) -- 21 entries.
 static const uint32_t hv8_keys_lo[21] = {
     0xA8F5DFFC, 0xABBA94D4, 0xDCF40FCD, 0x56EB02D8, 0xA8507BA5, 0x6857C1C5, 0x54E900DA,
     0x5683FC9B, 0x53EE07DD, 0x5D973077, 0x52EF06DC, 0x36714027, 0x51EC05DF, 0x1F4DAA96,
@@ -64,7 +53,6 @@ struct SubGhzProtocolDecoderHondaV8 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV8);
 
-
 typedef enum {
     HondaV8StepReset = 0,
     HondaV8StepData = 1,
@@ -72,12 +60,12 @@ typedef enum {
 
 static bool honda_v8_btn_valid(uint8_t btn) {
     switch(btn) {
-    case 0x0: // Panic
-    case 0x1: // Lock
-    case 0x2: // Trunk
-    case 0x4: // Remote Start
-    case 0x8: // Unlock
-    case 0x9: // Unlock x2
+    case 0x0:
+    case 0x1:
+    case 0x2:
+    case 0x4:
+    case 0x8:
+    case 0x9:
         return true;
     default:
         return false;
@@ -90,7 +78,6 @@ static uint32_t honda_v8_nlf(uint32_t x) {
     return (HV8_NLF >> idx) & 1;
 }
 
-// KeeLoq-style decrypt, exactly as arke_honda._hv8_decrypt (shift-right, 528 rounds).
 static uint32_t honda_v8_decrypt(uint32_t ct, uint64_t key) {
     uint32_t x = ct;
     for(int i = 0; i < HV8_ROUNDS; i++) {
@@ -104,7 +91,6 @@ static uint32_t honda_v8_decrypt(uint32_t ct, uint64_t key) {
     return x;
 }
 
-// Mirror HondaV8._find_key(). Returns key index (0..20) or -1; outputs dec and rc.
 static int honda_v8_find_key(uint32_t enc, uint32_t serial, uint8_t btn, uint32_t* out_dec, uint16_t* out_rc) {
     uint8_t exp_disc = (uint8_t)((serial >> 20) & 0xFF);
     for(int p = 0; p < 21; p++) {
@@ -180,8 +166,6 @@ void* subghz_protocol_decoder_honda_v8_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_honda_v8_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderHondaV8* instance = context;
@@ -190,8 +174,7 @@ void subghz_protocol_decoder_honda_v8_reset(void* context) {
     instance->count = 0;
     instance->decoder.decode_data = 0;
     instance->decoder.decode_count_bit = 0;
-    // NB: rolling-window state (have_last/last_rc) intentionally preserved across resets,
-    // mirroring the persistent decoder instance (per arke HondaV8.last_rc).
+
 }
 
 void subghz_protocol_decoder_honda_v8_feed(void* context, bool level, uint32_t duration) {
@@ -242,8 +225,6 @@ void subghz_protocol_decoder_honda_v8_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v8_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -264,6 +245,13 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v8_serialize(
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "KeyIdx", &key_idx, 1) ||
        !flipper_format_write_uint32(flipper_format, "Enc", &enc, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[9];
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(instance->generic.data >> (56 - b * 8));
+    fdata[8] = 0;
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -289,7 +277,6 @@ SubGhzProtocolStatus
     instance->key_idx =
         flipper_format_read_uint32(flipper_format, "KeyIdx", &tmp, 1) ? (uint8_t)tmp : 0xFF;
 
-    // Re-validate the KeeLoq key match on load.
     uint32_t dec = 0;
     uint16_t rc = 0;
     int ki = honda_v8_find_key(instance->enc, instance->serial, instance->btn, &dec, &rc);
@@ -318,11 +305,15 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v8_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v8_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v8 = {
     .name = HONDA_V8_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v8_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v8_encoder_ext.vtable,
 };

@@ -96,7 +96,7 @@ typedef struct SubGhzProtocolEncoderFiatV2 {
     uint8_t hitag2_key[6];
     uint32_t epoch;
     uint8_t iv_combo;
-} 
+}
 SubGhzProtocolEncoderFiatV2;
 
 static bool fiat_v2_feed_data_pulse(
@@ -105,8 +105,6 @@ static bool fiat_v2_feed_data_pulse(
     uint32_t duration);
 static bool fiat_v2_frame_valid(const uint8_t raw[FIAT_V2_WIRE_BYTES]);
 static void fiat_v2_verify_hitag2_key(SubGhzProtocolDecoderFiatV2* instance);
-
-
 
 const SubGhzProtocolDecoder subghz_protocol_fiat_v2_decoder = {
     .alloc = subghz_protocol_decoder_fiat_v2_alloc,
@@ -121,7 +119,6 @@ const SubGhzProtocolDecoder subghz_protocol_fiat_v2_decoder = {
 
 SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderFiatV2);
 
-/* host bridge: firmware functions/state the SD encoder uses (handed over at load) */
 typedef struct {
     __typeof__(&subghz_protocol_fiat_v1_compute_auth) subghz_protocol_fiat_v1_compute_auth;
     __typeof__(&subghz_protocol_fiat_v1_get_known_keys) subghz_protocol_fiat_v1_get_known_keys;
@@ -132,7 +129,7 @@ static const enc_fiat_v2_host_t enc_fiat_v2_host = {
 };
 static const SubGhzEncoderExternal subghz_protocol_fiat_v2_encoder_ext = SUBGHZ_ENCODER_EXTERNAL_HOST("enc_fiat_v2", &enc_fiat_v2_host);
 
-const SubGhzProtocol fiat_v2_protocol = {
+const SubGhzProtocol subghz_protocol_fiat_v2 = {
     .name = FIAT_V2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM |
@@ -385,7 +382,7 @@ void* subghz_protocol_decoder_fiat_v2_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolDecoderFiatV2* instance = calloc(1, sizeof(SubGhzProtocolDecoderFiatV2));
     furi_check(instance);
-    instance->base.protocol = &fiat_v2_protocol;
+    instance->base.protocol = &subghz_protocol_fiat_v2;
     instance->generic.protocol_name = instance->base.protocol->name;
     subghz_protocol_decoder_fiat_v2_reset(instance);
     return instance;
@@ -542,7 +539,5 @@ SubGhzProtocolStatus
     return SubGhzProtocolStatusErrorParserOthers;
 }
 
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderFiatV2);
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderFiatV2);

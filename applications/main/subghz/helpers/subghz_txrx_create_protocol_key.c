@@ -27,12 +27,20 @@ bool subghz_txrx_gen_data_protocol(
     bool res = false;
 
     subghz_txrx_set_preset(instance, preset_name, frequency, NULL, 0);
+
+    SubGhzReceiver* search_rx = instance->receiver;
+    bool temp_rx = false;
+    if(search_rx == NULL) {
+        search_rx = subghz_receiver_alloc_init(instance->environment);
+        temp_rx = true;
+    }
+
     instance->decoder_result =
-        subghz_receiver_search_decoder_base_by_name(instance->receiver, protocol_name);
+        subghz_receiver_search_decoder_base_by_name(search_rx, protocol_name);
 
     if(instance->decoder_result == NULL) {
-
         FURI_LOG_E(TAG, "Protocol not found!");
+        if(temp_rx) subghz_receiver_free(search_rx);
         return false;
     }
 
@@ -60,6 +68,11 @@ bool subghz_txrx_gen_data_protocol(
         }
         res = true;
     } while(false);
+
+    if(temp_rx) {
+        instance->decoder_result = NULL;
+        subghz_receiver_free(search_rx);
+    }
     return res;
 }
 

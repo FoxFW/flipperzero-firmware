@@ -4,18 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "BmwV3"
-
-// BMW/Mini V3 -- ported from firmware bmw_v3.c via KeeLoq-RX arke_bmw.py.
-// 2-FSK Manchester, te 95/190 us, delta 40, inter-frame gap > 350 us.
-// Frame = 0xCC header byte + 64-bit payload. te_last half-period accumulator
-// (bit value = INVERSE of the completing pulse level, like BMW V2). The header
-// is located by sliding an 8-bit window; on a 0xCC match the accumulator resets
-// and the next 64 bits are the payload. CLEARTEXT device serial + button are
-// recoverable; the 40-bit rolling code is AES-encrypted (no counter / next-code
-// -- structural, like GM). Only meaningful on 2-FSK captures. Decode-only;
-// .encoder = NULL.
 
 #define BMW_V3_DATA_BITS 64
 #define BMW_V3_HEADER 0xCCU
@@ -33,17 +24,16 @@ struct SubGhzProtocolDecoderBmwV3 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 reset, 1 waitgap, 2 findheader, 3 collectdata
+    uint8_t step;
     uint64_t data;
     uint16_t nbit;
     uint32_t te_last;
 
-    uint16_t serial; // 16-bit cleartext serial
+    uint16_t serial;
     uint8_t btn;
-    uint16_t cnt; // 16-bit cleartext counter field
+    uint16_t cnt;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderBmwV3);
-
 
 typedef enum {
     BmwV3StepReset = 0,
@@ -56,8 +46,6 @@ static bool bmw_v3_button_valid(uint8_t btn) {
     return btn == 0x02 || btn == 0x04 || btn == 0x08 || btn == 0x10;
 }
 
-// Mirror of arke BmwV3._bit: accumulate one bit, drive the header search / data
-// collection state machine.
 static void bmw_v3_add_bit(SubGhzProtocolDecoderBmwV3* instance, uint8_t bit) {
     instance->data = (instance->data << 1) | (bit & 1U);
     instance->nbit++;
@@ -107,8 +95,6 @@ void* subghz_protocol_decoder_bmw_v3_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_bmw_v3_reset(void* context) {
     furi_check(context);
@@ -166,7 +152,7 @@ void subghz_protocol_decoder_bmw_v3_feed(void* context, bool level, uint32_t dur
                 bmw_v3_add_bit(instance, level ? 0 : 1);
                 instance->te_last = 0;
             }
-        } else { // is_long
+        } else {
             if(instance->te_last != 0) {
                 bmw_v3_add_bit(instance, level ? 0 : 1);
                 instance->te_last = te_s;
@@ -177,8 +163,6 @@ void subghz_protocol_decoder_bmw_v3_feed(void* context, bool level, uint32_t dur
         }
     }
 }
-
-
 
 SubGhzProtocolStatus subghz_protocol_decoder_bmw_v3_serialize(
     void* context,
@@ -233,13 +217,16 @@ const SubGhzProtocolDecoder subghz_protocol_bmw_v3_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_bmw_v3_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_bmw_v3 = {
     .name = BMW_V3_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    // 2-FSK -> add SubGhzProtocolFlag_FM
+
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_bmw_v3_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_bmw_v3_encoder_ext.vtable,
 };

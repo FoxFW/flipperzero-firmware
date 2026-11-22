@@ -4,27 +4,10 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
 #define TAG "LexusV0"
-
-// Lexus V0 -- ported from firmware lexus_v0.c via KeeLoq-RX arke_toyota.py.
-// Manchester rolling code. Custom timing bands (NOT DURATION_DIFF): preamble
-// pulse in [250,470]; LONG in [500,980]; SHORT < 500; inter-frame GAP >= 980.
-// Preamble >= 16 clean pulses, the first LONG triggers data (the LONG is the
-// first data bit). Manchester: one LONG = one bit (= level); two SHORTs = one
-// bit (= the 2nd short's level) via a half-bit toggle.
-//
-// Frame = 224 bits: [0..31] header (discarded) | [32..191] 160-bit encrypted
-// rolling code (20 bytes) | [192..223] 32-bit serial. There is NO per-frame CRC.
-// The only validator is the Toyota complement signature: the serial alternates
-// between S and ~S on successive frames, so a frame is marked complement-verified
-// only once its ~S partner has also been seen. A lone serial stays unverified
-// (honest). Degenerate serials (all-0 / all-1) are rejected as noise.
-//
-// Storage: generic.data holds the TOP 64 bits of the rolling code (first 8 of the
-// 20 payload bytes); the full 20-byte payload + 32-bit serial live in the struct.
-// Decode-only (encrypted rolling code); .encoder = NULL.
 
 #define LEXUS_V0_PRE_LO 250
 #define LEXUS_V0_PRE_HI 470
@@ -50,22 +33,20 @@ struct SubGhzProtocolDecoderLexusV0 {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    uint8_t step; // 0 reset, 1 preamble, 2 data
+    uint8_t step;
     uint16_t preamble_count;
     bool half_bit;
     uint16_t bit_count;
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(LEXUS_V0_FRAME_BITS + 8)];
 
-    uint8_t rolling[LEXUS_V0_DATA_BYTES]; // full 160-bit payload
+    uint8_t rolling[LEXUS_V0_DATA_BYTES];
     uint32_t serial;
 
-    // Toyota complement-signature cross-frame validator.
     uint32_t prev_serial;
     bool have_prev;
     bool compl_ok;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderLexusV0);
-
 
 typedef enum {
     LexusV0StepReset = 0,
@@ -80,17 +61,16 @@ static void lexus_v0_restart(SubGhzProtocolDecoderLexusV0* instance) {
     instance->bit_count = 0;
 }
 
-// Mirror of arke LexusV0._process_frame + emit (complement-signature validation).
 static void lexus_v0_process_frame(SubGhzProtocolDecoderLexusV0* instance) {
     if(instance->bit_count < LEXUS_V0_FRAME_BITS) return;
     const uint8_t* b = instance->all_bits;
 
     uint32_t serial = 0;
-    int base = LEXUS_V0_HEADER_BITS + LEXUS_V0_DATA_BITS; // 192
+    int base = LEXUS_V0_HEADER_BITS + LEXUS_V0_DATA_BITS;
     for(int i = 0; i < LEXUS_V0_SERIAL_BITS; i++) {
         serial = (serial << 1) | (subghz_bitbuf_get(b, base + i) & 1U);
     }
-    if(serial == 0x00000000U || serial == 0xFFFFFFFFU) return; // degenerate = noise
+    if(serial == 0x00000000U || serial == 0xFFFFFFFFU) return;
 
     uint8_t rolling[LEXUS_V0_DATA_BYTES];
     for(int k = 0; k < LEXUS_V0_DATA_BYTES; k++) {
@@ -104,7 +84,6 @@ static void lexus_v0_process_frame(SubGhzProtocolDecoderLexusV0* instance) {
     uint64_t data64 = 0;
     for(int k = 0; k < 8; k++) data64 = (data64 << 8) | rolling[k];
 
-    // complement signature: verified once a ~S partner has been seen.
     bool compl_ok = instance->have_prev && (serial == ((~instance->prev_serial) & 0xFFFFFFFFU));
     instance->prev_serial = serial;
     instance->have_prev = true;
@@ -113,10 +92,10 @@ static void lexus_v0_process_frame(SubGhzProtocolDecoderLexusV0* instance) {
     memcpy(instance->rolling, rolling, LEXUS_V0_DATA_BYTES);
     instance->serial = serial;
 
-    instance->generic.data = data64; // top 64 bits of the rolling code
+    instance->generic.data = data64;
     instance->generic.data_count_bit = LEXUS_V0_FRAME_BITS;
     instance->generic.serial = serial;
-    instance->generic.btn = 0; // encrypted -- no cleartext button
+    instance->generic.btn = 0;
     instance->generic.cnt = 0;
     instance->decoder.decode_data = data64;
     instance->decoder.decode_count_bit = LEXUS_V0_FRAME_BITS;
@@ -133,14 +112,11 @@ void* subghz_protocol_decoder_lexus_v0_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_lexus_v0_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderLexusV0* instance = context;
     lexus_v0_restart(instance);
-    // NB: prev_serial/have_prev persist across frames within a capture (the
-    // complement signature is cross-frame); they are cleared only on alloc.
+
     instance->decoder.decode_data = 0;
     instance->decoder.decode_count_bit = 0;
 }
@@ -211,8 +187,6 @@ void subghz_protocol_decoder_lexus_v0_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_lexus_v0_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -228,6 +202,17 @@ SubGhzProtocolStatus subghz_protocol_decoder_lexus_v0_serialize(
     if(!flipper_format_write_uint32(flipper_format, "Serial", &serial, 1) ||
        !flipper_format_write_uint32(flipper_format, "ComplOk", &compl_ok, 1) ||
        !flipper_format_write_hex(flipper_format, "Rolling", instance->rolling, LEXUS_V0_DATA_BYTES)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[28];
+    fdata[0] = 0; fdata[1] = 0; fdata[2] = 0; fdata[3] = 0;
+    for(uint8_t b = 0; b < LEXUS_V0_DATA_BYTES; b++) fdata[4 + b] = instance->rolling[b];
+    fdata[24] = (uint8_t)(instance->serial >> 24);
+    fdata[25] = (uint8_t)(instance->serial >> 16);
+    fdata[26] = (uint8_t)(instance->serial >> 8);
+    fdata[27] = (uint8_t)(instance->serial);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -257,7 +242,7 @@ SubGhzProtocolStatus
     flipper_format_rewind(flipper_format);
     if(!flipper_format_read_hex(
            flipper_format, "Rolling", instance->rolling, LEXUS_V0_DATA_BYTES)) {
-        // fall back to the top-64 bits stored in generic.data
+
         for(int k = 0; k < 8; k++) {
             instance->rolling[k] = (uint8_t)(instance->generic.data >> (56 - 8 * k));
         }
@@ -282,11 +267,15 @@ const SubGhzProtocolDecoder subghz_protocol_lexus_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_lexus_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_lexus_v0 = {
     .name = LEXUS_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_lexus_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_lexus_v0_encoder_ext.vtable,
 };

@@ -1,4 +1,4 @@
-/* decode_linear.fal : SD get_string for linear (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/linear.h>
@@ -25,7 +25,6 @@ struct SubGhzProtocolDecoderLinear {
 static void linear_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderLinear* instance = input->decoder;
-
 
     uint32_t code_found_lo = ~instance->generic.data & 0x00000000000003ff;
 

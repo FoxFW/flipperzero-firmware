@@ -4,7 +4,6 @@
 
 #include <bt/bt_settings_filename.h>
 #include <bt/bt_service/bt_keys_filename.h>
-#include <desktop/helpers/slideshow_filename.h>
 #include <desktop/desktop_settings_filename.h>
 #include <notification/notification_settings_filename.h>
 
@@ -26,7 +25,6 @@ static void backup_name_converter(FuriString* filename) {
         BT_KEYS_STORAGE_FILE_NAME,
         DESKTOP_SETTINGS_FILE_NAME,
         NOTIFICATION_SETTINGS_FILE_NAME,
-        SLIDESHOW_FILE_NAME,
         FOX_STATE_FILE_NAME,
     };
 

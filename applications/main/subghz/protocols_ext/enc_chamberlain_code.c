@@ -1,5 +1,5 @@
-/* enc_chamberlain_code.fal : SD encoder for chamberlain_code (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_chamb_code enc_chamberlain_code__subghz_protocol_chamb_code
 #define subghz_protocol_encoder_chamb_code_alloc enc_chamberlain_code__subghz_protocol_encoder_chamb_code_alloc
 #define subghz_protocol_encoder_chamb_code_deserialize enc_chamberlain_code__subghz_protocol_encoder_chamb_code_deserialize
@@ -125,7 +125,6 @@ static bool
     return true;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -133,13 +132,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -158,7 +155,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -219,7 +215,6 @@ static const SubGhzProtocolEncoder enc_chamberlain_code_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_chamb_code = {
     .name = SUBGHZ_PROTOCOL_CHAMB_CODE_NAME,
     .type = SubGhzProtocolTypeStatic,

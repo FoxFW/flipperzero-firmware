@@ -6,6 +6,8 @@
 #include <gui/modules/file_browser.h>
 #include <gui/modules/text_input.h>
 #include <gui/modules/dialog_ex.h>
+#include <gui/modules/variable_item_list.h>
+#include <flipper_application/flipper_application.h>
 #include <gui/icon_i.h>
 #include <storage/storage.h>
 #include <loader/loader.h>
@@ -21,11 +23,12 @@ typedef enum {
     ViewTextInput  = 4,
     ViewImage      = 5,
     ViewText       = 6,
+    ViewSort       = 7,
 } FFVViewId;
 
 typedef enum { MenuRun=0, MenuPin=1, MenuRename=2, MenuDelete=3 } FFVMenuAction;
 
-typedef enum { StartItemBrowse=0, StartItemSearch=1, StartItemFavs=2 } FFVStartItem;
+typedef enum { StartItemBrowse=0, StartItemSearch=1, StartItemSort=2, StartItemFavs=3 } FFVStartItem;
 
 typedef enum { ListSrcFavorites=0, ListSrcSearch=1 } FFVListSource;
 
@@ -79,7 +82,7 @@ typedef struct {
     DialogsApp*     dialogs;
     FFVViewId       current_view;
 
-    FFVStartItem    start_items[3];
+    FFVStartItem    start_items[4];
     uint8_t         start_count;
     uint8_t         start_selected;
     bool            browser_started;
@@ -120,6 +123,9 @@ typedef struct {
     size_t          text_line_count;
     size_t          text_top;
     bool            text_from_favs;
+    VariableItemList* sort_list;
+    uint8_t         sort_mode;
+    bool            sort_desc;
 } FFVApp;
 
 static FFVApp* s_ffv_ctx = NULL;
@@ -141,6 +147,7 @@ static void ffv_go_image_view(FFVApp* app);
 static void ffv_image_list_free(FFVApp* app);
 static void ffv_go_text_view(FFVApp* app);
 static void ffv_text_free(FFVApp* app);
+static void ffv_sort_apply(FFVApp* app);
 
 static FFVFileType ffv_type_from_path(const char* path) {
     const char* s = strrchr(path, '/');
@@ -238,6 +245,7 @@ static uint8_t ffv_apps_for(FFVFileType t, const char* out[FFV_MAX_APPS_PER_TYPE
 }
 
 #define FAV_PATH EXT_PATH("favorites.txt")
+#define FFB_SORT_CFG EXT_PATH("apps_data/ffb_sort.cfg")
 #define FAV_TMP  EXT_PATH("favorites.txt.tmp")
 
 #define FOX_XBM_CONVERTER_APP_NAME "Fox XBM Converter"
@@ -334,6 +342,7 @@ static const char* ffv_start_label(FFVStartItem item){
     switch(item){
     case StartItemBrowse: return "Browse SD Card";
     case StartItemSearch: return "Search SD Card";
+    case StartItemSort:   return "Sort";
     case StartItemFavs:   return "Favorites";
     }
     return "";
@@ -343,6 +352,7 @@ static void ffv_start_build_items(FFVApp* app){
     app->start_count = 0;
     app->start_items[app->start_count++] = StartItemBrowse;
     app->start_items[app->start_count++] = StartItemSearch;
+    app->start_items[app->start_count++] = StartItemSort;
     if(ffv_favorites_non_empty(app)) app->start_items[app->start_count++] = StartItemFavs;
     if(app->start_selected >= app->start_count) app->start_selected = 0;
 }
@@ -351,9 +361,12 @@ static void ffv_start_item_rect(uint8_t idx, uint8_t count, int* y, int* h){
     if(count <= 2){
         static const int ys[2] = {18, 41};
         *h = 18; *y = ys[idx];
-    } else {
+    } else if(count == 3){
         static const int ys[3] = {14, 31, 48};
         *h = 14; *y = ys[idx];
+    } else {
+        static const int ys[4] = {12, 25, 38, 51};
+        *h = 11; *y = ys[idx];
     }
 }
 
@@ -398,6 +411,10 @@ static bool ffv_start_input_cb(InputEvent* ev, void* ctx){
         switch(app->start_items[app->start_selected]){
         case StartItemBrowse: ffv_go_browse(app); break;
         case StartItemSearch: ffv_go_search_input(app); break;
+        case StartItemSort:
+            app->current_view=ViewSort;
+            view_dispatcher_switch_to_view(app->view_dispatcher,ViewSort);
+            break;
         case StartItemFavs:   ffv_go_favs(app); break;
         }
         return true;
@@ -898,8 +915,6 @@ static void ffv_text_load(FFVApp* app, const char* path){
     storage_file_free(file);
     app->text_buf[rd] = '\0';
 
-    /* normalise in place: drop CR, TAB -> space, other control bytes -> '.' so a
-       stray binary byte cannot corrupt the glyph run; keep LF as the line break */
     size_t w = 0;
     for(size_t r = 0; r < rd; r++){
         unsigned char c = (unsigned char)app->text_buf[r];
@@ -912,7 +927,6 @@ static void ffv_text_load(FFVApp* app, const char* path){
     app->text_buf[w] = '\0';
     app->text_len = w;
 
-    /* wrapped line-start index: break on LF or every TXT_WRAP_COLS chars */
     size_t lc = 0;
     app->text_lines[lc++] = 0;
     size_t col = 0;
@@ -1074,6 +1088,9 @@ static bool ffv_nav_callback(void* ctx){
         if(app->list_source == ListSrcSearch) ffv_go_search_input(app);
         else                                   ffv_go_start(app);
         return true;
+    case ViewSort:
+        ffv_go_start(app);
+        return true;
     case ViewStart:
 
         return false;
@@ -1087,6 +1104,7 @@ static void ffv_go_start(FFVApp* app){
     view_dispatcher_switch_to_view(app->view_dispatcher,ViewStart);
 }
 static void ffv_go_browse(FFVApp* app){
+    ffv_sort_apply(app);
     file_browser_start(app->browser, app->current_dir);
     app->browser_started = true;
     app->current_view=ViewBrowser;
@@ -1121,6 +1139,7 @@ static void ffv_refresh_browser(FFVApp* app){
     if(sl && sl>sel){ furi_string_set_str(app->current_dir,sel); furi_string_left(app->current_dir,(size_t)(sl-sel)); }
     else furi_string_set_str(app->current_dir,EXT_PATH(""));
     file_browser_stop(app->browser);
+    ffv_sort_apply(app);
     file_browser_start(app->browser,app->current_dir);
     app->current_view=ViewBrowser;
     view_dispatcher_switch_to_view(app->view_dispatcher,ViewBrowser);
@@ -1150,8 +1169,12 @@ static void ffv_return_from_menu(FFVApp* app){
 }
 
 static bool ffv_item_cb(FuriString* path, void* ctx, uint8_t** icon, FuriString* name){
-    UNUSED(ctx); UNUSED(name);
-    *icon=(uint8_t*)ffv_icon(ffv_type_from_path(furi_string_get_cstr(path)));
+    FFVApp* app = ctx;
+    FFVFileType t = ffv_type_from_path(furi_string_get_cstr(path));
+    if(t == TypeApp && app) {
+        flipper_application_load_name_and_icon(path, app->storage, icon, name);
+    }
+    *icon=(uint8_t*)ffv_icon(t);
     return true;
 }
 
@@ -1374,6 +1397,57 @@ static void ffv_do_action(FFVApp* app, FFVMenuAction action){
     }
 }
 
+static const char* const FFB_SORT_BY_NAMES[3] = {"Name", "Date mod.", "Size"};
+
+static void ffv_sort_apply(FFVApp* app) {
+    file_browser_set_sort_by_name(app->browser, true);
+    file_browser_set_sort_mode(app->browser, app->sort_mode, app->sort_desc);
+}
+
+static void ffv_sort_load(FFVApp* app) {
+    app->sort_mode = 0;
+    app->sort_desc = false;
+    File* f = storage_file_alloc(app->storage);
+    if(storage_file_open(f, FFB_SORT_CFG, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        uint8_t b[2] = {0, 0};
+        if(storage_file_read(f, b, 2) == 2) {
+            if(b[0] <= 2) app->sort_mode = b[0];
+            app->sort_desc = b[1] ? true : false;
+        }
+        storage_file_close(f);
+    }
+    storage_file_free(f);
+}
+
+static void ffv_sort_save(FFVApp* app) {
+    File* f = storage_file_alloc(app->storage);
+    if(storage_file_open(f, FFB_SORT_CFG, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        uint8_t b[2] = {app->sort_mode, app->sort_desc ? 1 : 0};
+        storage_file_write(f, b, 2);
+        storage_file_close(f);
+    }
+    storage_file_free(f);
+}
+
+static void ffv_sort_by_changed(VariableItem* item) {
+    FFVApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    if(idx > 2) idx = 0;
+    variable_item_set_current_value_text(item, FFB_SORT_BY_NAMES[idx]);
+    app->sort_mode = idx;
+    ffv_sort_apply(app);
+    ffv_sort_save(app);
+}
+
+static void ffv_sort_order_changed(VariableItem* item) {
+    FFVApp* app = variable_item_get_context(item);
+    uint8_t idx = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, idx ? "Descending" : "Ascending");
+    app->sort_desc = idx ? true : false;
+    ffv_sort_apply(app);
+    ffv_sort_save(app);
+}
+
 static FFVApp* ffv_alloc(void){
     FFVApp* app=malloc(sizeof(FFVApp)); furi_assert(app);
     memset(app,0,sizeof(FFVApp));
@@ -1382,6 +1456,7 @@ static FFVApp* ffv_alloc(void){
     app->dialogs =furi_record_open(RECORD_DIALOGS);
     app->gui     =furi_record_open(RECORD_GUI);
     app->current_view=ViewStart;
+    ffv_sort_load(app);
     s_ffv_ctx=app;
     app->selected_path=furi_string_alloc();
     app->current_dir  =furi_string_alloc();
@@ -1403,6 +1478,7 @@ static FFVApp* ffv_alloc(void){
     file_browser_configure(app->browser,"*",EXT_PATH(""),false,true,&I_unknown_10px,false);
     file_browser_set_item_callback(app->browser,ffv_item_cb,app);
     file_browser_set_callback(app->browser,ffv_browser_callback,app);
+    ffv_sort_apply(app);
     view_dispatcher_add_view(app->view_dispatcher,ViewBrowser,file_browser_get_view(app->browser));
 
     app->fav_view=view_alloc();
@@ -1438,6 +1514,16 @@ static FFVApp* ffv_alloc(void){
     view_allocate_model(app->text_view,ViewModelTypeLocking,sizeof(uint8_t));
     view_dispatcher_add_view(app->view_dispatcher,ViewText,app->text_view);
 
+    app->sort_list=variable_item_list_alloc();
+    VariableItem* svi;
+    svi=variable_item_list_add(app->sort_list,"Sort by",3,ffv_sort_by_changed,app);
+    variable_item_set_current_value_index(svi,app->sort_mode<=2?app->sort_mode:0);
+    variable_item_set_current_value_text(svi,FFB_SORT_BY_NAMES[app->sort_mode<=2?app->sort_mode:0]);
+    svi=variable_item_list_add(app->sort_list,"Order",2,ffv_sort_order_changed,app);
+    variable_item_set_current_value_index(svi,app->sort_desc?1:0);
+    variable_item_set_current_value_text(svi,app->sort_desc?"Descending":"Ascending");
+    view_dispatcher_add_view(app->view_dispatcher,ViewSort,variable_item_list_get_view(app->sort_list));
+
     return app;
 }
 
@@ -1455,6 +1541,7 @@ static void ffv_free(FFVApp* app){
     view_dispatcher_remove_view(app->view_dispatcher,ViewTextInput);
     view_dispatcher_remove_view(app->view_dispatcher,ViewImage);
     view_dispatcher_remove_view(app->view_dispatcher,ViewText);
+    view_dispatcher_remove_view(app->view_dispatcher,ViewSort);
     view_free(app->start_view);
     file_browser_free(app->browser);
     furi_timer_stop(app->fav_scroll_timer);
@@ -1466,6 +1553,7 @@ static void ffv_free(FFVApp* app){
     text_input_free(app->text_input);
     view_free(app->image_view);
     view_free(app->text_view);
+    variable_item_list_free(app->sort_list);
     view_dispatcher_free(app->view_dispatcher);
     furi_string_free(app->selected_path);
     furi_string_free(app->current_dir);

@@ -1,10 +1,4 @@
-/* decode_princeton.fal : SD-resident decode/format for the Princeton OOK remote.
- * The always-on capture path (feed/reset/serialize) stays in internal flash in
- * lib/subghz/protocols/princeton.c; this plugin provides only get_string, loaded
- * on demand when a captured Princeton item is opened. It receives the shared
- * captured frame (SubGhzBlockGeneric) plus the protocol scalars te and guard_time
- * via SubGhzDecodeInput.extra, and formats exactly as the former internal
- * get_string did. FoxFW2.0 2026-10-21 split detect/decode PoC. */
+
 
 #include "subghz_decode_plugin_desc.h"
 

@@ -176,7 +176,7 @@ typedef struct SubGhzProtocolEncoderRenaultV0 {
     uint8_t tx_button;
     uint8_t preamble_bits;
     uint32_t key2;
-} 
+}
 SubGhzProtocolEncoderRenaultV0;
 
 typedef struct {
@@ -221,9 +221,6 @@ static void renault_v0_apply_attempt(
     const RenaultV0DecodeAttempt* attempt);
 static void renault_v0_decode_candidate(SubGhzProtocolDecoderRenaultV0* instance);
 
-
-
-
 const SubGhzProtocolDecoder subghz_protocol_renault_v0_decoder = {
     .alloc = subghz_protocol_decoder_renault_v0_alloc,
     .free = subghz_protocol_decoder_common_free,
@@ -239,7 +236,7 @@ SUBGHZ_ASSERT_ENCODER_GENERIC_LAYOUT(SubGhzProtocolEncoderRenaultV0);
 
 static const SubGhzEncoderExternal subghz_protocol_renault_v0_encoder_ext = SUBGHZ_ENCODER_EXTERNAL("enc_renault_v0");
 
-const SubGhzProtocol renault_v0_protocol = {
+const SubGhzProtocol subghz_protocol_renault_v0 = {
     .name = RENAULT_PROTOCOL_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 |
@@ -735,7 +732,7 @@ void* subghz_protocol_decoder_renault_v0_alloc(SubGhzEnvironment* environment) {
     SubGhzProtocolDecoderRenaultV0* instance = calloc(1, sizeof(SubGhzProtocolDecoderRenaultV0));
     furi_check(instance);
 
-    instance->base.protocol = &renault_v0_protocol;
+    instance->base.protocol = &subghz_protocol_renault_v0;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->manchester_state = 1U;
 
@@ -998,7 +995,5 @@ SubGhzProtocolStatus
     return status;
 }
 
-/* Layout asserts placed at EOF: these structs typedef the bare name
- * later in this file, so the assert must follow all type definitions. */
 SUBGHZ_ASSERT_ENCODER_COMMON_LAYOUT(SubGhzProtocolEncoderRenaultV0);
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderRenaultV0);

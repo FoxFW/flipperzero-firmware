@@ -4,21 +4,10 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
 #define TAG "MazdaV1"
-
-// Mazda V1 -- ported from firmware mazda_v1.c via KeeLoq-RX arke_mazda_gm.py (MazdaV1).
-// Half-bit Manchester, ts=505 tl=1010 delta=200 (<=). 71-bit frame, usually sent
-// twice back-to-back. 8-bit 0xEC sync, then 8-bit button, serial, counter and two
-// "format" markers (v1 / v3). No in-frame CRC -> STRUCTURAL gate:
-//   * 0xEC sync (tried at both polarities),
-//   * button whitelist {Lock 0x06, Unlock 0x0A, Trunk 0x0E, Btn5/Trunk 0x26} on &0x7F,
-//   * bit70 == 1 marker,
-//   * v1 marker (b18=1,b19=0,b20=0,b21=0,b37=0) OR v3 marker (bits18..21 != 1000).
-// Serial is a 6-bit per-remote constant; cnt is a 5-bit cleartext field. The top 64
-// bits are stored in generic.data; the 7 tail bits (frame bits 64..70) in `tail`.
-// Decode-only (rolling code); .encoder = NULL.
 
 #define MAZDA_V1_BITS       71
 #define MAZDA_V1_CAP        400
@@ -31,7 +20,6 @@ static const SubGhzBlockConst subghz_protocol_mazda_v1_const = {
     .min_count_bit_for_found = MAZDA_V1_BITS,
 };
 
-// 0xEC = 1110 1100, MSB first.
 static const uint8_t mazda_v1_sync[8] = {1, 1, 1, 0, 1, 1, 0, 0};
 
 struct SubGhzProtocolDecoderMazdaV1 {
@@ -45,21 +33,18 @@ struct SubGhzProtocolDecoderMazdaV1 {
     int32_t last_pos;
     uint8_t all_bits[SUBGHZ_BITBUF_BYTES(MAZDA_V1_CAP)];
 
-    uint8_t serial; // 6-bit
-    uint8_t btn; // 8-bit
-    uint8_t cnt; // 5-bit
-    uint8_t tail; // frame bits 64..70 (7-bit remainder)
+    uint8_t serial;
+    uint8_t btn;
+    uint8_t cnt;
+    uint8_t tail;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderMazdaV1);
-
 
 typedef enum {
     MazdaV1StepReset = 0,
     MazdaV1StepCollect = 1,
 } MazdaV1Step;
 
-// cnt = 5-bit cleartext field derived from frame bits 49..53 (MSB-indexed within
-// the 64-bit `data`): b4 = fb53 ^ fb49.
 static uint8_t mazda_v1_extract_cnt(uint64_t data) {
     uint8_t fb53 = (data >> (63 - 53)) & 1;
     uint8_t fb52 = (data >> (63 - 52)) & 1;
@@ -70,9 +55,6 @@ static uint8_t mazda_v1_extract_cnt(uint64_t data) {
     return (uint8_t)((b4 << 4) | (fb50 << 3) | (fb51 << 2) | (fb52 << 1) | fb53);
 }
 
-// Try to lock a 71-bit frame at all_bits[sync_pos] under the given polarity (0/1).
-// On success, normalizes the window in place (if polarity==1), extracts fields and
-// fires the callback. Returns true on a successful emit.
 static bool mazda_v1_try_emit_at(
     SubGhzProtocolDecoderMazdaV1* instance,
     uint16_t sync_pos,
@@ -106,7 +88,6 @@ static bool mazda_v1_try_emit_at(
     bool v3_marker = !(b18 == 1 && b19 == 0 && b20 == 0 && b21 == 0);
     if(!v1_marker && !v3_marker) return false;
 
-    // passed the gate: normalize polarity in place, then extract
     if(polarity == 1) {
         for(uint16_t k = sync_pos; k < sync_pos + MAZDA_V1_BITS; k++) subghz_bitbuf_set(ab, k, subghz_bitbuf_get(ab, k) ^ (1));
     }
@@ -142,7 +123,6 @@ static bool mazda_v1_try_emit_at(
     return true;
 }
 
-// Check only the newest 71-bit window as bits stream in.
 static void mazda_v1_streaming_check(SubGhzProtocolDecoderMazdaV1* instance) {
     uint16_t n = instance->all_count;
     if(n < MAZDA_V1_BITS) return;
@@ -156,7 +136,6 @@ static void mazda_v1_streaming_check(SubGhzProtocolDecoderMazdaV1* instance) {
     }
 }
 
-// Full scan over the whole buffer (end-of-burst / buffer-full fallback).
 static void mazda_v1_process_frame(SubGhzProtocolDecoderMazdaV1* instance) {
     uint16_t n = instance->all_count;
     if(n < MAZDA_V1_BITS) return;
@@ -181,8 +160,6 @@ void* subghz_protocol_decoder_mazda_v1_alloc(SubGhzEnvironment* environment) {
     instance->last_pos = -32767;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_mazda_v1_reset(void* context) {
     furi_check(context);
@@ -251,8 +228,6 @@ void subghz_protocol_decoder_mazda_v1_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_mazda_v1_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -271,6 +246,14 @@ SubGhzProtocolStatus subghz_protocol_decoder_mazda_v1_serialize(
        !flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Tail", &tail, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[9];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    fdata[8] = (uint8_t)((instance->tail & 0x7F) << 1);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -316,11 +299,15 @@ const SubGhzProtocolDecoder subghz_protocol_mazda_v1_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_mazda_v1_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_mazda_v1 = {
     .name = MAZDA_V1_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mazda_v1_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_mazda_v1_encoder_ext.vtable,
 };

@@ -10,12 +10,6 @@
 
 #define TAG "BmwCas3"
 
-/* BMW CAS3/CAS4 PPM key fob. Constant ~250 us marks; a ~500 us space is 0 and a
- * ~1500 us space is 1. Each frame follows two back-to-back intervals of at least
- * 10 ms. The payload is AES encrypted, so the frame is identified structurally and
- * kept verbatim: the encoder replays exactly the captured bits.
- * Gate and timing from FOBworks for Flipper (GPL-3.0, flipper_oem_wire.c). */
-
 #define BMW_CAS3_SYNC_MIN_US  10000u
 #define BMW_CAS3_MARK_MIN_US  100u
 #define BMW_CAS3_MARK_MAX_US  400u

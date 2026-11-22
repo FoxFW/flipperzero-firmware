@@ -1,4 +1,4 @@
-/* decode_roger.fal : SD get_string for roger (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/roger.h>
@@ -32,7 +32,6 @@ static void subghz_protocol_roger_check_remote_controller(SubGhzBlockGeneric* in
 static void roger_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderRoger* instance = input->decoder;
-
 
     subghz_protocol_roger_check_remote_controller(&instance->generic);
 

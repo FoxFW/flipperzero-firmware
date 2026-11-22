@@ -588,6 +588,7 @@ int32_t infrared_app(void* p) {
 
     bool is_remote_loaded = false;
     bool is_rpc_mode = false;
+    bool return_to_raw_edit = false;
 
     if(p && strlen(p)) {
         uint32_t rpc_ctx = 0;
@@ -597,6 +598,9 @@ int32_t infrared_app(void* p) {
                 infrared->rpc_ctx, infrared_rpc_command_callback, infrared);
             rpc_system_app_send_started(infrared->rpc_ctx);
             is_rpc_mode = true;
+        } else if(strcmp((const char*)p, "rawedit") == 0) {
+
+            return_to_raw_edit = true;
         } else {
             const char* file_path = (const char*)p;
             InfraredErrorCode error = infrared_remote_load(infrared->remote, file_path);
@@ -628,6 +632,7 @@ int32_t infrared_app(void* p) {
         if(is_remote_loaded) {
             scene_manager_next_scene(infrared->scene_manager, InfraredSceneRemote);
         } else {
+            infrared->start_focus_raw_edit = return_to_raw_edit;
             scene_manager_next_scene(infrared->scene_manager, InfraredSceneStart);
         }
     }

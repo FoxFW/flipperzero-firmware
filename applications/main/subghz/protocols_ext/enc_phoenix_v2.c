@@ -1,5 +1,5 @@
-/* enc_phoenix_v2.fal : SD encoder for phoenix_v2 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_phoenix_v2__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_phoenix_v2__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_phoenix_v2__subghz_protocol_encoder_common_stop
@@ -35,7 +35,6 @@ static const SubGhzBlockConst subghz_protocol_phoenix_v2_const = {
     .min_count_bit_for_found = 52,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool bypass__bridge_ty;
 extern bool phoenix_v2_raw_replay__bridge_ty;
 extern uint8_t v2_phoenix_counter_mode__bridge_ty;
@@ -184,7 +183,7 @@ static bool
     if(v2_phoenix_counter_mode == 0 || bypass) {
 
         if(phoenix_v2_raw_replay) {
-            bypass = false; /* #16: freeze counter on TxRaw verbatim replay */
+            bypass = false;
         } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF || bypass) {
             bypass = false;
 
@@ -327,7 +326,6 @@ static void subghz_protocol_phoenix_v2_check_remote_controller(SubGhzBlockGeneri
     subghz_custom_btn_set_max(4);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -335,13 +333,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -360,7 +356,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -388,7 +383,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderPhoenix_V2* instance = context;
     SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         phoenix_v2_raw_replay = false;
         {
             uint32_t phoenix_v2_txraw = 0;
@@ -457,7 +452,6 @@ static const SubGhzProtocolEncoder enc_phoenix_v2_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_phoenix_v2 = {
     .name = SUBGHZ_PROTOCOL_PHOENIX_V2_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -10,9 +10,6 @@
 
 #define TAG "SubGhzProtocolDoorbell32"
 
-// Princeton style 1:3 PWM, but 32 bits and a 14*Te guard instead of 24 and 31*Te, so the
-// Princeton decoder syncs on the guard and then drops the frame on the bit count. Te is
-// measured from the signal and saved, it differs between units.
 #define DOORBELL32_GUARD_TIME 14u
 
 static const SubGhzBlockConst subghz_protocol_doorbell32_const = {
@@ -75,11 +72,6 @@ const SubGhzProtocol subghz_protocol_doorbell32 = {
     .encoder = &subghz_protocol_doorbell32_encoder_ext.vtable,
 };
 
-/**
- * Generating an upload from data.
- * @param instance Pointer to a SubGhzProtocolEncoderDoorbell32 instance
- * @return true Always; this encoder has no failure path
- */
 void* subghz_protocol_decoder_doorbell32_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     return subghz_protocol_decoder_common_alloc(
@@ -113,7 +105,7 @@ void subghz_protocol_decoder_doorbell32_feed(void* context, bool level, uint32_t
     case Doorbell32DecoderStepCheckDuration:
         if(!level) {
             if(duration >= ((uint32_t)c->te_long * 2)) {
-                // guard reached, the frame ends here
+
                 if((instance->decoder.decode_count_bit == c->min_count_bit_for_found) &&
                    (instance->last_data == instance->decoder.decode_data) && instance->last_data) {
                     instance->te /= (instance->decoder.decode_count_bit * 4 + 1);
@@ -130,7 +122,7 @@ void subghz_protocol_decoder_doorbell32_feed(void* context, bool level, uint32_t
                 break;
             }
             instance->te += duration;
-            // Bit 0 is short HIGH (te_last) and long LOW, bit 1 is the other way round
+
             if((DURATION_DIFF(instance->decoder.te_last, c->te_short) < c->te_delta) &&
                (DURATION_DIFF(duration, c->te_long) < c->te_delta * 2)) {
                 subghz_protocol_blocks_add_bit(&instance->decoder, 0);

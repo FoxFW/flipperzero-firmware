@@ -1,4 +1,4 @@
-/* decode_came.fal : SD get_string for came (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/came.h>
@@ -24,7 +24,6 @@ struct SubGhzProtocolDecoderCame {
 static void came_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderCame* instance = input->decoder;
-
 
     uint32_t code_found_lo = instance->generic.data & 0x000003ffffffffff;
 

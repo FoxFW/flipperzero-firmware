@@ -61,6 +61,8 @@ uint8_t subghz_setting_customs_presets_to_log(SubGhzSetting* instance);
 
 size_t subghz_setting_get_hopper_preset_count(SubGhzSetting* instance);
 size_t subghz_setting_get_hopper_preset_index(SubGhzSetting* instance, size_t idx);
+size_t subghz_setting_get_hopper_preset2_count(SubGhzSetting* instance);
+size_t subghz_setting_get_hopper_preset2_index(SubGhzSetting* instance, size_t idx);
 
 #ifdef __cplusplus
 }

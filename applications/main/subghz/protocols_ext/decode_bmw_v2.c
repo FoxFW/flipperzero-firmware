@@ -1,4 +1,4 @@
-/* decode_bmw_v2.fal : SD get_string for bmw_v2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/bmw_v2.h>
@@ -9,13 +9,13 @@
 
 struct SubGhzProtocolDecoderBmwV2 {
     SubGhzProtocolDecoderBase base;
-    SubGhzBlockDecoder decoder; // parser_step / te_last / decode_data / decode_count_bit
+    SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
     uint8_t header;
     uint8_t trailer;
-    uint32_t serial; // 24-bit, carved from the encrypted rolling code
-    uint16_t cnt; // 16-bit, low part of the rolling code
+    uint32_t serial;
+    uint16_t cnt;
 };
 
 static void bmw_v2_decode(const SubGhzDecodeInput* input, FuriString* output) {

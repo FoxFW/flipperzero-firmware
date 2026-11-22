@@ -10,7 +10,6 @@
 
 #define TAG "FoxUpdate"
 
-// Recursively find the first *.fuf update manifest under dir.
 static bool fox_find_fuf(Storage* storage, const char* dir, char* out, size_t outsz) {
     File* d = storage_file_alloc(storage);
     FileInfo info;
@@ -36,9 +35,6 @@ static bool fox_find_fuf(Storage* storage, const char* dir, char* out, size_t ou
     return found;
 }
 
-// Extract an on-SD FoxFW update .tar into /ext/update/foxfw_<name>/, find its .fuf manifest, and
-// hand off to the built-in updater_app (which validates, flashes and reboots) — the same mechanism
-// as fox_update_downloader's installer. Returns 0 on handoff, negative on error.
 int32_t fox_update_channel(const char* tar_path) {
     if(!tar_path || tar_path[0] == '\0') return -1;
 
@@ -47,10 +43,9 @@ int32_t fox_update_channel(const char* tar_path) {
     FileInfo st;
     if(storage_common_stat(storage, tar_path, &st) != FSE_OK || st.size == 0) {
         furi_record_close(RECORD_STORAGE);
-        return -2; // download missing / empty
+        return -2;
     }
 
-    // derive a safe package dir from the tar's basename
     const char* base = strrchr(tar_path, '/');
     base = base ? base + 1 : tar_path;
     char pkg[96];
@@ -72,16 +67,16 @@ int32_t fox_update_channel(const char* tar_path) {
     tar_archive_free(ar);
     if(!ok) {
         furi_record_close(RECORD_STORAGE);
-        return -3; // open/extract failed (corrupt download)
+        return -3;
     }
 
     char manifest[256] = {0};
     fox_find_fuf(storage, pkg_dir, manifest, sizeof(manifest));
     furi_record_close(RECORD_STORAGE);
-    if(manifest[0] == '\0') return -4; // no .fuf in package
+    if(manifest[0] == '\0') return -4;
 
     Loader* loader = furi_record_open(RECORD_LOADER);
     loader_enqueue_launch(loader, "updater_app", manifest, LoaderDeferredLaunchFlagGui);
     furi_record_close(RECORD_LOADER);
-    return 0; // updater_app will validate, flash and reboot
+    return 0;
 }

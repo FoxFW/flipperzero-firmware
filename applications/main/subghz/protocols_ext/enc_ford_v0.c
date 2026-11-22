@@ -1,5 +1,5 @@
-/* enc_ford_v0.fal : SD encoder for ford_v0 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_free enc_ford_v0__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_ford_v0__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_ford_v0__subghz_protocol_encoder_common_yield
@@ -28,7 +28,7 @@ typedef struct SubGhzProtocolEncoderFordV0 {
     uint32_t serial;
     uint8_t button;
     uint32_t count;
-} 
+}
 SubGhzProtocolEncoderFordV0;
 
 static const SubGhzBlockConst subghz_protocol_ford_v0_const = {
@@ -120,14 +120,14 @@ static uint8_t ford_v0_btn_to_custom(uint8_t btn_code) {
 
 static void decode_ford_v0(uint64_t key1, uint16_t key2, uint32_t* serial, uint8_t* button, uint32_t* count) {
     uint8_t buf[13] = {0};
-    
+
     for(int i = 0; i < 8; ++i) {
         buf[i] = (uint8_t)(key1 >> (56 - i * 8));
     }
-    
+
     buf[8] = (uint8_t)(key2 >> 8);
     buf[9] = (uint8_t)(key2 & 0xFF);
-    
+
     uint8_t tmp = buf[8];
     uint8_t parity = 0;
     uint8_t parity_any = (tmp != 0);
@@ -136,7 +136,7 @@ static void decode_ford_v0(uint64_t key1, uint16_t key2, uint32_t* serial, uint8
         tmp >>= 1;
     }
     buf[11] = parity_any ? parity : 0;
-    
+
     uint8_t xor_byte;
     uint8_t limit;
     if(buf[11]) {
@@ -146,27 +146,27 @@ static void decode_ford_v0(uint64_t key1, uint16_t key2, uint32_t* serial, uint8
         xor_byte = buf[6];
         limit = 6;
     }
-    
+
     for(int idx = 1; idx < limit; ++idx) {
         buf[idx] ^= xor_byte;
     }
-    
+
     if(buf[11] == 0) {
         buf[7] ^= xor_byte;
     }
-    
+
     uint8_t orig_b7 = buf[7];
-    
+
     buf[7] = (orig_b7 & 0xAA) | (buf[6] & 0x55);
     uint8_t mixed = (buf[6] & 0xAA) | (orig_b7 & 0x55);
     buf[12] = mixed;
     buf[6] = mixed;
-    
+
     uint32_t serial_le = ((uint32_t)buf[1]) |
                          ((uint32_t)buf[2] << 8) |
                          ((uint32_t)buf[3] << 16) |
                          ((uint32_t)buf[4] << 24);
-    
+
     *serial = ((serial_le & 0xFF) << 24) |
               (((serial_le >> 8) & 0xFF) << 16) |
               (((serial_le >> 16) & 0xFF) << 8) |
@@ -181,9 +181,9 @@ static void decode_ford_v0(uint64_t key1, uint16_t key2, uint32_t* serial, uint8
 
 static void encode_ford_v0(uint64_t original_key1, uint32_t serial, uint8_t button, uint32_t count, uint8_t* chk_out, uint64_t* key1_out) {
     uint8_t buf[13] = {0};
-    
+
     buf[0] = (uint8_t)(original_key1 >> 56);
-    
+
     buf[1] = (serial >> 24) & 0xFF;
     buf[2] = (serial >> 16) & 0xFF;
     buf[3] = (serial >> 8) & 0xFF;
@@ -191,14 +191,14 @@ static void encode_ford_v0(uint64_t original_key1, uint32_t serial, uint8_t butt
     buf[5] = (button << 4) | ((count >> 16) & 0x0F);
     buf[6] = (count >> 8) & 0xFF;
     buf[7] = count & 0xFF;
-    
+
     uint8_t checksum = ford_v0_calculate_chk_from_buf(buf);
-    
+
     uint8_t orig_b7 = buf[7];
     uint8_t orig_b6 = buf[6];
     buf[7] = (orig_b7 & 0xAA) | (orig_b6 & 0x55);
     buf[6] = (orig_b6 & 0xAA) | (orig_b7 & 0x55);
-    
+
     if(chk_out) *chk_out = checksum;
     buf[8] = checksum;
     uint8_t tmp = buf[8];
@@ -209,7 +209,7 @@ static void encode_ford_v0(uint64_t original_key1, uint32_t serial, uint8_t butt
         tmp >>= 1;
     }
     uint8_t buf_11 = parity_any ? parity : 0;
-    
+
     uint8_t xor_byte;
     uint8_t limit;
     if(buf_11) {
@@ -219,15 +219,15 @@ static void encode_ford_v0(uint64_t original_key1, uint32_t serial, uint8_t butt
         xor_byte = buf[6];
         limit = 6;
     }
-    
+
     if(buf_11 == 0) {
         buf[7] ^= xor_byte;
     }
-    
+
     for(int idx = 1; idx < limit; idx++) {
         buf[idx] ^= xor_byte;
     }
-    
+
     *key1_out = 0;
     for(int i = 0; i < 8; i++) {
         *key1_out = (*key1_out << 8) | buf[i];
@@ -237,24 +237,24 @@ static void encode_ford_v0(uint64_t original_key1, uint32_t serial, uint8_t butt
 static void subghz_protocol_encoder_ford_v0_get_upload(SubGhzProtocolEncoderFordV0* instance) {
     furi_assert(instance);
     size_t index = 0;
-    
+
     uint32_t te_short = subghz_protocol_ford_v0_const.te_short;
     uint32_t te_long = subghz_protocol_ford_v0_const.te_long;
     uint32_t gap_duration = 3500;
-    
+
     for(int i = 0; i < 20; i++) {
         instance->encoder.upload[index++] = level_duration_make(true, te_short);
         instance->encoder.upload[index++] = level_duration_make(false, te_long);
         instance->encoder.upload[index++] = level_duration_make(true, te_long);
     }
-    
+
     instance->encoder.upload[index++] = level_duration_make(true, te_short);
-    
+
     instance->encoder.upload[index++] = level_duration_make(false, gap_duration);
-    
+
     uint64_t key1_inv = ~instance->key1;
     uint16_t key2_inv = ~instance->key2;
-    
+
     for(int i = 63; i >= 0; i--) {
         bool bit = (key1_inv >> i) & 1;
         if(bit) {
@@ -265,7 +265,7 @@ static void subghz_protocol_encoder_ford_v0_get_upload(SubGhzProtocolEncoderFord
             instance->encoder.upload[index++] = level_duration_make(true, te_short);
         }
     }
-    
+
     for(int i = 15; i >= 0; i--) {
         bool bit = (key2_inv >> i) & 1;
         if(bit) {
@@ -276,12 +276,11 @@ static void subghz_protocol_encoder_ford_v0_get_upload(SubGhzProtocolEncoderFord
             instance->encoder.upload[index++] = level_duration_make(true, te_short);
         }
     }
-    
+
     instance->encoder.size_upload = index;
     instance->encoder.front = 0;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -289,13 +288,11 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -317,23 +314,23 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
 void* subghz_protocol_encoder_ford_v0_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolEncoderFordV0* instance = malloc(sizeof(SubGhzProtocolEncoderFordV0));
-    
+
     instance->base.protocol = &subghz_protocol_ford_v0;
     instance->generic.protocol_name = instance->base.protocol->name;
-    
+
     instance->encoder.repeat = 3;
     instance->encoder.size_upload = 1024;
     instance->encoder.upload = malloc(instance->encoder.size_upload * sizeof(LevelDuration));
     instance->encoder.is_running = false;
     instance->encoder.front = 0;
-    
+
     return instance;
 }
 
 SubGhzProtocolStatus subghz_protocol_encoder_ford_v0_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolEncoderFordV0* instance = context;
-    
+
     SubGhzProtocolStatus ret = subghz_block_generic_deserialize(&instance->generic, flipper_format);
     if(ret != SubGhzProtocolStatusOk) return ret;
 
@@ -349,7 +346,7 @@ SubGhzProtocolStatus subghz_protocol_encoder_ford_v0_deserialize(void* context, 
         subghz_custom_btn_set_original(custom_btn);
     }
     subghz_custom_btn_set_max(3);
-    
+
     uint32_t ford_v0_txraw = 0;
     flipper_format_rewind(flipper_format);
     flipper_format_read_uint32(flipper_format, "TxRaw", &ford_v0_txraw, 1);
@@ -357,7 +354,7 @@ SubGhzProtocolStatus subghz_protocol_encoder_ford_v0_deserialize(void* context, 
     if(ford_v0_txraw == 0) {
         instance->count = (instance->count + furi_hal_subghz_get_rolling_counter_mult()) & 0xFFFFF;
     }
-    
+
     uint8_t btn = subghz_custom_btn_get() == SUBGHZ_CUSTOM_BTN_OK ?
                       subghz_custom_btn_get_original() :
                       subghz_custom_btn_get();
@@ -365,12 +362,12 @@ SubGhzProtocolStatus subghz_protocol_encoder_ford_v0_deserialize(void* context, 
 
     uint8_t new_chk = 0;
     encode_ford_v0(instance->generic.data, instance->serial, instance->button, instance->count, &new_chk, &instance->key1);
-    
+
     uint8_t new_crc = ford_v0_calculate_crc_for_tx(instance->key1, new_chk);
     instance->key2 = ((uint16_t)new_chk << 8) | new_crc;
 
     subghz_protocol_encoder_ford_v0_get_upload(instance);
-    
+
     flipper_format_rewind(flipper_format);
     uint8_t key_data[8];
     for(int i = 0; i < 8; i++) key_data[7-i] = (instance->key1 >> (i * 8)) & 0xFF;
@@ -390,7 +387,6 @@ static const SubGhzProtocolEncoder enc_ford_v0_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_ford_v0 = {
     .name = SUBGHZ_PROTOCOL_FORD_V0_NAME,
     .type = SubGhzProtocolTypeDynamic,

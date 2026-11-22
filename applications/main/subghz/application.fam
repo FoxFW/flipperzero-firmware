@@ -32,8 +32,6 @@ App(
     sources=["subghz_cli.c", "helpers/subghz_chat.c"],
 )
 
-# === FoxFW2.0 2026-10-31: config-externalization — scene config screens as
-# on-demand .fal plugins (config_ext/). Resident loader: helpers/subghz_config_scene_loader.c. ===
 App(
     appid="subghz_config_dual",
     apptype=FlipperAppType.PLUGIN,
@@ -71,18 +69,111 @@ App(
 )
 
 App(
+    appid="subghz_config_showerror",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_showerror_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_showerror.c"],
+)
+
+App(
+    appid="subghz_config_details",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_details_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_details.c"],
+)
+
+App(
+    appid="subghz_config_fileprefix",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_fileprefix_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_fileprefix.c"],
+)
+
+App(
+    appid="subghz_config_showerrorsub",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_showerrorsub_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_showerrorsub.c"],
+)
+
+App(
+    appid="subghz_config_delete",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_delete_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_delete.c"],
+)
+
+App(
+    appid="subghz_config_deleteraw",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_deleteraw_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_deleteraw.c"],
+)
+
+App(
+    appid="subghz_config_moreraw",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_moreraw_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_moreraw.c"],
+)
+
+App(
+    appid="subghz_config_deletesuccess",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_deletesuccess_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_deletesuccess.c"],
+)
+
+App(
+    appid="subghz_config_needsaving",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_needsaving_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_needsaving.c"],
+)
+
+App(
+    appid="subghz_config_protocollist",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_protocollist_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_protocollist.c"],
+)
+
+App(
+    appid="subghz_config_customfreq",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="subghz_config_customfreq_ep",
+    requires=["subghz"],
+    sources=["config_ext/subghz_config_customfreq.c"],
+)
+
+App(
     appid="subghz_load_dangerous_settings",
     apptype=FlipperAppType.STARTUP,
     entry_point="subghz_dangerous_freq",
     requires=["storage", "subghz"],
     order=650,
 )
-
-# === FoxFW2.0 v2.1 2026-10-22: no Level-2 groups. Every protocol is registered live
-# (lib/subghz/protocols/protocol_items.c); only its detector is internal. Each one's
-# get_string is decode_<p>.fal and its encoder enc_<p>.fal (App blocks below), loaded
-# on demand from /ext/apps_data/subghz/plugins/. The old subghz_ext_auto_g1..g3 groups
-# and the deep-scan scene were removed.
 
 App(
     appid="decode_princeton",
@@ -94,6 +185,69 @@ App(
 )
 
 App(
+    appid="decode_subaru_liberty_gt",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_subaru_liberty_gt_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_subaru_liberty_gt.c"],
+)
+
+App(
+    appid="decode_sti3353",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_sti3353_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_sti3353.c"],
+)
+
+App(
+    appid="decode_rojaflex",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_rojaflex_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_rojaflex.c"],
+)
+
+App(
+    appid="decode_hcs362",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hcs362_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hcs362.c"],
+)
+
+App(
+    appid="decode_hcs361",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hcs361_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hcs361.c"],
+)
+
+App(
+    appid="decode_opel_mokka",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_opel_mokka_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_opel_mokka.c"],
+)
+
+App(
+    appid="decode_datsun_lada",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_datsun_lada_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_datsun_lada.c"],
+)
+
+App(
     appid="decode_g1",
     apptype=FlipperAppType.PLUGIN,
     targets=["f7"],
@@ -102,8 +256,6 @@ App(
     sources=["protocols_ext/decode_g1.c"],
 )
 
-
-# === FoxFW2.0 2026-10-21: per-protocol SD decode plugins (full split) ===
 App(
     appid="decode_tesla_charge",
     apptype=FlipperAppType.PLUGIN,
@@ -165,6 +317,15 @@ App(
     entry_point="decode_bmw_v3_ep",
     requires=["subghz"],
     sources=["protocols_ext/decode_bmw_v3.c"],
+)
+
+App(
+    appid="decode_bmw_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_bmw_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_bmw_v4.c"],
 )
 
 App(
@@ -824,7 +985,6 @@ App(
     sources=["protocols_ext/decode_vag_polo.c"],
 )
 
-
 App(
     appid="decode_astrostart",
     apptype=FlipperAppType.PLUGIN,
@@ -897,7 +1057,6 @@ App(
     sources=["protocols_ext/decode_toyota_v0.c"],
 )
 
-
 App(
     appid="decode_fiat_spa",
     apptype=FlipperAppType.PLUGIN,
@@ -961,7 +1120,6 @@ App(
     sources=["protocols_ext/decode_fiat_v2_v3_v5.c"],
 )
 
-
 App(
     appid="decode_ford_v1",
     apptype=FlipperAppType.PLUGIN,
@@ -979,9 +1137,6 @@ App(
     requires=["subghz"],
     sources=["protocols_ext/decode_renault_v1.c"],
 )
-
-# === FoxFW2.0 v2.1 2026-10-21: encoder (TX) plugins. Loaded by libsubghz's transmitter
-# === when a protocol's encoder is an SD placeholder (lib/subghz/encode_plugin.h).
 
 App(
     appid="enc_allstar_firefly",
@@ -1002,30 +1157,12 @@ App(
 )
 
 App(
-    appid="enc_astrostart",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_astrostart_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_astrostart.c"],
-)
-
-App(
     appid="enc_audi_v1",
     apptype=FlipperAppType.PLUGIN,
     targets=["f7"],
     entry_point="enc_audi_v1_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_audi_v1.c"],
-)
-
-App(
-    appid="enc_audiovox",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_audiovox_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_audiovox.c"],
 )
 
 App(
@@ -1071,24 +1208,6 @@ App(
     entry_point="enc_clemsa_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_clemsa.c"],
-)
-
-App(
-    appid="enc_compustar",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_compustar_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_compustar.c"],
-)
-
-App(
-    appid="enc_continental_rke",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_continental_rke_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_continental_rke.c"],
 )
 
 App(
@@ -1215,15 +1334,6 @@ App(
     entry_point="enc_gm_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_gm.c"],
-)
-
-App(
-    appid="enc_gm_rke",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_gm_rke_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_gm_rke.c"],
 )
 
 App(
@@ -1416,6 +1526,42 @@ App(
 )
 
 App(
+    appid="enc_mazda_v2",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_mazda_v2_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_mazda_v2.c"],
+)
+
+App(
+    appid="enc_honda_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_honda_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_honda_v4.c"],
+)
+
+App(
+    appid="enc_recon_manchester",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_recon_manchester_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_recon_manchester.c"],
+)
+
+App(
+    appid="enc_recon_pwm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_recon_pwm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_recon_pwm.c"],
+)
+
+App(
     appid="enc_megacode",
     apptype=FlipperAppType.PLUGIN,
     targets=["f7"],
@@ -1449,15 +1595,6 @@ App(
     entry_point="enc_nice_flo_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_nice_flo.c"],
-)
-
-App(
-    appid="enc_opel_v0",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_opel_v0_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_opel_v0.c"],
 )
 
 App(
@@ -1512,6 +1649,123 @@ App(
     entry_point="enc_subaru_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_subaru.c"],
+)
+
+App(
+    appid="enc_subaru_liberty_gt",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_subaru_liberty_gt_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_subaru_liberty_gt.c"],
+)
+
+App(
+    appid="enc_datsun_lada",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_datsun_lada_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_datsun_lada.c"],
+)
+
+App(
+    appid="enc_x10",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_x10_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_x10.c"],
+)
+
+App(
+    appid="enc_sti3353",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_sti3353_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_sti3353.c"],
+)
+
+App(
+    appid="decode_freezer",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_freezer_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_freezer.c"],
+)
+
+App(
+    appid="enc_freezer",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_freezer_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_freezer.c"],
+)
+
+App(
+    appid="decode_faac_tm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_faac_tm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_faac_tm.c"],
+)
+
+App(
+    appid="enc_faac_tm",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_faac_tm_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_faac_tm.c"],
+)
+
+App(
+    appid="decode_cardin_s508",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_cardin_s508_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_cardin_s508.c"],
+)
+
+App(
+    appid="decode_hormann_bisecur",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_hormann_bisecur_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_hormann_bisecur.c"],
+)
+
+App(
+    appid="decode_prastel",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_prastel_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_prastel.c"],
+)
+
+App(
+    appid="enc_rojaflex",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_rojaflex_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_rojaflex.c"],
+)
+
+App(
+    appid="enc_prastel",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_prastel_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_prastel.c"],
 )
 
 App(
@@ -2046,21 +2300,21 @@ App(
 )
 
 App(
+    appid="decode_telecrane",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_telecrane_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_telecrane.c"],
+)
+
+App(
     appid="decode_treadmill37",
     apptype=FlipperAppType.PLUGIN,
     targets=["f7"],
     entry_point="decode_treadmill37_ep",
     requires=["subghz"],
     sources=["protocols_ext/decode_treadmill37.c"],
-)
-
-App(
-    appid="enc_alps_rke",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_alps_rke_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_alps_rke.c"],
 )
 
 App(
@@ -2106,6 +2360,15 @@ App(
     entry_point="enc_bmw_cas4_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_bmw_cas4.c"],
+)
+
+App(
+    appid="enc_bmw_v4",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_bmw_v4_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_bmw_v4.c"],
 )
 
 App(
@@ -2307,15 +2570,6 @@ App(
 )
 
 App(
-    appid="enc_nidec_rke",
-    apptype=FlipperAppType.PLUGIN,
-    targets=["f7"],
-    entry_point="enc_nidec_rke_ep",
-    requires=["subghz"],
-    sources=["protocols_ext/enc_nidec_rke.c"],
-)
-
-App(
     appid="enc_nord_ice",
     apptype=FlipperAppType.PLUGIN,
     targets=["f7"],
@@ -2412,6 +2666,51 @@ App(
     entry_point="enc_telcoma_edge_ep",
     requires=["subghz"],
     sources=["protocols_ext/enc_telcoma_edge.c"],
+)
+
+App(
+    appid="enc_telecrane",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_telecrane_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_telecrane.c"],
+)
+
+App(
+    appid="decode_proteco",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_proteco_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_proteco.c"],
+)
+
+App(
+    appid="enc_proteco",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_proteco_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_proteco.c"],
+)
+
+App(
+    appid="decode_belkorn",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="decode_belkorn_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/decode_belkorn.c"],
+)
+
+App(
+    appid="enc_belkorn",
+    apptype=FlipperAppType.PLUGIN,
+    targets=["f7"],
+    entry_point="enc_belkorn_ep",
+    requires=["subghz"],
+    sources=["protocols_ext/enc_belkorn.c"],
 )
 
 App(

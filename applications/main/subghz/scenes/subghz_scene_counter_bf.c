@@ -98,7 +98,7 @@ static void counter_bf_save(SubGhz* subghz, CounterBfContext* ctx) {
     furi_record_close(RECORD_STORAGE);
 }
 
-static void counter_bf_send(SubGhz* subghz, CounterBfContext* ctx) {
+static bool counter_bf_send(SubGhz* subghz, CounterBfContext* ctx) {
     subghz_txrx_stop(subghz->txrx);
 
     uint32_t delta = (ctx->current_cnt - ctx->start_cnt) & 0xFFFFFF;
@@ -110,10 +110,13 @@ static void counter_bf_send(SubGhz* subghz, CounterBfContext* ctx) {
     flipper_format_rewind(fff);
     flipper_format_update_uint32(fff, "Repeat", &repeat, 1);
 
-    subghz_tx_start(subghz, fff);
+    if(!subghz_tx_start(subghz, fff)) {
+        return false;
+    }
 
     ctx->packets_sent++;
     ctx->tick_wait = COUNTER_BF_TX_INTERVAL_TICKS;
+    return true;
 }
 
 void subghz_scene_counter_bf_on_enter(void* context) {
@@ -176,7 +179,12 @@ bool subghz_scene_counter_bf_on_event(void* context, SceneManagerEvent event) {
                 ctx->state = CounterBfStateRunning;
                 ctx->tick_wait = 0;
                 subghz->state_notifications = SubGhzNotificationStateTx;
-                counter_bf_send(subghz, ctx);
+                if(!counter_bf_send(subghz, ctx)) {
+
+                    ctx->state = CounterBfStateStopped;
+                    subghz_txrx_stop(subghz->txrx);
+                    subghz->state_notifications = SubGhzNotificationStateIDLE;
+                }
             } else {
                 ctx->state = CounterBfStateStopped;
                 subghz_txrx_stop(subghz->txrx);
@@ -193,7 +201,11 @@ bool subghz_scene_counter_bf_on_event(void* context, SceneManagerEvent event) {
                 ctx->tick_wait--;
             } else {
                 ctx->current_cnt = (ctx->current_cnt + ctx->step) & 0xFFFFFF;
-                counter_bf_send(subghz, ctx);
+                if(!counter_bf_send(subghz, ctx)) {
+                    ctx->state = CounterBfStateStopped;
+                    subghz_txrx_stop(subghz->txrx);
+                    subghz->state_notifications = SubGhzNotificationStateIDLE;
+                }
                 counter_bf_save(subghz, ctx);
                 counter_bf_draw(subghz, ctx);
             }

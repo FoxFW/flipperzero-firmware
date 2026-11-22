@@ -1,5 +1,5 @@
-/* enc_kia_v3_v4.fal : SD encoder for kia_v3_v4 (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_kia_v3_v4_alloc enc_kia_v3_v4__subghz_protocol_encoder_kia_v3_v4_alloc
 #define subghz_protocol_encoder_kia_v3_v4_deserialize enc_kia_v3_v4__subghz_protocol_encoder_kia_v3_v4_deserialize
 #define subghz_protocol_encoder_kia_v3_v4_free enc_kia_v3_v4__subghz_protocol_encoder_kia_v3_v4_free
@@ -60,7 +60,6 @@ static const SubGhzBlockConst subghz_protocol_kia_v3_v4_const = {
     .min_count_bit_for_found = 68,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&subghz_protocol_keeloq_common_decrypt) subghz_protocol_keeloq_common_decrypt;
     __typeof__(&subghz_protocol_keeloq_common_encrypt) subghz_protocol_keeloq_common_encrypt;
@@ -71,14 +70,10 @@ static const void* enc_kia_v3_v4_host_raw;
 #define subghz_protocol_keeloq_common_encrypt (ENC_KIA_V3_V4_HOST->subghz_protocol_keeloq_common_encrypt)
 
 static uint8_t kia_v3_v4_reverse8(uint8_t byte);
-// Kia/Hyundai V3/V4 manufacturer keys. Both are genuine (KIA_MF_KEY_2 is the
-// second key some models use, added 2026-10-03). Decode tries each with a
-// serial/button self-check; the matching key is reused for re-encrypt so a
-// re-transmitted frame stays valid for that car.
+
 static uint64_t
     kia_v3_v4_select_mf_key(uint32_t encrypted, uint8_t btn, uint8_t serial_lsb);
-// Recover the captured 32-bit encrypted word from the stored 68-bit Key
-// (generic.data), using the same byte layout the decoder built it from.
+
 static uint32_t kia_v3_v4_encrypted_from_keydata(uint64_t data);
 static inline void kia_v3_v4_emit_bit_pwm(LevelDuration* upload, size_t* idx, bool bit, bool v4);
 static uint64_t kia_v3_v4_build_tx_bitstream(SubGhzProtocolEncoderKiaV3V4* instance);
@@ -95,10 +90,6 @@ static uint8_t kia_v3_v4_reverse8(uint8_t byte) {
     return byte;
 }
 
-// Kia/Hyundai V3/V4 manufacturer keys. Both are genuine (KIA_MF_KEY_2 is the
-// second key some models use, added 2026-10-03). Decode tries each with a
-// serial/button self-check; the matching key is reused for re-encrypt so a
-// re-transmitted frame stays valid for that car.
 static uint64_t
     kia_v3_v4_select_mf_key(uint32_t encrypted, uint8_t btn, uint8_t serial_lsb) {
     static const uint64_t keys[2] = {KIA_MF_KEY, KIA_MF_KEY_2};
@@ -111,8 +102,6 @@ static uint64_t
     return 0;
 }
 
-// Recover the captured 32-bit encrypted word from the stored 68-bit Key
-// (generic.data), using the same byte layout the decoder built it from.
 static uint32_t kia_v3_v4_encrypted_from_keydata(uint64_t data) {
     uint8_t b0 = (uint8_t)((data >> 56) & 0xFF);
     uint8_t b1 = (uint8_t)((data >> 48) & 0xFF);
@@ -374,8 +363,6 @@ SubGhzProtocolStatus
         instance->btn = (uint8_t)btn;
         instance->cnt = (uint16_t)cnt;
 
-        // Pick the manufacturer key that decoded the captured frame so re-encrypt
-        // uses the key this car expects; 0 falls back to KIA_MF_KEY in build_packet.
         instance->mf_key = kia_v3_v4_select_mf_key(
             kia_v3_v4_encrypted_from_keydata(instance->generic.data),
             instance->btn,
@@ -473,7 +460,6 @@ static const SubGhzProtocolEncoder enc_kia_v3_v4_vt = {
     .yield = subghz_protocol_encoder_kia_v3_v4_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_kia_v3_v4 = {
     .name = SUBGHZ_PROTOCOL_KIA_V3_V4_NAME,
     .type = SubGhzProtocolTypeDynamic,

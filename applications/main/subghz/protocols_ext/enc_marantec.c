@@ -1,5 +1,5 @@
-/* enc_marantec.fal : SD encoder for marantec (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_alloc enc_marantec__subghz_protocol_encoder_common_alloc
 #define subghz_protocol_encoder_common_free enc_marantec__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_yield enc_marantec__subghz_protocol_encoder_common_yield
@@ -114,7 +114,6 @@ static void subghz_protocol_marantec_remote_controller(SubGhzBlockGeneric* insta
     instance->serial = ((instance->data >> 12) & 0xFFFFFF00) | ((instance->data >> 8) & 0xFF);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -122,7 +121,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -141,7 +139,6 @@ LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     return ret;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void* subghz_protocol_encoder_common_alloc(
     size_t instance_size,
     const SubGhzProtocol* protocol,
@@ -203,7 +200,6 @@ static const SubGhzProtocolEncoder enc_marantec_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_marantec = {
     .name = SUBGHZ_PROTOCOL_MARANTEC_NAME,
     .type = SubGhzProtocolTypeStatic,

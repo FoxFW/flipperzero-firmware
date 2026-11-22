@@ -1,0 +1,46 @@
+name: "FAP: build against official and Unleashed SDKs"
+
+# The code is portable across the official firmware SDK and the
+# Unleashed/RogueMaster SDK. A FAP only loads on a firmware whose API version
+# matches the SDK it was built with, so both are built here.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "1 1 * * *"
+
+jobs:
+  ufbt-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: official release
+            sdk-channel: release
+            sdk-index-url: https://update.flipperzero.one/firmware/directory.json
+          - name: official dev
+            sdk-channel: dev
+            sdk-index-url: https://update.flipperzero.one/firmware/directory.json
+          - name: unleashed release
+            sdk-channel: release
+            sdk-index-url: https://up.unleashedflip.com/directory.json
+          - name: unleashed dev
+            sdk-channel: dev
+            sdk-index-url: https://up.unleashedflip.com/directory.json
+    name: 'ufbt: ${{ matrix.name }}'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build with ufbt
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        id: build-app
+        with:
+          sdk-channel: ${{ matrix.sdk-channel }}
+          sdk-index-url: ${{ matrix.sdk-index-url }}
+      - name: Upload app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ steps.build-app.outputs.suffix }}
+          path: ${{ steps.build-app.outputs.fap-artifacts }}

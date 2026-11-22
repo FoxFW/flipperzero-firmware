@@ -1,6 +1,6 @@
-/* enc_honda_static.fal : SD encoder for honda_static (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define honda_static_protocol enc_honda_static__honda_static_protocol
+
+
+#define subghz_protocol_honda_static enc_honda_static__honda_static_protocol
 #define subghz_protocol_encoder_common_free enc_honda_static__subghz_protocol_encoder_common_free
 #define subghz_protocol_encoder_common_stop enc_honda_static__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_honda_static_alloc enc_honda_static__subghz_protocol_encoder_honda_static_alloc
@@ -188,7 +188,6 @@ static void honda_static_build_upload(SubGhzProtocolEncoderHondaStatic* instance
     instance->encoder.size_upload = index;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_free(void* context) {
     furi_assert(context);
     SubGhzProtocolEncoderCommon* instance = context;
@@ -196,7 +195,6 @@ void subghz_protocol_encoder_common_free(void* context) {
     free(instance);
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
@@ -209,7 +207,7 @@ void* subghz_protocol_encoder_honda_static_alloc(SubGhzEnvironment* environment)
     furi_check(instance);
     memset(instance, 0, sizeof(*instance));
 
-    instance->base.protocol = &honda_static_protocol;
+    instance->base.protocol = &subghz_protocol_honda_static;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 3U;
     instance->encoder.size_upload = HONDA_STATIC_UPLOAD_CAPACITY;
@@ -319,8 +317,7 @@ static const SubGhzProtocolEncoder enc_honda_static_vt = {
     .yield = subghz_protocol_encoder_honda_static_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol honda_static_protocol = {
+const SubGhzProtocol subghz_protocol_honda_static = {
     .name = HONDA_STATIC_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_433 |

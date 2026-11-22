@@ -6,23 +6,14 @@
 
 #define FIAT_V1_BT_EV_DONE (0xF2)
 
-/* Dedicated BT/ESP32 offload: the whole 95-key Hitag2 recovery runs on a connected
- * companion (the Fox app over BLE), not on the Flipper. Requires a live BT link; with
- * none, nothing is started and a Retry screen is shown. Companion protocol matches
- * Fox_ESP32_FW/fox_fiat_bf.cpp (FoxFiatBf::onBleData), little-endian:
- *   REQUEST  [0]=0x20 [1..4]=uid [5]=button [6..7]=control [8..11]=hop [12]=key_start [13]=key_end (14 bytes)
- *   PROGRESS [0]=0x21 [1]=pct [2..5]=combos_tested                                     (>=6 bytes)
- *   RESULT   [0]=0x22 [1]=found [2..7]=key[6] [8..11]=epoch                            (>=12 bytes)
- *   CANCEL   [0]=0x23                                                                  (1 byte)
- * key_start=0/key_end=95 sweeps every known key on the companion. */
 #define FIAT_V1_BT_MSG_REQUEST 0x20
 #define FIAT_V1_BT_MSG_PROGRESS 0x21
 #define FIAT_V1_BT_MSG_RESULT 0x22
 #define FIAT_V1_BT_MSG_CANCEL 0x23
 
 typedef enum {
-    FiatBtPhaseConnect = 0, // not connected: Retry screen shown, nothing started
-    FiatBtPhaseOffload,     // request sent, companion sweeping all keys
+    FiatBtPhaseConnect = 0,
+    FiatBtPhaseOffload,
     FiatBtPhaseResult,
 } FiatBtPhase;
 
@@ -291,7 +282,7 @@ bool subghz_scene_fiat_v1_recover_bt_on_event(void* context, SceneManagerEvent e
         }
     } else if(event.type == SceneManagerEventTypeBack) {
         if(ctx->phase == FiatBtPhaseOffload) {
-            return true; // block Back while offloading; the view sends a cancel event
+            return true;
         }
         fiat_v1_bt_teardown(subghz, ctx);
         scene_manager_previous_scene(subghz->scene_manager);

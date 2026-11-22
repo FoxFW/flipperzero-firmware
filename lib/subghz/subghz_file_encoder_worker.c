@@ -154,10 +154,7 @@ static int32_t subghz_file_encoder_worker_thread(void* context) {
         if((stream_free_byte / sizeof(int32_t)) >= SUBGHZ_FILE_ENCODER_LOAD) {
             if(stream_read_line(stream, instance->str_data)) {
                 furi_string_trim(instance->str_data);
-                /* Skip any non-RAW_Data line (e.g. Bit/Key in a combined key+raw
-                   .sub where RAW_Data is appended after the key fields) instead of
-                   stopping; a pure RAW file has only RAW_Data lines and still ends
-                   at EOF below, so its behaviour is unchanged. */
+
                 subghz_file_encoder_worker_data_parse(
                     instance, furi_string_get_cstr(instance->str_data));
             } else {

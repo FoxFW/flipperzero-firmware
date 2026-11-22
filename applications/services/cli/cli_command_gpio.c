@@ -5,6 +5,7 @@
 #include <lib/toolbox/args.h>
 #include <toolbox/pipe.h>
 #include <toolbox/cli/cli_command.h>
+#include <cli/cli_main_commands.h>
 
 void cli_command_gpio_print_usage(void) {
     printf("Usage:\r\n");
@@ -202,3 +203,5 @@ void cli_command_gpio(PipeSide* pipe, FuriString* args, void* context) {
 
     furi_string_free(cmd);
 }
+
+CLI_COMMAND_INTERFACE(gpio, cli_command_gpio, CliCommandFlagDefault, 2 * 1024, CLI_APPID);

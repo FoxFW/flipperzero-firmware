@@ -1,4 +1,4 @@
-/* decode_chamberlain_code.fal : SD get_string for chamberlain_code (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/chamberlain_code.h>
@@ -34,7 +34,6 @@ struct SubGhzProtocolDecoderChamb_Code {
 static void chamberlain_code_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderChamb_Code* instance = input->decoder;
-
 
     uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
 

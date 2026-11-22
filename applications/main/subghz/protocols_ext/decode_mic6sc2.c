@@ -1,4 +1,4 @@
-/* decode_mic6sc2.fal : SD get_string for mic6sc2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/mic6sc2.h>
@@ -19,7 +19,7 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 
-#define MIC6SC2_MAX_BYTES 11U /* 88 bits */
+#define MIC6SC2_MAX_BYTES 11U
 
 typedef struct SubGhzProtocolDecoderMic6sc2 {
     SubGhzProtocolDecoderBase base;
@@ -39,7 +39,6 @@ typedef struct SubGhzProtocolDecoderMic6sc2 {
 static void mic6sc2_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderMic6sc2* instance = input->decoder;
-
 
     const char* button_name;
     switch(instance->button) {

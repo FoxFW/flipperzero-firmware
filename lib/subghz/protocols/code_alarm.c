@@ -1,11 +1,5 @@
 #include "code_alarm.h"
 
-/* ==== Self-contained sub-GHz helpers (de-refactored from the ProtoPirate/applab
- * "protocols_common" pp-framework) so this decoder depends only on the core
- * sub-GHz lib and carries no shared helper unit into lib/. All helpers are
- * static inline: unused ones are dropped with no -Wunused-function warning, and
- * the TX scratch buffer is a function-local static (no file-scope unused-var).
- * FoxFW2.0 2026-10-18 internal batch 2. ==== */
 #include <furi.h>
 #include <string.h>
 #include <lib/subghz/types.h>
@@ -15,6 +9,7 @@
 #include <lib/subghz/blocks/encoder.h>
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
+#include "../encode_plugin.h"
 #include <lib/toolbox/manchester_decoder.h>
 #include <flipper_format/flipper_format.h>
 
@@ -50,8 +45,7 @@ typedef struct {
     SubGhzProtocolBlockEncoder encoder;
 } ProtoPirateEncoderHeader;
 
-#endif /* PP_COMPAT_SHIM_DEFINED */
-
+#endif
 
 #include <lib/subghz/blocks/const.h>
 #include <lib/subghz/blocks/decoder.h>
@@ -61,42 +55,6 @@ typedef struct {
 #include "common.h"
 #include "decode_plugin.h"
 #include "pp_auto_common.h"
-
-/*
- * Code Alarm (FRDPC2002 / FRDPC2000) car remote decoder.
- *
- * Ported from the rtl_433 device "code_alarm_car_remote.c".
- *
- * Physical layer (rtl_433 r_device):
- *   .modulation  = OOK_PULSE_MANCHESTER_ZEROBIT
- *   .short_width = 550us   (half-bit / Manchester clock)
- *   .long_width  = 1100us  (full bit)
- *   .reset_limit = 1600us  (inter-frame gap / row reset)
- *   .tolerance   = 100us
- *   Modulation on the Flipper: OOK / AM650.
- *
- * Frame: exactly 60 Manchester bits.
- *   bits  0..15 : preamble, must be 0x0000
- *   bits 16..19 : unknown nibble
- *   bits 20..23 : button flags
- *   bits 24..55 : 32-bit raw rolling code region
- *   bits 56..59 : unknown nibble
- *
- * rtl_433 extractions (bit offsets into the 60-bit row):
- *   bytes[5] <- extract 40 bits @ offset 19   (checksum + button live here)
- *   code[5]  <- extract 36 bits @ offset 23   (rolling code)
- *
- *   button    = bytes[0] >> 4
- *   id (24b)  = ((code[0]^code[1])<<16) | ((code[1]^code[2])<<8) | (code[2]^code[3])
- *   checksum  = add_bytes(bytes, 5); valid when (sum != 0 && sum < 0xFF*5)
- *
- * Because the Flipper receiver hands us raw LevelDuration pulses (no
- * pre-demodulated bitstream like rtl_433), feed() re-implements the Manchester
- * demod as a pulse-duration state machine using the shared manchester_decoder
- * toolbox, then applies the exact rtl_433 field slicing + sanity checksum. The
- * checksum gate is what keeps random 60-bit Manchester runs from registering as
- * false Code Alarm frames.
- */
 
 #define TAG "CodeAlarm"
 
@@ -122,10 +80,6 @@ typedef enum {
     CodeAlarmDecoderStepData,
 } CodeAlarmDecoderStep;
 
-// =============================================================================
-// PROTOCOL INTERFACE
-// =============================================================================
-
 const SubGhzProtocolDecoder subghz_protocol_code_alarm_decoder = {
     .alloc = subghz_protocol_decoder_code_alarm_alloc,
     .free = subghz_protocol_decoder_common_free,
@@ -137,7 +91,6 @@ const SubGhzProtocolDecoder subghz_protocol_code_alarm_decoder = {
     .get_string = subghz_protocol_decoder_code_alarm_get_string,
 };
 
-// No TX support: replay-only stub encoder (rolling code is encrypted).
 const SubGhzProtocolEncoder subghz_protocol_code_alarm_encoder = {
     .alloc = NULL,
     .free = NULL,
@@ -146,31 +99,24 @@ const SubGhzProtocolEncoder subghz_protocol_code_alarm_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_code_alarm_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_code_alarm = {
     .name = CODE_ALARM_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_code_alarm_decoder,
-    .encoder = &subghz_protocol_code_alarm_encoder,
+    .encoder = &subghz_protocol_code_alarm_encoder_ext.vtable,
 };
 
-// =============================================================================
-// FIELD DECODE (mirrors rtl_433 code_alarm_car_remote_decode)
-// =============================================================================
-
-/*
- * Validate + decode a completed 60-bit frame held in `data` (bit 0 = MSB, i.e.
- * first received bit at weight 2^59). Fills instance->generic on success.
- * Returns true if the frame passes the rtl_433 sanity gates.
- */
 static bool code_alarm_check_and_decode(SubGhzProtocolDecoderCodeAlarm* instance, uint64_t data) {
-    // Preamble: bits 0..15 must be zero -> top 16 bits of the 60-bit word.
+
     if((data >> 44) != 0) {
         return false;
     }
 
-    // bytes[5] = 40 bits @ offset 19  ->  bits 19..58  ->  (data >> 1) & 40 ones
     uint64_t payload40 = (data >> 1) & 0xFFFFFFFFFFULL;
     uint8_t bytes[5];
     bytes[0] = (uint8_t)(payload40 >> 32);
@@ -179,14 +125,12 @@ static bool code_alarm_check_and_decode(SubGhzProtocolDecoderCodeAlarm* instance
     bytes[3] = (uint8_t)(payload40 >> 8);
     bytes[4] = (uint8_t)(payload40);
 
-    // add_bytes(bytes, 5) sanity gate: reject all-zero and all-ones payloads.
     uint16_t bytes_sum =
         (uint16_t)bytes[0] + bytes[1] + bytes[2] + bytes[3] + bytes[4];
     if(bytes_sum == 0 || bytes_sum >= (0xFFU * 5U)) {
         return false;
     }
 
-    // code[5] = 36 bits @ offset 23  ->  bits 23..58  ->  (data >> 1) & 36 ones
     uint64_t code36 = payload40 & 0xFFFFFFFFFULL;
     uint8_t code[4];
     code[0] = (uint8_t)(code36 >> 28);
@@ -203,15 +147,11 @@ static bool code_alarm_check_and_decode(SubGhzProtocolDecoderCodeAlarm* instance
     instance->generic.data_count_bit = CODE_ALARM_FRAME_BITS;
     instance->generic.serial = id;
     instance->generic.btn = button;
-    instance->generic.cnt = 0; // rolling code is encrypted; no plain counter
+    instance->generic.cnt = 0;
 
     FURI_LOG_D(TAG, "Frame ok: Id:%06lX Btn:%X", (unsigned long)id, button);
     return true;
 }
-
-// =============================================================================
-// DECODER
-// =============================================================================
 
 void* subghz_protocol_decoder_code_alarm_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
@@ -239,9 +179,7 @@ void subghz_protocol_decoder_code_alarm_feed(void* context, bool level, uint32_t
 
     switch(instance->decoder.parser_step) {
     case CodeAlarmDecoderStepReset:
-        // The inter-frame gap (>= reset_limit) shows up as an out-of-range
-        // duration -> ManchesterEventReset. That marks the start boundary: begin
-        // accumulating the next frame from a clean Manchester state.
+
         if(event == ManchesterEventReset) {
             instance->decoder.decode_data = 0;
             instance->decoder.decode_count_bit = 0;
@@ -256,7 +194,7 @@ void subghz_protocol_decoder_code_alarm_feed(void* context, bool level, uint32_t
 
     case CodeAlarmDecoderStepData:
         if(event == ManchesterEventReset) {
-            // End of frame (or noise): evaluate what we have, then resync.
+
             if(instance->decoder.decode_count_bit == CODE_ALARM_FRAME_BITS) {
                 if(code_alarm_check_and_decode(instance, instance->decoder.decode_data)) {
                     if(instance->base.callback) {
@@ -280,7 +218,6 @@ void subghz_protocol_decoder_code_alarm_feed(void* context, bool level, uint32_t
                    &data_bit)) {
                 subghz_protocol_blocks_add_bit(&instance->decoder, data_bit ? 1 : 0);
 
-                // Guard against runaway accumulation on a noisy Manchester run.
                 if(instance->decoder.decode_count_bit > CODE_ALARM_FRAME_BITS + 4U) {
                     instance->decoder.decode_data = 0;
                     instance->decoder.decode_count_bit = 0;
@@ -295,10 +232,6 @@ void subghz_protocol_decoder_code_alarm_feed(void* context, bool level, uint32_t
         break;
     }
 }
-
-// =============================================================================
-// SERIALIZE / DESERIALIZE / STRING
-// =============================================================================
 
 SubGhzProtocolStatus subghz_protocol_decoder_code_alarm_serialize(
     void* context,

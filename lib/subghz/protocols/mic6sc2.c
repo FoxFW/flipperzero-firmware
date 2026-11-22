@@ -1,11 +1,6 @@
 #include "mic6sc2.h"
+#include "../encode_plugin.h"
 
-/* ==== Self-contained sub-GHz helpers (de-refactored from the ProtoPirate/applab
- * "protocols_common" pp-framework) so this decoder depends only on the core
- * sub-GHz lib and carries no shared helper unit into lib/. All helpers are
- * static inline: unused ones are dropped with no -Wunused-function warning, and
- * the TX scratch buffer is a function-local static (no file-scope unused-var).
- * FoxFW2.0 2026-10-18 internal batch 2. ==== */
 #include <furi.h>
 #include <string.h>
 #include <lib/subghz/types.h>
@@ -50,8 +45,7 @@ typedef struct {
     SubGhzProtocolBlockEncoder encoder;
 } ProtoPirateEncoderHeader;
 
-#endif /* PP_COMPAT_SHIM_DEFINED */
-
+#endif
 
 #include <lib/subghz/blocks/const.h>
 #include <lib/subghz/blocks/decoder.h>
@@ -62,40 +56,8 @@ typedef struct {
 #include "decode_plugin.h"
 #include "pp_auto_common.h"
 
-/*
- * Microchip 6SC2 — Car Remote (315.1 MHz).
- *
- * Ported from the rtl_433 device decoder `mic6sc2_car_remote.c`
- * (Copyright (C) 2024 Ethan Halsall, GPLv2), MSOP-10 keyfob IC,
- * models 6SC2 CMGU / 6SC2 CDFA.
- *
- * Modulation : OOK_PULSE_MANCHESTER_ZEROBIT
- * short_width: 250 us  (Manchester half-bit / clock)  => full bit ~500 us
- * reset_limit: 10000 us (inter-frame gap)
- *
- * Over-the-air the bytes are transmitted LSB-first ("reflected"); rtl_433
- * packs the received bit order MSB-first so the raw preamble bytes read
- * 0x55 0x54, and reverse8()'s the payload bytes to recover their true value.
- *
- * Frame layout (rtl_433 byte view, up to 88 bits / 11 bytes):
- *
- *     PPPP EEEEEEEE bbbb uuuu SSSS CC
- *
- *   b[0..1]  : 16-bit preamble  (raw 0x55 0x54)
- *   b[2..5]  : 32-bit encrypted (rolling code), reverse8 per byte, big-endian
- *   b[6]     : reverse8 -> low nibble = button, high nibble = unknown
- *   b[7..8]  : 16-bit sequence  (reverse8(b[8])<<8 | reverse8(b[7]))
- *   b[9]     : 8-bit checksum
- *   b[10]    : trailing byte (0 for an 80-bit frame)
- *
- * Integrity: xor_bytes(b + 2, 9) == 0, i.e. the XOR of b[2]..b[10] is zero.
- * A frame that fails either the fixed preamble or this checksum is rejected,
- * which keeps this OOK Manchester decoder from emitting on noise.
- */
-
 #define TAG "MIC6SC2"
 
-// Manchester half-bit is the clock; a full bit is two half-bits.
 static const SubGhzBlockConst subghz_protocol_mic6sc2_const = {
     .te_short = 250,
     .te_long = 500,
@@ -103,9 +65,9 @@ static const SubGhzBlockConst subghz_protocol_mic6sc2_const = {
     .min_count_bit_for_found = 64,
 };
 
-#define MIC6SC2_MAX_BYTES 11U /* 88 bits */
+#define MIC6SC2_MAX_BYTES 11U
 #define MIC6SC2_MAX_BITS  88U
-#define MIC6SC2_MIN_BITS  80U /* 10 bytes: b[0..9], b[10] treated as 0 */
+#define MIC6SC2_MIN_BITS  80U
 
 typedef struct SubGhzProtocolDecoderMic6sc2 {
     SubGhzProtocolDecoderBase base;
@@ -122,10 +84,6 @@ typedef struct SubGhzProtocolDecoderMic6sc2 {
     uint8_t button;
 } SubGhzProtocolDecoderMic6sc2;
 
-// =============================================================================
-// PROTOCOL INTERFACE DEFINITIONS
-// =============================================================================
-
 const SubGhzProtocolDecoder subghz_protocol_mic6sc2_decoder = {
     .alloc = subghz_protocol_decoder_mic6sc2_alloc,
     .free = subghz_protocol_decoder_common_free,
@@ -137,7 +95,6 @@ const SubGhzProtocolDecoder subghz_protocol_mic6sc2_decoder = {
     .get_string = subghz_protocol_decoder_mic6sc2_get_string,
 };
 
-// Rolling-code fob: no TX. Shared NULL encoder stub.
 const SubGhzProtocolEncoder subghz_protocol_mic6sc2_encoder = {
     .alloc = NULL,
     .free = NULL,
@@ -146,18 +103,17 @@ const SubGhzProtocolEncoder subghz_protocol_mic6sc2_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_mic6sc2_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_mic6sc2 = {
     .name = MIC6SC2_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_mic6sc2_decoder,
-    .encoder = &subghz_protocol_mic6sc2_encoder,
+    .encoder = &subghz_protocol_mic6sc2_encoder_ext.vtable,
 };
-
-// =============================================================================
-// DECODER IMPLEMENTATION
-// =============================================================================
 
 static void mic6sc2_soft_reset(SubGhzProtocolDecoderMic6sc2* instance) {
     memset(instance->frame, 0, sizeof(instance->frame));
@@ -166,25 +122,19 @@ static void mic6sc2_soft_reset(SubGhzProtocolDecoderMic6sc2* instance) {
         instance->manchester_state, ManchesterEventReset, &instance->manchester_state, NULL);
 }
 
-// Validate the assembled frame and, on success, populate generic + emit.
 static bool mic6sc2_process_frame(SubGhzProtocolDecoderMic6sc2* instance) {
     if(instance->bit_count < MIC6SC2_MIN_BITS) return false;
 
     const uint8_t* b = instance->frame;
 
-    // Fixed 16-bit preamble (raw, un-reflected).
     if(b[0] != 0x55 || b[1] != 0x54) return false;
 
-    // Integrity: XOR of b[2]..b[10] must be zero (rtl_433 xor_bytes(b+2, 9)).
-    // For an 80-bit frame b[10] is 0 (buffer was cleared), matching rtl_433's
-    // zero-padded bitbuffer row.
     uint8_t xor_sum = 0;
     for(uint8_t i = 2; i < 11; i++) {
         xor_sum ^= b[i];
     }
     if(xor_sum != 0) return false;
 
-    // The transmission is LSB first, big endian: reverse8 each payload byte.
     instance->encrypted = ((uint32_t)ppa_reverse_bits8(b[5]) << 24) |
                           ((uint32_t)ppa_reverse_bits8(b[4]) << 16) |
                           ((uint32_t)ppa_reverse_bits8(b[3]) << 8) |
@@ -193,7 +143,6 @@ static bool mic6sc2_process_frame(SubGhzProtocolDecoderMic6sc2* instance) {
     instance->sequence =
         (uint16_t)((ppa_reverse_bits8(b[8]) << 8) | ppa_reverse_bits8(b[7]));
 
-    // Store the 8 core payload bytes (b[2..9]) big-endian as the 64-bit Key.
     uint64_t data = 0;
     for(uint8_t i = 2; i < 10; i++) {
         data = (data << 8) | b[i];
@@ -205,7 +154,6 @@ static bool mic6sc2_process_frame(SubGhzProtocolDecoderMic6sc2* instance) {
     instance->generic.btn = instance->button;
     instance->generic.cnt = instance->sequence;
 
-    // Feed the block hash helper a stable per-frame value.
     instance->decoder.decode_data = data;
     instance->decoder.decode_count_bit = 64;
 
@@ -247,9 +195,6 @@ void subghz_protocol_decoder_mic6sc2_reset(void* context) {
     instance->button = 0;
 }
 
-// Manchester slicer over the raw pulse stream. There is no pre-demodulated
-// bitstream here (unlike rtl_433): each LevelDuration edge drives the toolbox
-// Manchester state machine, and full frames are gated on the preamble + XOR.
 void subghz_protocol_decoder_mic6sc2_feed(void* context, bool level, uint32_t duration) {
     furi_check(context);
     SubGhzProtocolDecoderMic6sc2* instance = context;
@@ -258,8 +203,7 @@ void subghz_protocol_decoder_mic6sc2_feed(void* context, bool level, uint32_t du
         ppa_manchester_event(duration, level, &subghz_protocol_mic6sc2_const);
 
     if(event == ManchesterEventReset) {
-        // Out-of-range duration = inter-frame gap / end of transmission.
-        // A frame that reached full length terminates on this gap.
+
         mic6sc2_process_frame(instance);
         mic6sc2_soft_reset(instance);
         return;
@@ -271,7 +215,6 @@ void subghz_protocol_decoder_mic6sc2_feed(void* context, bool level, uint32_t du
         return;
     }
 
-    // Append bit MSB-first into the frame byte buffer.
     if(instance->bit_count < MIC6SC2_MAX_BITS) {
         if(data_bit) {
             instance->frame[instance->bit_count >> 3] |=
@@ -280,9 +223,6 @@ void subghz_protocol_decoder_mic6sc2_feed(void* context, bool level, uint32_t du
         instance->bit_count++;
     }
 
-    // Sync gate: once the preamble bytes are complete, verify them. A mismatch
-    // means we locked onto the wrong phase/position — drop and wait for the
-    // next gap to realign (the fob repeats the frame).
     if(instance->bit_count == 16) {
         if(instance->frame[0] != 0x55 || instance->frame[1] != 0x54) {
             mic6sc2_soft_reset(instance);
@@ -290,7 +230,6 @@ void subghz_protocol_decoder_mic6sc2_feed(void* context, bool level, uint32_t du
         }
     }
 
-    // Full-length frame: validate and emit, then realign for the repeat.
     if(instance->bit_count >= MIC6SC2_MAX_BITS) {
         mic6sc2_process_frame(instance);
         mic6sc2_soft_reset(instance);
@@ -338,14 +277,14 @@ SubGhzProtocolStatus
         subghz_protocol_mic6sc2_const.min_count_bit_for_found);
 
     if(ret == SubGhzProtocolStatusOk) {
-        // Recover the display fields from the stored 64-bit payload (b[2..9]).
+
         uint64_t data = instance->generic.data;
         uint8_t b[8];
         for(int i = 7; i >= 0; i--) {
             b[i] = (uint8_t)(data & 0xFF);
             data >>= 8;
         }
-        // b[0..3] = encrypted, b[4] = button byte, b[5..6] = sequence.
+
         instance->encrypted = ((uint32_t)ppa_reverse_bits8(b[3]) << 24) |
                               ((uint32_t)ppa_reverse_bits8(b[2]) << 16) |
                               ((uint32_t)ppa_reverse_bits8(b[1]) << 8) |

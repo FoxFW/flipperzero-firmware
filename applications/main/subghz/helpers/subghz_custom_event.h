@@ -46,6 +46,7 @@ typedef enum {
     SubGhzCustomEventViewReceiverOffDisplay,
     SubGhzCustomEventViewReceiverUnlock,
     SubGhzCustomEventViewReceiverDeleteItem,
+    SubGhzCustomEventViewReceiverPause,
 
     SubGhzCustomEventViewReadRAWBack,
     SubGhzCustomEventViewReadRAWIDLE,
@@ -118,6 +119,7 @@ typedef enum {
     SetTypeAllmatic868,
     SetTypeCenturion433,
     SetTypeMonarch433,
+    SetTypePhantomHiland433,
     SetTypeJollyMotors433,
     SetTypeMotorline433,
     SetTypeSommer_FM_434,

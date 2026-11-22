@@ -17,4 +17,6 @@ enum SubmenuIndex {
     SubmenuIndexTpmsReader,
     SubmenuIndexSubRATT,
     SubmenuIndexReadDual,
+    SubmenuIndexRawDual,
+    SubmenuIndexSignalGrabber,
 };

@@ -40,8 +40,7 @@ void subghz_scene_save_name_on_enter(void* context) {
             if(decoder_result != NULL) {
                 if(strlen(decoder_result->protocol->name) != 0 &&
                    subghz->last_settings->protocol_file_names) {
-                    if(!scene_manager_has_previous_scene(
-                           subghz->scene_manager, SubGhzSceneSetType)) {
+                    if(!subghz->add_manual_generated) {
                         name_generator_make_auto_datetime(
                             file_name_buf,
                             SUBGHZ_MAX_LEN_NAME,
@@ -131,16 +130,12 @@ bool subghz_scene_save_name_on_event(void* context, SceneManagerEvent event) {
                         return false;
                     }
                 } else {
-                    if(scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneSetType) !=
-                       SubGhzCustomEventManagerNoSet) {
+                    if(subghz->add_manual_generated) {
                         subghz_save_protocol_to_file(
                             subghz,
                             subghz_txrx_get_fff_data(subghz->txrx),
                             furi_string_get_cstr(subghz->file_path));
-                        scene_manager_set_scene_state(
-                            subghz->scene_manager,
-                            SubGhzSceneSetType,
-                            SubGhzCustomEventManagerNoSet);
+                        subghz->add_manual_generated = false;
                     } else {
                         const char* hist_proto = subghz_history_get_protocol_name(
                             subghz->history, subghz->idx_menu_chosen);
@@ -160,13 +155,19 @@ bool subghz_scene_save_name_on_event(void* context, SceneManagerEvent event) {
                            strcmp(hist_proto, "RAW") != 0 &&
                            !furi_string_empty(subghz->decode_raw_source)) {
                             subghz_loading_cover_show(subghz, "SAVING");
-                            subghz_save_append_raw_from_file(
+
+                            uint32_t seg_us = subghz_history_get_raw_end_us(
+                                subghz->history, subghz->idx_menu_chosen);
+                            subghz_save_append_raw_segment_from_file(
                                 furi_string_get_cstr(subghz->file_path),
-                                furi_string_get_cstr(subghz->decode_raw_source));
+                                furi_string_get_cstr(subghz->decode_raw_source),
+                                seg_us);
                             subghz_loading_cover_hide(subghz);
                         }
                     }
                 }
+
+                furi_string_set(subghz->saved_preselect, subghz->file_path);
 
                 if(scene_manager_get_scene_state(subghz->scene_manager, SubGhzSceneReadRAW) !=
                    SubGhzCustomEventManagerNoSet) {

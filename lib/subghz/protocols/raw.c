@@ -13,7 +13,7 @@
 #define SUBGHZ_DOWNLOAD_MAX_SIZE 512
 
 static const SubGhzBlockConst subghz_protocol_raw_const = {
-    .te_short = 50,
+    .te_short = 20,
     .te_long = 32700,
     .te_delta = 0,
     .min_count_bit_for_found = 0,

@@ -5,18 +5,9 @@
 #include <lib/subghz/blocks/math.h>
 #include <lib/toolbox/manchester_decoder.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "LdvV0"
-
-// LDV / Maxus V0 -- ported from firmware ldv_v0.c via KeeLoq-RX arke_misc.py (LdvV0).
-// 250/500 us Manchester at 433.92 MHz ASK (standard Flipper Manchester polarity).
-// Preamble = a run of >=48 identical demodulated Manchester bits terminated by a
-// value flip (the flip marks data start and is discarded). 128-bit frame (16 bytes):
-//   serial(32) | b4 | b5 | byte6 | 0xFF | 0xFF | byte9 | byte10 | hop(40)
-// byte6 = 0x80 | (btn<<3) | 0x07. Gate (structural / fixed-field):
-//   byte6 MSB set, byte6 low nibble bits == 0x07, bytes7-8 == 0xFFFF separator,
-//   and the button in byte6 equals the button duplicated in the counter field.
-//   cnt = ((byte9<<8)|byte10) >> 5. Decode-only (rolling code); .encoder = NULL.
 
 #define LDV_V0_TE_SHORT     250
 #define LDV_V0_TE_LONG      500
@@ -42,17 +33,16 @@ struct SubGhzProtocolDecoderLdvV0 {
     uint16_t preamble_count;
     uint8_t last_bit_value;
 
-    uint64_t data_2; // second 64 demodulated bits (bytes 8..15)
+    uint64_t data_2;
     uint16_t bit_count;
 
     uint32_t serial;
     uint8_t btn;
     uint32_t cnt;
-    uint64_t hop; // 40-bit rolling tail
+    uint64_t hop;
     bool frame_ok;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderLdvV0);
-
 
 typedef enum {
     LdvV0StepReset = 0,
@@ -60,9 +50,8 @@ typedef enum {
     LdvV0StepData = 2,
 } LdvV0Step;
 
-// Mirror of LdvV0._valid(): structural fixed-field gate.
 static bool ldv_v0_valid(SubGhzProtocolDecoderLdvV0* instance) {
-    uint64_t data = instance->decoder.decode_data; // first 64 bits (bytes 0..7)
+    uint64_t data = instance->decoder.decode_data;
     uint8_t byte6 = (uint8_t)((data >> 8) & 0xFFU);
     uint8_t byte7 = (uint8_t)(data & 0xFFU);
     uint8_t byte8 = (uint8_t)((instance->data_2 >> 56) & 0xFFU);
@@ -99,12 +88,12 @@ static void ldv_v0_commit(SubGhzProtocolDecoderLdvV0* instance) {
     ldv_v0_extract(instance);
     instance->frame_ok = true;
 
-    instance->generic.data = instance->decoder.decode_data; // top-64 (bytes 0..7)
+    instance->generic.data = instance->decoder.decode_data;
     instance->generic.data_count_bit = LDV_V0_DATA_BITS;
     instance->generic.serial = instance->serial;
     instance->generic.btn = instance->btn;
     instance->generic.cnt = instance->cnt;
-    // decode_data / decode_count_bit already hold the top 64 bits + full count.
+
     instance->decoder.decode_count_bit = LDV_V0_DATA_BITS;
 
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
@@ -119,8 +108,6 @@ void* subghz_protocol_decoder_ldv_v0_alloc(SubGhzEnvironment* environment) {
     instance->manchester_state = ManchesterStateMid1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_ldv_v0_reset(void* context) {
     furi_check(context);
@@ -143,7 +130,6 @@ void subghz_protocol_decoder_ldv_v0_feed(void* context, bool level, uint32_t dur
     uint32_t tl = LDV_V0_TE_LONG;
     uint32_t td = LDV_V0_TE_DELTA;
 
-    // Standard Flipper Manchester event mapping.
     ManchesterEvent event = ManchesterEventReset;
     if(DURATION_DIFF(duration, ts) < td) {
         event = level ? ManchesterEventShortLow : ManchesterEventShortHigh;
@@ -231,8 +217,6 @@ void subghz_protocol_decoder_ldv_v0_feed(void* context, bool level, uint32_t dur
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_ldv_v0_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -253,6 +237,15 @@ SubGhzProtocolStatus subghz_protocol_decoder_ldv_v0_serialize(
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Data2Hi", &data2_hi, 1) ||
        !flipper_format_write_uint32(flipper_format, "Data2Lo", &data2_lo, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[16];
+    uint64_t g = instance->generic.data;
+    uint64_t d2 = instance->data_2;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    for(uint8_t b = 0; b < 8; b++) fdata[8 + b] = (uint8_t)(d2 >> (56 - b * 8));
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -296,11 +289,15 @@ const SubGhzProtocolDecoder subghz_protocol_ldv_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_ldv_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_ldv_v0 = {
     .name = LDV_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_ldv_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_ldv_v0_encoder_ext.vtable,
 };

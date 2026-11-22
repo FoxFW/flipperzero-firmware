@@ -1,4 +1,4 @@
-/* decode_treadmill37.fal : SD get_string for treadmill37 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/treadmill37.h>
@@ -25,7 +25,6 @@ static void subghz_protocol_treadmill37_check_remote_controller(SubGhzBlockGener
 static void treadmill37_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderTreadmill37* instance = input->decoder;
-
 
     subghz_protocol_treadmill37_check_remote_controller(&instance->generic);
 

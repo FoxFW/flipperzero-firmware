@@ -82,7 +82,7 @@ def _fox_emitter(target, source, env):
 # bump these two numbers to match the newest entry at the top of
 # assets/protobuf/Changelog.
 PROTOBUF_MAJOR_VERSION = 0
-PROTOBUF_MINOR_VERSION = 26
+PROTOBUF_MINOR_VERSION = 27
  
  
 def _proto_ver_generator(target, source, env):

@@ -1,4 +1,4 @@
-/* decode_came_atomo.fal : SD get_string for came_atomo (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/came_atomo.h>
@@ -24,7 +24,6 @@ static void came_atomo_decode(const SubGhzDecodeInput* input, FuriString* output
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderCameAtomo* instance = input->decoder;
 
-    /* Atomo decrypt done internally */
     uint32_t code_found_hi = instance->generic.data >> 32;
     uint32_t code_found_lo = instance->generic.data & 0x00000000ffffffff;
 

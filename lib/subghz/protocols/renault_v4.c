@@ -4,16 +4,9 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 
 #define TAG "RenaultV4"
-
-// Renault/xHorse V4 -- ported from firmware renault_v4.c via KeeLoq-RX arke_renault.py.
-// Decodes the Nissan/xHorse aftermarket UNIVERSAL keyfob: 88-bit Manchester, te 125/250.
-// Recovers Serial(32) + Button nibble + a VISIBLE (cleartext) 8-bit counter (+1 per press).
-// Strong self-check (all must hold): XOR of all 11 payload bytes == 0xFF, button nibble in
-// {0xE,0xD,0xB,0x7}, and 2-bit pad field == 0b01. Genuine encrypted Renault (v1/v2/v3) only
-// exposes a pseudo-serial or nothing; this V4 is the one with a recoverable serial+counter.
-// Decode-only (rolling next-code; not a replayable clone); .encoder = NULL.
 
 #define RENAULT_V4_SYNC_MIN   800
 #define RENAULT_V4_DATA_BITS  88
@@ -41,19 +34,15 @@ struct SubGhzProtocolDecoderRenaultV4 {
 
     uint32_t serial;
     uint8_t btn;
-    uint8_t cnt; // cleartext 8-bit counter
-    uint32_t data_tail; // low 24 bits of the 88-bit frame (bits 64..87)
+    uint8_t cnt;
+    uint32_t data_tail;
     bool crc_ok;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderRenaultV4);
 
-
-// Custom Manchester state machine (firmware _rv4_manchester_decode):
-// returns true if a bit was produced; r1 encodes (width,level): 0=short-high,
-// 1=short-low, 2=long-high, 3=long-low. Transcribed 1:1 from arke_renault.py.
 static bool rv4_man_decode(uint8_t* man, uint8_t r1, uint8_t* bit) {
     uint8_t s = *man;
-    if(r1 == 0) { // short high
+    if(r1 == 0) {
         if(s == 0 || s == 2) {
             *man = 1;
             return false;
@@ -68,7 +57,7 @@ static bool rv4_man_decode(uint8_t* man, uint8_t r1, uint8_t* bit) {
             *bit = 0;
             return true;
         }
-    } else if(r1 == 1) { // short low
+    } else if(r1 == 1) {
         if(s == 0 || s == 2) {
             *man = 3;
             return false;
@@ -83,7 +72,7 @@ static bool rv4_man_decode(uint8_t* man, uint8_t r1, uint8_t* bit) {
             *bit = 1;
             return true;
         }
-    } else if(r1 == 2) { // long high
+    } else if(r1 == 2) {
         if(s == 0 || s == 2) {
             *man = 0;
             *bit = 0;
@@ -93,7 +82,7 @@ static bool rv4_man_decode(uint8_t* man, uint8_t r1, uint8_t* bit) {
             *man = 1;
             return false;
         }
-    } else if(r1 == 3) { // long low
+    } else if(r1 == 3) {
         if(s == 0 || s == 2) {
             *man = 2;
             *bit = 1;
@@ -107,10 +96,6 @@ static bool rv4_man_decode(uint8_t* man, uint8_t r1, uint8_t* bit) {
     return false;
 }
 
-// Mirror of arke_renault.RenaultV4._process(): scan the accumulated decoded bit
-// buffer for a >=10-bit preamble (both polarities), gate the frame length, build
-// the 11-byte frame, run the XOR==0xFF + button-whitelist + pad self-check, then
-// recover serial + button + cleartext counter. Emits via callback on success.
 static void renault_v4_process(SubGhzProtocolDecoderRenaultV4* instance) {
     const uint8_t* bits = instance->bits;
     int n = (int)instance->bit_count;
@@ -138,13 +123,12 @@ static void renault_v4_process(SubGhzProtocolDecoderRenaultV4* instance) {
         uint8_t btn_nib = (uint8_t)((frame[4] >> 4) & 0x0F);
         if(btn_nib != 0xE && btn_nib != 0xD && btn_nib != 0xB && btn_nib != 0x7) continue;
 
-        if(((frame[4] >> 2) & 0x03) != 0x01) continue; // pad invariant
+        if(((frame[4] >> 2) & 0x03) != 0x01) continue;
 
         uint32_t serial = ((uint32_t)frame[0] << 24) | ((uint32_t)frame[1] << 16) |
                           ((uint32_t)frame[2] << 8) | (uint32_t)frame[3];
         uint8_t counter8 = (uint8_t)(((frame[4] & 0x03) << 6) | ((frame[5] >> 2) & 0x3F));
 
-        // de-dup identical frame within one capture (firmware keeps "last").
         if(instance->last_valid) {
             bool same = true;
             for(int i = 0; i < 11; i++) {
@@ -158,7 +142,7 @@ static void renault_v4_process(SubGhzProtocolDecoderRenaultV4* instance) {
         for(int i = 0; i < 11; i++) instance->last_key[i] = frame[i];
         instance->last_valid = true;
 
-        uint64_t key = 0; // top 64 bits = frame[0..7]
+        uint64_t key = 0;
         for(int i = 0; i < 8; i++) key = (key << 8) | frame[i];
         uint32_t tail = ((uint32_t)frame[8] << 16) | ((uint32_t)frame[9] << 8) | (uint32_t)frame[10];
 
@@ -166,7 +150,7 @@ static void renault_v4_process(SubGhzProtocolDecoderRenaultV4* instance) {
         instance->btn = btn_nib;
         instance->cnt = counter8;
         instance->data_tail = tail;
-        instance->crc_ok = true; // XOR self-check passed
+        instance->crc_ok = true;
 
         instance->generic.data = key;
         instance->generic.data_count_bit = RENAULT_V4_DATA_BITS;
@@ -191,8 +175,6 @@ void* subghz_protocol_decoder_renault_v4_alloc(SubGhzEnvironment* environment) {
     instance->man_state = 1;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_renault_v4_reset(void* context) {
     furi_check(context);
@@ -248,8 +230,6 @@ void subghz_protocol_decoder_renault_v4_feed(void* context, bool level, uint32_t
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_renault_v4_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -268,6 +248,15 @@ SubGhzProtocolStatus subghz_protocol_decoder_renault_v4_serialize(
        !flipper_format_write_uint32(flipper_format, "Btn", &btn, 1) ||
        !flipper_format_write_uint32(flipper_format, "Cnt", &cnt, 1) ||
        !flipper_format_write_uint32(flipper_format, "Data2", &tail, 1)) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
+
+    uint8_t fdata[11];
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(instance->generic.data >> (56 - b * 8));
+    fdata[8] = (uint8_t)(instance->data_tail >> 16);
+    fdata[9] = (uint8_t)(instance->data_tail >> 8);
+    fdata[10] = (uint8_t)(instance->data_tail);
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
     return SubGhzProtocolStatusOk;
@@ -318,11 +307,15 @@ const SubGhzProtocolDecoder subghz_protocol_renault_v4_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_renault_v4_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_renault_v4 = {
     .name = RENAULT_V4_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_renault_v4_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_renault_v4_encoder_ext.vtable,
 };

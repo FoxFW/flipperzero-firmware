@@ -4,6 +4,7 @@
 #include <gui/elements.h>
 #include <assets_icons.h>
 #include <toolbox/path.h>
+#include <storage/storage.h>
 
 #include <furi.h>
 #include <furi_hal_resources.h>
@@ -39,6 +40,8 @@ typedef struct {
     BrowserItemType type;
     uint8_t* custom_icon_data;
     FuriString* display_name;
+    uint64_t item_size;
+    uint32_t item_date;
 } BrowserItem_t;
 
 static void BrowserItem_t_init(BrowserItem_t* obj) {
@@ -47,11 +50,15 @@ static void BrowserItem_t_init(BrowserItem_t* obj) {
     obj->path = furi_string_alloc();
     obj->display_name = furi_string_alloc();
     obj->custom_icon_data = NULL;
+    obj->item_size = 0;
+    obj->item_date = 0;
 }
 
 static void BrowserItem_t_init_set(BrowserItem_t* obj, const BrowserItem_t* src) {
     obj->unsorted_idx = src->unsorted_idx;
     obj->type = src->type;
+    obj->item_size = src->item_size;
+    obj->item_date = src->item_date;
     obj->path = furi_string_alloc_set(src->path);
     obj->display_name = furi_string_alloc_set(src->display_name);
     if(src->custom_icon_data) {
@@ -65,6 +72,8 @@ static void BrowserItem_t_init_set(BrowserItem_t* obj, const BrowserItem_t* src)
 static void BrowserItem_t_set(BrowserItem_t* obj, const BrowserItem_t* src) {
     obj->unsorted_idx = src->unsorted_idx;
     obj->type = src->type;
+    obj->item_size = src->item_size;
+    obj->item_date = src->item_date;
     furi_string_set(obj->path, src->path);
     furi_string_set(obj->display_name, src->display_name);
     if(src->custom_icon_data) {
@@ -82,6 +91,10 @@ static void BrowserItem_t_clear(BrowserItem_t* obj) {
     }
 }
 
+static bool s_browser_sort_by_name = false;
+static uint8_t s_browser_sort_mode = 0;
+static bool s_browser_sort_desc = false;
+
 static int BrowserItem_t_cmp(const BrowserItem_t* a, const BrowserItem_t* b) {
 
     if(a->type == BrowserItemTypeBack) {
@@ -97,7 +110,18 @@ static int BrowserItem_t_cmp(const BrowserItem_t* a, const BrowserItem_t* b) {
         return 1;
     }
 
-    return furi_string_cmpi(a->path, b->path);
+    int r;
+    if(s_browser_sort_mode == 1) {
+        r = (a->item_date < b->item_date) ? -1 : (a->item_date > b->item_date) ? 1 : 0;
+    } else if(s_browser_sort_mode == 2) {
+        r = (a->item_size < b->item_size) ? -1 : (a->item_size > b->item_size) ? 1 : 0;
+    } else if(s_browser_sort_by_name) {
+        r = furi_string_cmpi(a->display_name, b->display_name);
+    } else {
+        r = furi_string_cmpi(a->path, b->path);
+    }
+    if(r == 0) r = furi_string_cmpi(a->display_name, b->display_name);
+    return s_browser_sort_desc ? -r : r;
 }
 
 #define M_OPL_BrowserItem_t()                 \
@@ -127,6 +151,9 @@ struct FileBrowser {
 
     FileBrowserLoadItemCallback item_callback;
     void* item_context;
+    bool sort_by_name;
+    uint8_t sort_mode;
+    bool sort_desc;
 
     FuriString* result_path;
     FuriTimer* scroll_timer;
@@ -206,11 +233,25 @@ FileBrowser* file_browser_alloc(FuriString* result_path) {
         furi_timer_alloc(file_browser_scroll_timer_callback, FuriTimerTypePeriodic, browser);
 
     browser->result_path = result_path;
+    browser->sort_by_name = false;
+    browser->sort_mode = 0;
+    browser->sort_desc = false;
 
     with_view_model(
         browser->view, FileBrowserModel * model, { items_array_init(model->items); }, false);
 
     return browser;
+}
+
+void file_browser_set_sort_by_name(FileBrowser* browser, bool sort_by_name) {
+    furi_check(browser);
+    browser->sort_by_name = sort_by_name;
+}
+
+void file_browser_set_sort_mode(FileBrowser* browser, uint8_t sort_mode, bool sort_desc) {
+    furi_check(browser);
+    browser->sort_mode = sort_mode;
+    browser->sort_desc = sort_desc;
 }
 
 void file_browser_free(FileBrowser* browser) {
@@ -436,6 +477,8 @@ static void browser_list_item_cb(
     BrowserItem_t item;
     item.custom_icon_data = NULL;
     item.unsorted_idx = idx;
+    item.item_size = 0;
+    item.item_date = 0;
 
     if(!is_last) {
         item.path = furi_string_alloc_set(item_path);
@@ -444,6 +487,15 @@ static void browser_list_item_cb(
             item.type = BrowserItemTypeFolder;
         } else {
             item.type = BrowserItemTypeFile;
+            if(browser->sort_mode == 1 || browser->sort_mode == 2) {
+                Storage* st = furi_record_open(RECORD_STORAGE);
+                FileInfo fi;
+                if(storage_common_stat(st, furi_string_get_cstr(item_path), &fi) == FSE_OK) {
+                    item.item_size = fi.size;
+                    item.item_date = fi.date;
+                }
+                furi_record_close(RECORD_STORAGE);
+            }
             if(browser->item_callback) {
                 item.custom_icon_data = malloc(CUSTOM_ICON_MAX_SIZE);
                 if(!browser->item_callback(
@@ -489,6 +541,9 @@ static void browser_list_item_cb(
                             items_array_get(model->items, model->item_idx)->path);
                     }
 
+                    s_browser_sort_by_name = browser->sort_by_name;
+                    s_browser_sort_mode = browser->sort_mode;
+                    s_browser_sort_desc = browser->sort_desc;
                     items_array_sort(model->items);
 
                     if(selected != NULL) {
@@ -498,7 +553,7 @@ static void browser_list_item_cb(
                                 break;
                             }
                         }
-                        furi_string_free(selected); /* FoxFW: was leaked -> stranded heap high, split free block */
+                        furi_string_free(selected);
                     }
                 }
                 model->list_loading = false;

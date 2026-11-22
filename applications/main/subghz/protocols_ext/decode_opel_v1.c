@@ -1,4 +1,4 @@
-/* decode_opel_v1.fal : SD get_string for opel_v1 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/opel_v1.h>
@@ -53,7 +53,6 @@ static const char* opel_v1_button_name(uint8_t button) {
 static void opel_v1_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderOpelV1* instance = input->decoder;
-
 
     furi_string_printf(
         output,

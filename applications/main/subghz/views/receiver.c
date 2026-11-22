@@ -10,6 +10,7 @@
 #define FRAME_HEIGHT              12
 #define MAX_LEN_PX                111
 #define MENU_ITEMS                4u
+#define SUBGHZ_DUAL_ROW_NAME_MAX  48u
 #define UNLOCK_CNT                3
 #define SUBGHZ_RX_RSSI_HISTORY_SIZE 128
 #define SUBGHZ_RX_RSSI_DISPLAY_MIN  (-110.0f)
@@ -83,6 +84,16 @@ typedef struct {
     FuriString* dual_ext_str;
     uint8_t rssi_history_ext[SUBGHZ_RX_RSSI_HISTORY_SIZE];
     uint8_t rssi_history_ext_index;
+    uint8_t dual_rail_sel;
+    bool dual_paused;
+    uint32_t dual_hist_flash_until;
+    char dual_row_name[MENU_ITEMS][SUBGHZ_DUAL_ROW_NAME_MAX];
+    uint8_t dual_row_type[MENU_ITEMS];
+    uint8_t dual_row_valid;
+    uint16_t dual_row_base;
+    uint16_t dual_new_count;
+    bool hist_btn_focus;
+    uint8_t hist_btn_sel;
 } SubGhzViewReceiverModel;
 
 void subghz_view_receiver_set_mode(
@@ -145,8 +156,87 @@ void subghz_view_receiver_set_dual(SubGhzViewReceiver* subghz_receiver, bool dua
         {
             model->dual = dual;
             model->dual_dashboard = dual;
+            model->dual_rail_sel = 0;
+            model->dual_paused = false;
+            model->dual_hist_flash_until = 0;
+            model->dual_new_count = 0;
+            model->hist_btn_focus = false;
+            model->hist_btn_sel = 1;
         },
         true);
+}
+
+void subghz_view_receiver_set_dual_paused(SubGhzViewReceiver* subghz_receiver, bool paused) {
+    furi_assert(subghz_receiver);
+    with_view_model(
+        subghz_receiver->view,
+        SubGhzViewReceiverModel * model,
+        { model->dual_paused = paused; },
+        true);
+}
+
+void subghz_view_receiver_flash_history(SubGhzViewReceiver* subghz_receiver, uint16_t added) {
+    furi_assert(subghz_receiver);
+    with_view_model(
+        subghz_receiver->view,
+        SubGhzViewReceiverModel * model,
+        {
+            if(model->dual_dashboard) {
+                model->dual_hist_flash_until = furi_get_tick() + 500;
+                model->dual_new_count = (uint16_t)(model->dual_new_count + added);
+            }
+        },
+        true);
+}
+
+void subghz_view_receiver_dual_refresh_rows(SubGhzViewReceiver* subghz_receiver) {
+    furi_assert(subghz_receiver);
+    SubGhzViewReceiverItemCallback cb = NULL;
+    void* ctx = NULL;
+    uint16_t list_offset = 0;
+    uint16_t history_item = 0;
+    bool dashboard = false;
+    with_view_model(
+        subghz_receiver->view,
+        SubGhzViewReceiverModel * model,
+        {
+            cb = model->item_callback;
+            ctx = model->item_context;
+            list_offset = model->list_offset;
+            history_item = model->history_item;
+            dashboard = model->dual_dashboard;
+        },
+        false);
+    if(!cb || dashboard) return;
+    char names[MENU_ITEMS][SUBGHZ_DUAL_ROW_NAME_MAX];
+    uint8_t types[MENU_ITEMS];
+    uint8_t valid = 0;
+    FuriString* nm = furi_string_alloc();
+    FuriString* tm = furi_string_alloc();
+    for(uint8_t i = 0; i < MENU_ITEMS; i++) {
+        uint16_t idx = (uint16_t)(i + list_offset);
+        if(idx >= history_item) break;
+        uint8_t type = 0;
+        cb(ctx, idx, nm, tm, &type);
+        if(type == 0) break;
+        strlcpy(names[i], furi_string_get_cstr(nm), SUBGHZ_DUAL_ROW_NAME_MAX);
+        types[i] = type;
+        valid++;
+    }
+    furi_string_free(nm);
+    furi_string_free(tm);
+    with_view_model(
+        subghz_receiver->view,
+        SubGhzViewReceiverModel * model,
+        {
+            for(uint8_t i = 0; i < valid; i++) {
+                strlcpy(model->dual_row_name[i], names[i], SUBGHZ_DUAL_ROW_NAME_MAX);
+                model->dual_row_type[i] = types[i];
+            }
+            model->dual_row_valid = valid;
+            model->dual_row_base = list_offset;
+        },
+        false);
 }
 
 void subghz_view_receiver_set_dual_dashboard(SubGhzViewReceiver* subghz_receiver, bool dashboard) {
@@ -154,7 +244,14 @@ void subghz_view_receiver_set_dual_dashboard(SubGhzViewReceiver* subghz_receiver
     with_view_model(
         subghz_receiver->view,
         SubGhzViewReceiverModel * model,
-        { model->dual_dashboard = dashboard; },
+        {
+            model->dual_dashboard = dashboard;
+            if(!dashboard) {
+                model->dual_new_count = 0;
+                model->hist_btn_focus = false;
+                model->hist_btn_sel = 1;
+            }
+        },
         true);
 }
 
@@ -304,6 +401,21 @@ void subghz_view_receiver_add_item_to_menu(SubGhzViewReceiver* subghz_receiver) 
     subghz_view_receiver_update_offset(subghz_receiver);
 }
 
+void subghz_view_receiver_set_history_item_count(
+    SubGhzViewReceiver* subghz_receiver, uint16_t count) {
+    furi_assert(subghz_receiver);
+    with_view_model(
+        subghz_receiver->view,
+        SubGhzViewReceiverModel * model,
+        {
+            model->history_item = count;
+            if(model->idx >= count) model->idx = (count > 0) ? (uint16_t)(count - 1) : 0;
+            if(model->flash_idx >= (int32_t)count) model->flash_idx = -1;
+        },
+        true);
+    subghz_view_receiver_update_offset(subghz_receiver);
+}
+
 void subghz_view_receiver_add_data_statusbar(
     SubGhzViewReceiver* subghz_receiver,
     const char* frequency_str,
@@ -410,11 +522,42 @@ static void subghz_view_receiver_draw_dual_pane(
     const uint8_t* history,
     uint8_t history_index,
     uint8_t top) {
-    canvas_draw_rframe(canvas, 0, top, 128, 31, 3);
-    canvas_draw_icon(canvas, 2, top + 2, icon);
-    canvas_draw_str(canvas, 24, top + 11, info);
+    const int32_t ex0 = 1, ex1 = 90, eh = 27;
+    canvas_draw_line(canvas, ex0, top, ex0, top + eh);
+    canvas_draw_line(canvas, ex1, top, ex1, top + eh);
+    canvas_draw_line(canvas, ex0, top + eh, ex1, top + eh);
+    canvas_draw_line(canvas, ex0, top + eh - 1, ex1, top + eh - 1);
+    canvas_draw_icon(canvas, 2, (int32_t)top - 1, icon);
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 22, top + 6, info);
+    for(int32_t i = 0, tx = ex0 + 3; tx < ex1 - 1; i++, tx += 4) {
+        canvas_draw_line(canvas, tx, top + 9, tx, top + 9 + ((i % 2 == 0) ? 7 : 4));
+    }
     subghz_view_receiver_draw_wave(
-        canvas, history, history_index, model->wave_line, 2, 124, top + 28, 14);
+        canvas, history, history_index, model->wave_line, 5, 79, (uint8_t)(top + eh - 4), 6);
+}
+
+static void subghz_view_receiver_draw_rail_btn(
+    Canvas* canvas,
+    int32_t x,
+    int32_t y,
+    int32_t w,
+    int32_t h,
+    const char* label,
+    bool sel,
+    bool bold) {
+    canvas_set_color(canvas, ColorBlack);
+    if(sel)
+        canvas_draw_rbox(canvas, x, y, (uint8_t)w, (uint8_t)h, 3);
+    else
+        canvas_draw_rframe(canvas, x, y, (uint8_t)w, (uint8_t)h, 3);
+    if(sel) canvas_invert_color(canvas);
+    canvas_draw_str_aligned(canvas, x + w / 2, y + h / 2 + 1, AlignCenter, AlignCenter, label);
+    if(bold)
+        canvas_draw_str_aligned(
+            canvas, x + w / 2 + 1, y + h / 2 + 1, AlignCenter, AlignCenter, label);
+    if(sel) canvas_invert_color(canvas);
+    canvas_set_color(canvas, ColorBlack);
 }
 
 static void subghz_view_receiver_draw_dual_dashboard(
@@ -424,33 +567,45 @@ static void subghz_view_receiver_draw_dual_dashboard(
     subghz_view_receiver_draw_dual_pane(
         canvas,
         model,
-        &I_Internal_ant_1_9x11,
-        furi_string_get_cstr(model->dual_int_str),
-        model->rssi_history,
-        model->rssi_history_index,
-        0);
-    subghz_view_receiver_draw_dual_pane(
-        canvas,
-        model,
-        &I_External_ant_1_9x11,
+        &I_External_ant_nb_9x11,
         furi_string_get_cstr(model->dual_ext_str),
         model->rssi_history_ext,
         model->rssi_history_ext_index,
+        1);
+    subghz_view_receiver_draw_dual_pane(
+        canvas,
+        model,
+        &I_Internal_ant_nb_9x11,
+        furi_string_get_cstr(model->dual_int_str),
+        model->rssi_history,
+        model->rssi_history_index,
         33);
-    const char* stat = furi_string_get_cstr(model->history_stat_str);
-    const int16_t room =
-        (int16_t)(125 - 24 - canvas_string_width(canvas, furi_string_get_cstr(model->dual_int_str)) - 4);
-    if((int16_t)canvas_string_width(canvas, stat) <= room) {
-        canvas_draw_str_aligned(canvas, 125, 11, AlignRight, AlignBottom, stat);
-    } else {
-        char count[8];
-        size_t n = strcspn(stat, "/");
-        if(n >= sizeof(count)) n = sizeof(count) - 1;
-        memcpy(count, stat, n);
-        count[n] = '\0';
-        if((int16_t)canvas_string_width(canvas, count) <= room) {
-            canvas_draw_str_aligned(canvas, 125, 11, AlignRight, AlignBottom, count);
+    const char* rail[3] = {model->dual_paused ? "Start" : "Stop", "Config", "List"};
+    const bool hist_flash =
+        model->dual_hist_flash_until && furi_get_tick() < model->dual_hist_flash_until;
+    const bool has_hist = model->history_item > 0;
+    if(!has_hist) {
+        subghz_view_receiver_draw_rail_btn(
+            canvas, 94, 14, 32, 13, rail[0], model->dual_rail_sel == 0, false);
+        subghz_view_receiver_draw_rail_btn(
+            canvas, 94, 36, 32, 13, rail[1], model->dual_rail_sel == 1, false);
+    } else if(model->dual_new_count == 0) {
+        const int32_t ys[3] = {4, 25, 46};
+        for(uint8_t i = 0; i < 3; i++) {
+            subghz_view_receiver_draw_rail_btn(
+                canvas, 94, ys[i], 32, 13, rail[i], model->dual_rail_sel == i,
+                (i == 2) && hist_flash);
         }
+    } else {
+        for(uint8_t i = 0; i < 3; i++) {
+            subghz_view_receiver_draw_rail_btn(
+                canvas, 94, (int32_t)(i * 16), 32, 13, rail[i], model->dual_rail_sel == i,
+                (i == 2) && hist_flash);
+        }
+        char dual_cnt[12];
+        snprintf(dual_cnt, sizeof(dual_cnt), "%u New!", (unsigned)model->dual_new_count);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, 110, 51, AlignCenter, AlignTop, dual_cnt);
     }
 }
 
@@ -500,7 +655,6 @@ static void subghz_view_receiver_draw_bottom_info(Canvas* canvas, SubGhzViewRece
     canvas_set_font(canvas, FontSecondary);
     const char* stat = furi_string_get_cstr(model->history_stat_str);
     if(model->dual) {
-        canvas_draw_str_aligned(canvas, 127, 62, AlignRight, AlignBottom, stat);
         return;
     }
     if(model->history_item == 0 && model->mode == SubGhzViewReceiverModeLive) {
@@ -540,13 +694,13 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         return;
     }
 
-    if(model->mode == SubGhzViewReceiverModeLive) {
+    if(!model->dual && model->mode == SubGhzViewReceiverModeLive) {
         if(model->history_item == 0) {
             elements_button_center(canvas, "Config");
         } else {
             elements_button_left(canvas, "Config");
         }
-    } else {
+    } else if(!model->dual) {
         canvas_draw_line(canvas, 2, 52, 125, 52);
         canvas_draw_str(canvas, 3, 62, furi_string_get_cstr(model->progress_str));
     }
@@ -555,17 +709,24 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
     FuriString* str_buff = furi_string_alloc();
     FuriString* time_buff = furi_string_alloc();
 
-    if(!model->nodraw && model->item_callback) {
+    if(!model->nodraw && (model->item_callback || model->dual)) {
         for(size_t i = 0; i < MIN(model->history_item, MENU_ITEMS); ++i) {
             size_t idx = CLAMP((uint16_t)(i + model->list_offset), model->history_item, 0);
             uint8_t type = 0;
-            model->item_callback(model->item_context, idx, str_buff, time_buff, &type);
-            if(type == 0) {
-                break;
+            if(model->dual) {
+                if(i >= model->dual_row_valid) break;
+                idx = (size_t)(model->dual_row_base + i);
+                furi_string_set_str(str_buff, model->dual_row_name[i]);
+                type = model->dual_row_type[i];
+            } else {
+                model->item_callback(model->item_context, idx, str_buff, time_buff, &type);
+                if(type == 0) {
+                    break;
+                }
             }
             if(model->idx == idx) {
                 subghz_view_receiver_draw_frame(canvas, i, scrollbar);
-                if(model->show_time) {
+                if(!model->dual && model->show_time) {
                     furi_string_set(str_buff, time_buff);
                 }
             } else {
@@ -592,6 +753,20 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
     }
     furi_string_free(str_buff);
     furi_string_free(time_buff);
+    if(model->dual) {
+        const char* dual_btn[2] = {"Config", "Dual View"};
+        for(uint8_t b = 0; b < 2; b++) {
+            subghz_view_receiver_draw_rail_btn(
+                canvas,
+                (int32_t)(b == 0 ? 2 : 65),
+                50,
+                61,
+                13,
+                dual_btn[b],
+                model->hist_btn_focus && model->hist_btn_sel == b,
+                false);
+        }
+    }
 
     canvas_set_color(canvas, ColorBlack);
 
@@ -620,8 +795,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
     }
     switch(model->bar_show) {
     case SubGhzViewReceiverBarShowLock:
-        canvas_draw_icon(canvas, 64, 55, &I_Lock_7x8);
-        canvas_draw_str(canvas, 74, 62, "Locked");
+        subghz_view_receiver_draw_bottom_info(canvas, model);
         break;
     case SubGhzViewReceiverBarShowToUnlockPress:
         subghz_view_receiver_draw_bottom_info(canvas, model);
@@ -635,8 +809,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         canvas_draw_dot(canvas, 17, 61);
         break;
     case SubGhzViewReceiverBarShowUnlock:
-        canvas_draw_icon(canvas, 64, 55, &I_Unlock_7x8);
-        canvas_draw_str(canvas, 74, 62, "Unlocked");
+        subghz_view_receiver_draw_bottom_info(canvas, model);
         break;
     default:
         subghz_view_receiver_draw_bottom_info(canvas, model);
@@ -704,15 +877,42 @@ bool subghz_view_receiver_input(InputEvent* event, void* context) {
         },
         false);
     if(dual_dashboard) {
+        if(event->key == InputKeyUp &&
+           (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+            with_view_model(
+                subghz_receiver->view, SubGhzViewReceiverModel * model,
+                { if(model->dual_rail_sel > 0) model->dual_rail_sel--; }, true);
+            return true;
+        }
+        if(event->key == InputKeyDown &&
+           (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+            with_view_model(
+                subghz_receiver->view, SubGhzViewReceiverModel * model,
+                {
+                    uint8_t maxsel = (model->history_item > 0) ? 2 : 1;
+                    if(model->dual_rail_sel < maxsel) model->dual_rail_sel++;
+                },
+                true);
+            return true;
+        }
         if(event->type == InputTypeShort) {
             if(event->key == InputKeyBack) {
                 subghz_receiver->callback(
                     SubGhzCustomEventViewReceiverBack, subghz_receiver->context);
-            } else if(event->key == InputKeyOk && dual_has_items) {
-                subghz_view_receiver_set_dual_dashboard(subghz_receiver, false);
-            } else if(event->key == InputKeyOk || event->key == InputKeyLeft) {
-                subghz_receiver->callback(
-                    SubGhzCustomEventViewReceiverConfig, subghz_receiver->context);
+            } else if(event->key == InputKeyOk) {
+                uint8_t sel = 0;
+                with_view_model(
+                    subghz_receiver->view, SubGhzViewReceiverModel * model,
+                    { sel = model->dual_rail_sel; }, false);
+                if(sel == 0) {
+                    subghz_receiver->callback(
+                        SubGhzCustomEventViewReceiverPause, subghz_receiver->context);
+                } else if(sel == 1) {
+                    subghz_receiver->callback(
+                        SubGhzCustomEventViewReceiverConfig, subghz_receiver->context);
+                } else if(dual_has_items) {
+                    subghz_view_receiver_set_dual_dashboard(subghz_receiver, false);
+                }
             }
         }
         return true;
@@ -720,6 +920,74 @@ bool subghz_view_receiver_input(InputEvent* event, void* context) {
     if(dual && event->key == InputKeyBack && event->type == InputTypeShort) {
         subghz_view_receiver_set_dual_dashboard(subghz_receiver, true);
         return true;
+    }
+    if(dual) {
+        bool on_btn = false;
+        with_view_model(
+            subghz_receiver->view, SubGhzViewReceiverModel * model,
+            { on_btn = model->hist_btn_focus; }, false);
+        if(on_btn) {
+            if((event->key == InputKeyLeft || event->key == InputKeyRight) &&
+               (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+                with_view_model(
+                    subghz_receiver->view, SubGhzViewReceiverModel * model,
+                    { model->hist_btn_sel = model->hist_btn_sel ? 0 : 1; }, true);
+                return true;
+            }
+            if(event->key == InputKeyUp &&
+               (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+                with_view_model(
+                    subghz_receiver->view, SubGhzViewReceiverModel * model,
+                    {
+                        model->hist_btn_focus = false;
+                        model->idx = (model->history_item > 0) ?
+                                         (uint16_t)(model->history_item - 1) :
+                                         0;
+                    },
+                    true);
+                subghz_view_receiver_update_offset(subghz_receiver);
+                return true;
+            }
+            if(event->key == InputKeyOk && event->type == InputTypeShort) {
+                uint8_t bsel = 1;
+                with_view_model(
+                    subghz_receiver->view, SubGhzViewReceiverModel * model,
+                    { bsel = model->hist_btn_sel; }, false);
+                if(bsel == 0) {
+                    subghz_receiver->callback(
+                        SubGhzCustomEventViewReceiverConfig, subghz_receiver->context);
+                } else {
+                    subghz_view_receiver_set_dual_dashboard(subghz_receiver, true);
+                }
+                return true;
+            }
+            return true;
+        } else {
+            if(event->key == InputKeyLeft) {
+                return true;
+            }
+            if(event->key == InputKeyRight &&
+               (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+                return true;
+            }
+            if(event->key == InputKeyDown &&
+               (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+                bool at_last = false;
+                with_view_model(
+                    subghz_receiver->view, SubGhzViewReceiverModel * model,
+                    {
+                        at_last = (model->history_item == 0) ||
+                                  (model->idx >= (uint16_t)(model->history_item - 1));
+                    },
+                    false);
+                if(at_last) {
+                    with_view_model(
+                        subghz_receiver->view, SubGhzViewReceiverModel * model,
+                        { model->hist_btn_focus = true; }, true);
+                    return true;
+                }
+            }
+        }
     }
 
     bool consumed = false;

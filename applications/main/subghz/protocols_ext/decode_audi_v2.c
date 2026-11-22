@@ -1,4 +1,4 @@
-/* decode_audi_v2.fal : SD get_string for audi_v2 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/audi_v2.h>
@@ -16,8 +16,8 @@ struct SubGhzProtocolDecoderAudiV2 {
     ManchesterState manchester_state;
     uint8_t parser_step;
     uint16_t preamble_count;
-    uint64_t gdata; // first 64 bits
-    uint64_t acc; // running accumulator
+    uint64_t gdata;
+    uint64_t acc;
     uint16_t bit_count;
     uint8_t trailer;
     bool crc_ok;

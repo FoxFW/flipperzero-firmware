@@ -1,4 +1,4 @@
-/* decode_somfy_telis.fal : SD get_string for somfy_telis (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/somfy_telis.h>
@@ -60,7 +60,6 @@ static const char* subghz_protocol_somfy_telis_get_name_button(uint8_t btn) {
 static void somfy_telis_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSomfyTelis* instance = input->decoder;
-
 
     subghz_protocol_somfy_telis_check_remote_controller(&instance->generic);
 

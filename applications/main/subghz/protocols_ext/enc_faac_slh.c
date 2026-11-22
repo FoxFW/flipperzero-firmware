@@ -1,5 +1,5 @@
-/* enc_faac_slh.fal : SD encoder for faac_slh (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_common_stop enc_faac_slh__subghz_protocol_encoder_common_stop
 #define subghz_protocol_encoder_common_yield enc_faac_slh__subghz_protocol_encoder_common_yield
 #define subghz_protocol_encoder_faac_slh_alloc enc_faac_slh__subghz_protocol_encoder_faac_slh_alloc
@@ -42,7 +42,6 @@ static const SubGhzBlockConst subghz_protocol_faac_slh_const = {
     .min_count_bit_for_found = 64,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 extern bool allow_zero_seed__bridge_ty;
 extern bool faac_prog_mode__bridge_ty;
 extern bool faac_slh_raw_replay__bridge_ty;
@@ -69,19 +68,6 @@ static const void* enc_faac_slh_host_raw;
 #define temp_counter_backup (*(__typeof__(temp_counter_backup__bridge_ty)*)(ENC_FAAC_SLH_HOST->temp_counter_backup))
 #define temp_fix_backup (*(__typeof__(temp_fix_backup__bridge_ty)*)(ENC_FAAC_SLH_HOST->temp_fix_backup))
 
-/**
- * Select the manufacture key for a Faac SLH signal (Genius mechanism, ported from
- * Unleashed 2026-10-03). Several manufacturers share this protocol and differ only
- * in the type-5 key the cipher is seeded with (e.g. FAAC_SLH and Genius), so the
- * .sub file names the one it belongs to via a "Manufacture:" field. No name means a
- * plain Faac remote (what every file written before Genius existed relies on), so
- * the default is "FAAC_SLH". Falls back to FAAC_SLH if the keystore lacks the named
- * entry. Returns 0 if the keystore has no Faac SLH entry at all.
- *
- * This replaces the previous last-wins loop, which meant only one type-5 key could
- * live in a keystore at a time (why "Genius" had to be dropped from the garage
- * keystore). Now multiple type-5 keys coexist and the file picks the right one.
- */
 static uint64_t subghz_protocol_faac_slh_get_key(
     SubGhzKeystore* keystore,
     const char* wanted,
@@ -94,19 +80,6 @@ static void subghz_protocol_faac_slh_check_remote_controller(
     const char** manufacture_name,
     const char* manufacture_from_file);
 
-/**
- * Select the manufacture key for a Faac SLH signal (Genius mechanism, ported from
- * Unleashed 2026-10-03). Several manufacturers share this protocol and differ only
- * in the type-5 key the cipher is seeded with (e.g. FAAC_SLH and Genius), so the
- * .sub file names the one it belongs to via a "Manufacture:" field. No name means a
- * plain Faac remote (what every file written before Genius existed relies on), so
- * the default is "FAAC_SLH". Falls back to FAAC_SLH if the keystore lacks the named
- * entry. Returns 0 if the keystore has no Faac SLH entry at all.
- *
- * This replaces the previous last-wins loop, which meant only one type-5 key could
- * live in a keystore at a time (why "Genius" had to be dropped from the garage
- * keystore). Now multiple type-5 keys coexist and the file picks the right one.
- */
 static uint64_t subghz_protocol_faac_slh_get_key(
     SubGhzKeystore* keystore,
     const char* wanted,
@@ -122,8 +95,7 @@ static uint64_t subghz_protocol_faac_slh_get_key(
                 *manufacture_name = subghz_keystore_keep_name(keystore, name);
                 return manufacture_code->key;
             }
-            // Remember FAAC_SLH so we can fall back when the file names something
-            // this keystore does not carry.
+
             if(strcmp(name, "FAAC_SLH") == 0) {
                 faac_key = manufacture_code->key;
                 faac_name = subghz_keystore_keep_name(keystore, name);
@@ -155,7 +127,7 @@ static bool subghz_protocol_faac_slh_gen_data(SubGhzProtocolEncoderFaacSLH* inst
             if(allow_zero_seed || (instance->generic.seed != 0x0)) {
 
                 if(faac_slh_raw_replay) {
-                    /* #16: freeze counter on TxRaw verbatim replay */
+
                 } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
                     if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -175,7 +147,7 @@ static bool subghz_protocol_faac_slh_gen_data(SubGhzProtocolEncoderFaacSLH* inst
                 if(temp_counter_backup != 0x0) {
 
                     if(faac_slh_raw_replay) {
-                        /* #16: freeze counter on TxRaw verbatim replay */
+
                     } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
                         if(!subghz_block_generic_global_counter_override_get(
@@ -259,7 +231,7 @@ static bool subghz_protocol_faac_slh_gen_data(SubGhzProtocolEncoderFaacSLH* inst
     if(allow_zero_seed || (instance->generic.seed != 0x0)) {
 
         if(faac_slh_raw_replay) {
-            /* #16: freeze counter on TxRaw verbatim replay */
+
         } else if(furi_hal_subghz_get_rolling_counter_mult() != -0x7FFFFFFF) {
 
             if(!subghz_block_generic_global_counter_override_get(&instance->generic.cnt)) {
@@ -294,14 +266,13 @@ static bool subghz_protocol_faac_slh_gen_data(SubGhzProtocolEncoderFaacSLH* inst
         decrypt = fixx[2] << 28 | fixx[3] << 24 | fixx[4] << 20 |
                   (instance->generic.cnt & 0xFFFFF);
     }
-    // Transmit with the manufacturer the file named, FAAC_SLH otherwise (Genius
-    // mechanism). Re-pin manufacture_name to the entry actually used.
+
     const char* used = NULL;
     uint64_t key = subghz_protocol_faac_slh_get_key(
         instance->keystore, instance->manufacture_name, &used);
     if(used) instance->manufacture_name = used;
     if(key) {
-        // FAAC Learning
+
         man = subghz_protocol_keeloq_common_faac_learning(instance->generic.seed, key);
         hop = subghz_protocol_keeloq_common_encrypt(decrypt, man);
     }
@@ -408,12 +379,10 @@ static void subghz_protocol_faac_slh_check_remote_controller(
         faac_prog_mode = false;
     }
 
-    // Select the type-5 key by the manufacturer the file named (Genius mechanism),
-    // FAAC_SLH otherwise, instead of last-wins across the keystore.
     uint64_t key =
         subghz_protocol_faac_slh_get_key(keystore, manufacture_from_file, manufacture_name);
     if(key) {
-        // FAAC Learning
+
         uint64_t man = subghz_protocol_keeloq_common_faac_learning(instance->seed, key);
         decrypt = subghz_protocol_keeloq_common_decrypt(code_hop, man);
     }
@@ -424,13 +393,11 @@ static void subghz_protocol_faac_slh_check_remote_controller(
     }
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 void subghz_protocol_encoder_common_stop(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
     instance->encoder.is_running = false;
 }
 
-/* vendored from lib/subghz/protocols/common.c (not exported) */
 LevelDuration subghz_protocol_encoder_common_yield(void* context) {
     SubGhzProtocolEncoderCommon* instance = context;
 
@@ -478,7 +445,7 @@ SubGhzProtocolStatus
     SubGhzProtocolEncoderFaacSLH* instance = context;
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     do {
-        /* #16: TxRaw verbatim replay — freeze the rolling counter. */
+
         faac_slh_raw_replay = false;
         {
             uint32_t faac_slh_txraw = 0;
@@ -512,10 +479,6 @@ SubGhzProtocolStatus
         instance->generic.seed = seed_data[0] << 24 | seed_data[1] << 16 | seed_data[2] << 8 |
                                  seed_data[3];
 
-        // Optional. Pins the signal to one of the FAAC SLH manufacturers; without it
-        // the manufacturer is recovered from the signal. Read from the top of the file
-        // so the key may sit anywhere, and rewind after so later reads still see
-        // everything. (Genius mechanism, ported from Unleashed 2026-10-03.)
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
             break;
@@ -569,7 +532,6 @@ static const SubGhzProtocolEncoder enc_faac_slh_vt = {
     .yield = subghz_protocol_encoder_common_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_faac_slh = {
     .name = SUBGHZ_PROTOCOL_FAAC_SLH_NAME,
     .type = SubGhzProtocolTypeDynamic,

@@ -12,7 +12,7 @@
 
 #define RENAULT_PROTOCOL_V0_NAME "Renault V0"
 
-extern const SubGhzProtocol renault_v0_protocol;
+extern const SubGhzProtocol subghz_protocol_renault_v0;
 
 bool renault_v0_flipper_is_rolling(FlipperFormat* flipper_format);
 

@@ -1,4 +1,4 @@
-/* decode_keeloq.fal : SD get_string for keeloq (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/keeloq.h>
@@ -62,7 +62,6 @@ static void keeloq_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderKeeloq* instance = input->decoder;
 
-
     uint32_t hopdecrypt = 0;
 
     hopdecrypt = (input->extra_count > 0) ? (uint32_t)input->extra[0] : 0;
@@ -124,6 +123,31 @@ static void keeloq_decode(const SubGhzDecodeInput* input, FuriString* output) {
                 instance->manufacture_name,
                 instance->generic.seed);
         }
+    } else if(strcmp(instance->manufacture_name, "Phantom_Hiland") == 0) {
+
+        subghz_block_generic_global.cnt_is_available = true;
+        subghz_block_generic_global.cnt_length_bit = 16;
+        subghz_block_generic_global.current_cnt = instance->generic.cnt;
+        subghz_block_generic_global.btn_is_available = true;
+        subghz_block_generic_global.current_btn = instance->generic.btn;
+        subghz_block_generic_global.btn_length_bit = 4;
+        furi_string_cat_printf(
+            output,
+            "%s %dbit\r\n"
+            "Key:%08lX%08lX\r\n"
+            "Fix:0x%08lX    Cnt:%04lX\r\n"
+            "Hop:0x%08lX    Btn:%01X\r\n"
+            "MF:%s Ds:%03lX",
+            instance->generic.protocol_name,
+            instance->generic.data_count_bit,
+            code_found_hi,
+            code_found_lo,
+            code_found_reverse_hi,
+            instance->generic.cnt,
+            hopdecrypt,
+            instance->generic.btn,
+            instance->manufacture_name,
+            instance->generic.seed);
     } else if(strcmp(instance->manufacture_name, "Unknown") == 0) {
         subghz_block_generic_global.btn_is_available = true;
         subghz_block_generic_global.current_btn = instance->generic.btn;

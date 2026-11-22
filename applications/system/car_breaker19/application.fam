@@ -1,0 +1,14 @@
+App(
+    appid="car_breaker19",
+    name="Car Breaker 19",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="car_breaker19_app",
+    requires=["gui", "storage", "notification"],
+    fap_category="Research",
+    fap_icon="assets/app.png",
+    fap_icon_assets="assets",
+    fap_description="Honda/Mini RKE analyzer: passive rolling-code detection plus guided owner self-audit",
+    fap_author="fbettag",
+    fap_version="1.2",
+    sources=["car_breaker19.c", "car_breaker_audit.c", "scenes/car_breaker19_scene_about.c", "version.c"],
+)

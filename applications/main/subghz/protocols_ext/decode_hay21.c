@@ -1,4 +1,4 @@
-/* decode_hay21.fal : SD get_string for hay21 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/hay21.h>
@@ -53,7 +53,6 @@ static const char* subghz_protocol_hay21_get_button_name(uint8_t btn) {
 static void hay21_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderHay21* instance = input->decoder;
-
 
     subghz_protocol_hay21_remote_controller(&instance->generic);
 

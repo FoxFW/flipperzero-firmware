@@ -6,19 +6,9 @@
 #include <string.h>
 #include "common.h"
 #include <lib/subghz/blocks/bitbuf.h>
+#include "../encode_plugin.h"
 
 #define TAG "HondaV5"
-
-// Honda V5 -- ported from firmware honda_v5.c via KeeLoq-RX arke_honda.py
-// (class HondaV5). Manchester, te 63/126 us, custom Honda LUT {0x01,0x91,0x9B,0xFB}.
-// Two frame variants auto-detected from the collected bit stream:
-//   * Standard 135-bit: header 0x6C0F62, CRC-8 (MSB poly 0x2F, init 0x03) over
-//     bytes 0..15 compared to byte 16. serial(32) | button | counter(16) |
-//     rolling(32). Leading preamble 1-bits are skipped and up to two absorbed
-//     leading data 1-bits are restored.
-//   * Alternate 168-bit: header 0x6428, CRC-8 reflected (poly 0x4D, init 0) over
-//     bytes 0..19 compared to byte 20. serial(32 @ bytes13..16) | button(byte17).
-// Decode-only; .encoder = NULL.
 
 #define HONDA_V5_TE_SHORT 63
 #define HONDA_V5_TE_LONG  126
@@ -47,9 +37,9 @@ struct SubGhzProtocolDecoderHondaV5 {
     uint8_t bits[SUBGHZ_BITBUF_BYTES(HONDA_V5_MAX_BITS)];
     uint16_t bit_count;
 
-    uint16_t variant; // 135 or 168
-    uint64_t data_mid; // frame bytes 8..15
-    uint32_t data_ext; // frame bytes 16..19 (alt only)
+    uint16_t variant;
+    uint64_t data_mid;
+    uint32_t data_ext;
     uint32_t serial;
     uint8_t btn;
     uint16_t cnt;
@@ -59,7 +49,6 @@ struct SubGhzProtocolDecoderHondaV5 {
     bool rtx;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV5);
-
 
 typedef enum {
     HondaV5StepReset = 0,
@@ -95,7 +84,6 @@ static uint8_t honda_v5_timing_type(uint32_t duration, bool level) {
     return 8;
 }
 
-// CRC-8 MSB-first (mirror arke_core.crc8).
 static uint8_t honda_v5_crc8(const uint8_t* m, size_t n, uint8_t poly, uint8_t init) {
     uint8_t r = init;
     for(size_t i = 0; i < n; i++) {
@@ -105,7 +93,6 @@ static uint8_t honda_v5_crc8(const uint8_t* m, size_t n, uint8_t poly, uint8_t i
     return r;
 }
 
-// CRC-8 reflected / LSB-first (mirror arke_honda._crc8_reflected).
 static uint8_t honda_v5_crc8_reflected(const uint8_t* m, size_t n, uint8_t poly, uint8_t init) {
     uint8_t crc = init;
     for(size_t i = 0; i < n; i++) {
@@ -143,7 +130,6 @@ static void honda_v5_emit(SubGhzProtocolDecoderHondaV5* inst, const uint8_t* raw
     if(inst->base.callback) inst->base.callback(&inst->base, inst->base.context);
 }
 
-// Mirror HondaV5._process().
 static void honda_v5_process(SubGhzProtocolDecoderHondaV5* inst) {
     int n = inst->bit_count;
     if(n > HONDA_V5_MAX_BITS) n = HONDA_V5_MAX_BITS;
@@ -153,7 +139,6 @@ static void honda_v5_process(SubGhzProtocolDecoderHondaV5* inst) {
     while(start < n && subghz_bitbuf_get(bits, start) == 1) start++;
     int data_len = n - start;
 
-    // ---- alternate 168-bit variant ----
     if(data_len >= HONDA_V5_ALT_BITS) {
         uint8_t raw[22];
         memset(raw, 0, sizeof(raw));
@@ -185,7 +170,6 @@ static void honda_v5_process(SubGhzProtocolDecoderHondaV5* inst) {
         }
     }
 
-    // ---- standard 135-bit ----
     if(data_len < HONDA_V5_STD_BITS) {
         int missing = HONDA_V5_STD_BITS - data_len;
         if(missing > 0 && missing <= 2 && start >= missing) {
@@ -257,8 +241,6 @@ void* subghz_protocol_decoder_honda_v5_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_honda_v5_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderHondaV5* instance = context;
@@ -297,8 +279,6 @@ void subghz_protocol_decoder_honda_v5_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v5_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -329,6 +309,32 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v5_serialize(
        !flipper_format_write_uint32(flipper_format, "Ext", &ext, 1)) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
+
+    {
+        uint8_t raw[21];
+        memset(raw, 0, sizeof(raw));
+        uint64_t top = instance->generic.data;
+        for(int b = 0; b < 8; b++) raw[b] = (uint8_t)(top >> (56 - b * 8));
+        for(int b = 0; b < 8; b++) raw[8 + b] = (uint8_t)(instance->data_mid >> (56 - b * 8));
+        uint16_t nb;
+        if(instance->variant == HONDA_V5_ALT_BITS) {
+            for(int b = 0; b < 4; b++) raw[16 + b] = (uint8_t)(instance->data_ext >> (24 - b * 8));
+            raw[20] = instance->crc;
+            nb = HONDA_V5_ALT_BITS;
+        } else {
+            raw[16] = instance->crc;
+            nb = HONDA_V5_STD_BITS;
+        }
+        uint8_t fdata[21];
+        memset(fdata, 0, sizeof(fdata));
+        for(uint16_t i = 0; i < nb; i++) {
+            uint16_t src = (instance->variant == HONDA_V5_ALT_BITS) ? i : (uint16_t)(i + 1);
+            if((raw[src >> 3] >> (7 - (src & 7))) & 1) fdata[i >> 3] |= (uint8_t)(0x80U >> (i & 7));
+        }
+        if(!flipper_format_write_hex(flipper_format, "Data", fdata, (nb + 7) / 8)) {
+            return SubGhzProtocolStatusErrorParserOthers;
+        }
+    }
     return SubGhzProtocolStatusOk;
 }
 
@@ -336,7 +342,7 @@ SubGhzProtocolStatus
     subghz_protocol_decoder_honda_v5_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_check(context);
     SubGhzProtocolDecoderHondaV5* instance = context;
-    // Two valid lengths (135 / 168), so accept either rather than a single check.
+
     SubGhzProtocolStatus status =
         subghz_block_generic_deserialize(&instance->generic, flipper_format);
     if(status != SubGhzProtocolStatusOk) return status;
@@ -391,11 +397,15 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v5_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v5_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v5 = {
     .name = HONDA_V5_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
-    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+    .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM | SubGhzProtocolFlag_FM |
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v5_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v5_encoder_ext.vtable,
 };

@@ -1,4 +1,4 @@
-/* decode_audi_v3.fal : SD get_string for audi_v3 (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/audi_v3.h>
@@ -22,7 +22,7 @@ struct SubGhzProtocolDecoderAudiV3 {
 
     uint8_t button;
     uint8_t hop[7];
-    uint32_t counter; // 24-bit
+    uint32_t counter;
     uint8_t chk;
 };
 

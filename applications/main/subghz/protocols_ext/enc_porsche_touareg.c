@@ -1,6 +1,6 @@
-/* enc_porsche_touareg.fal : SD encoder for porsche_touareg (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
-#define porsche_touareg_protocol enc_porsche_touareg__porsche_touareg_protocol
+
+
+#define subghz_protocol_porsche_touareg enc_porsche_touareg__porsche_touareg_protocol
 #define subghz_protocol_encoder_porsche_touareg_alloc enc_porsche_touareg__subghz_protocol_encoder_porsche_touareg_alloc
 #define subghz_protocol_encoder_porsche_touareg_deserialize enc_porsche_touareg__subghz_protocol_encoder_porsche_touareg_deserialize
 #include <lib/subghz/encode_plugin.h>
@@ -57,7 +57,6 @@ static const SubGhzBlockConst subghz_protocol_porsche_touareg_const = {
     .min_count_bit_for_found = PORSCHE_TOUAREG_BIT_COUNT,
 };
 
-/* host bridge: live firmware functions/state this encoder needs (set by the loader) */
 typedef struct {
     __typeof__(&ppa_bytes_to_u64_be) ppa_bytes_to_u64_be;
     __typeof__(&ppa_emit) ppa_emit;
@@ -161,17 +160,14 @@ static bool porsche_touareg_build_upload(SubGhzProtocolEncoderPorscheTouareg* in
     const uint32_t te_long = subghz_protocol_porsche_touareg_const.te_long;
     size_t index = 0;
 
-    // Sync train: alternating off/on pulses of PC_TE_SYNC
     for(size_t p = 0; p < PORSCHE_TOUAREG_SYNC_TX; p++) {
         index = ppa_emit(up, index, cap, false, PC_TE_SYNC);
         index = ppa_emit(up, index, cap, true, PC_TE_SYNC);
     }
 
-    // Gap: one off then one on pulse of PC_TE_GAP
     index = ppa_emit(up, index, cap, false, PC_TE_GAP);
     index = ppa_emit(up, index, cap, true, PC_TE_GAP);
 
-    // Data: 64 bits MSB-first, PWM off+on pair per bit
     const uint64_t data = instance->generic.data;
     for(int8_t b = PORSCHE_TOUAREG_BIT_COUNT - 1; b >= 0; b--) {
         const bool bit_value = (data >> b) & 1U;
@@ -200,7 +196,7 @@ void* subghz_protocol_encoder_porsche_touareg_alloc(SubGhzEnvironment* environme
         calloc(1, sizeof(SubGhzProtocolEncoderPorscheTouareg));
     furi_check(instance);
 
-    instance->base.protocol = &porsche_touareg_protocol;
+    instance->base.protocol = &subghz_protocol_porsche_touareg;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->encoder.repeat = 10;
     instance->encoder.front = 0;
@@ -235,8 +231,6 @@ SubGhzProtocolStatus subghz_protocol_encoder_porsche_touareg_deserialize(
             break;
         }
 
-        // The saved Key already holds the exact 64-bit on-air frame. Recover the
-        // fields it encodes so an edited counter/serial/button can be re-rolled.
         const uint8_t pkt0 = (uint8_t)((instance->generic.data >> 56) & 0xFF);
         instance->frame_type = pkt0 & 0x07;
 
@@ -255,10 +249,6 @@ SubGhzProtocolStatus subghz_protocol_encoder_porsche_touareg_deserialize(
 
         instance->encoder.repeat = ppa_encoder_read_repeat(flipper_format, 10);
 
-        // Regenerate the frame from the fields via the same forward transform the
-        // decoder inverts. For an unmodified capture this reproduces the loaded Key
-        // byte-for-byte; if the counter was recovered as 0 we fall back to a raw
-        // replay of the loaded frame.
         if(instance->cnt >= 1) {
             uint8_t pkt[8];
             porsche_touareg_compute_frame(
@@ -312,8 +302,7 @@ static const SubGhzProtocolEncoder enc_porsche_touareg_vt = {
     .yield = enc_porsche_touareg_tr_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
-const SubGhzProtocol porsche_touareg_protocol = {
+const SubGhzProtocol subghz_protocol_porsche_touareg = {
     .name = PORSCHE_TOUAREG_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_868 | SubGhzProtocolFlag_AM |

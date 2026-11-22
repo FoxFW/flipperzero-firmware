@@ -1,4 +1,4 @@
-/* decode_audi.fal : SD get_string for audi (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/audi.h>
@@ -23,18 +23,16 @@ struct SubGhzProtocolDecoderAudi {
     SubGhzBlockDecoder decoder;
     SubGhzBlockGeneric generic;
 
-    // PWM demod scratch: we collect the HIGH duration then pair it with the
-    // following LOW duration to classify one bit.
     uint32_t pending_high;
     bool have_high;
 
     uint8_t bytes[AUDI_WIRE_BYTES];
     uint16_t bit_count;
 
-    uint8_t raw_data[AUDI_WIRE_BYTES]; // on-wire (scrambled) 8 bytes
+    uint8_t raw_data[AUDI_WIRE_BYTES];
     uint8_t last_raw_data[AUDI_WIRE_BYTES];
     bool last_raw_valid;
-    bool parity_ok; // scramble inverse recovered a self-consistent block
+    bool parity_ok;
 };
 
 static uint8_t audi_checksum(const uint8_t raw[AUDI_WIRE_BYTES]);
@@ -62,7 +60,6 @@ static const char* audi_button_name(uint8_t btn) {
 static void audi_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderAudi* instance = input->decoder;
-
 
     const uint8_t cs = instance->raw_data[7];
     const uint8_t cs_calc = audi_checksum(instance->raw_data);

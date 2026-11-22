@@ -4,34 +4,27 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
 #define TAG "HondaV9"
-
-// Honda V9 -- ported from firmware honda_v9.c via KeeLoq-RX arke_honda.py (class HondaV9).
-// 2-FSK (OOK-captured) Manchester, te 63/126 us, te_delta 25. Half-bit samples are
-// collected (short pulse = 1 sample, long = 2) into hb[]; a dual-polarity Manchester
-// decode yields a 112-bit (14-byte) MSB-first frame. Fields:
-//   hdr=dec[0]>>4, button=dec[0]&0xF, serial=dec[1..3 hi nibble] (20b),
-//   flags=dec[3]&0xF, fingerprint=dec[4..7] (32b), checksum=dec[8], counter=dec[10..11].
-// Integrity: XOR(dec[0..7]) == checksum, tolerant to Hamming distance <= 1.
-// Decode-only; .encoder = NULL.
 
 #define HV9_TS         63
 #define HV9_TL         126
 #define HV9_TD         25
 #define HV9_MIN_PRE    20
 #define HV9_PRE_CYC    55
-#define HV9_FRAME_BITS 112
+#define HV9_FRAME_BITS 136
+#define HV9_MIN_ACCEPT 134
 #define HV9_MIN_BITS   64
-#define HV9_FRAME_BYTES 14
+#define HV9_FRAME_BYTES 17
 #define HV9_HB_CAP     512
 
 static const SubGhzBlockConst subghz_protocol_honda_v9_const = {
     .te_short = HV9_TS,
     .te_long = HV9_TL,
     .te_delta = HV9_TD,
-    .min_count_bit_for_found = HV9_FRAME_BITS,
+    .min_count_bit_for_found = HV9_MIN_ACCEPT,
 };
 
 struct SubGhzProtocolDecoderHondaV9 {
@@ -51,10 +44,9 @@ struct SubGhzProtocolDecoderHondaV9 {
     uint8_t crc;
     bool crc_ok;
     bool pol_inv;
-    uint64_t tail; // decoded[8..13] (48 bits)
+    uint64_t tail;
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderHondaV9);
-
 
 static uint8_t honda_v9_classify(uint32_t dur) {
     if(DURATION_DIFF(dur, HV9_TS) <= HV9_TD) return 1;
@@ -62,7 +54,6 @@ static uint8_t honda_v9_classify(uint32_t dur) {
     return 0;
 }
 
-// Mirror HondaV9._man_decode(): returns bit_count (0 on fail), fills decoded[16].
 static int honda_v9_man_decode(const uint8_t* hb, int n, bool invert, uint8_t* decoded) {
     memset(decoded, 0, HV9_FRAME_BYTES + 2);
     int alt_end = 1;
@@ -92,53 +83,62 @@ static int honda_v9_man_decode(const uint8_t* hb, int n, bool invert, uint8_t* d
     return bit_count;
 }
 
+static uint8_t honda_v9_crc8(const uint8_t* data, int len) {
+    uint8_t c = 0x00;
+    for(int i = 0; i < len; i++) {
+        c ^= data[i];
+        for(int b = 0; b < 8; b++)
+            c = (c & 0x80) ? (uint8_t)((c << 1) ^ 0x2F) : (uint8_t)(c << 1);
+    }
+    return c ^ 0x0C;
+}
+
 static bool honda_v9_try_polarity(SubGhzProtocolDecoderHondaV9* instance, bool invert) {
     uint8_t decoded[HV9_FRAME_BYTES + 2];
     int bit_count = honda_v9_man_decode(instance->hb, instance->hb_len, invert, decoded);
-    if(bit_count < HV9_FRAME_BITS) return false;
+    if(bit_count < HV9_MIN_ACCEPT) return false;
 
     uint8_t hdr = (decoded[0] >> 4) & 0x0F;
-    uint8_t button = decoded[0] & 0x0F;
+    uint8_t command = decoded[8];
     uint32_t serial =
         ((uint32_t)decoded[1] << 12) | ((uint32_t)decoded[2] << 4) | ((decoded[3] >> 4) & 0x0F);
     uint8_t flags = decoded[3] & 0x0F;
     uint32_t fingerprint = ((uint32_t)decoded[4] << 24) | ((uint32_t)decoded[5] << 16) |
                            ((uint32_t)decoded[6] << 8) | decoded[7];
-    uint8_t checksum = decoded[8];
-    uint16_t counter = ((uint16_t)decoded[10] << 8) | decoded[11];
+    uint16_t counter = ((uint16_t)decoded[12] << 8) | decoded[13];
 
-    uint8_t xchk = 0;
-    for(int i = 0; i < 8; i++) xchk ^= decoded[i];
-    int dist = __builtin_popcount((unsigned)(xchk ^ checksum));
+    uint8_t crc = honda_v9_crc8(decoded, 16);
+    int crc_bits = bit_count - 128;
+    if(crc_bits < 6 || crc_bits > 8) return false;
+    uint8_t shift = (uint8_t)(8 - crc_bits);
+    if((uint8_t)(crc >> shift) != (uint8_t)(decoded[16] >> shift)) return false;
 
-    if(button > 0x9) return false;
     if(serial == 0 || serial == 0x000FFFFF) return false;
     if(fingerprint == 0 || fingerprint == 0xFFFFFFFF) return false;
-    if(xchk != checksum && dist > 1) return false;
 
     uint64_t data = 0;
     for(int i = 0; i < 8; i++) data = (data << 8) | decoded[i];
     uint64_t tail = 0;
-    for(int i = 8; i < 14; i++) tail = (tail << 8) | decoded[i];
+    for(int i = 8; i < 16; i++) tail = (tail << 8) | decoded[i];
 
     instance->serial = serial;
-    instance->btn = button;
+    instance->btn = command;
     instance->cnt = counter;
     instance->hdr = hdr;
     instance->flags = flags;
     instance->fingerprint = fingerprint;
-    instance->crc = checksum;
-    instance->crc_ok = (xchk == checksum);
+    instance->crc = decoded[16];
+    instance->crc_ok = true;
     instance->pol_inv = invert;
     instance->tail = tail;
 
     instance->generic.data = data;
-    instance->generic.data_count_bit = HV9_FRAME_BITS;
+    instance->generic.data_count_bit = (uint16_t)bit_count;
     instance->generic.serial = serial;
-    instance->generic.btn = button;
+    instance->generic.btn = command;
     instance->generic.cnt = counter;
     instance->decoder.decode_data = data;
-    instance->decoder.decode_count_bit = HV9_FRAME_BITS;
+    instance->decoder.decode_count_bit = (uint16_t)bit_count;
 
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
     return true;
@@ -158,8 +158,6 @@ void* subghz_protocol_decoder_honda_v9_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     return instance;
 }
-
-
 
 void subghz_protocol_decoder_honda_v9_reset(void* context) {
     furi_check(context);
@@ -187,8 +185,6 @@ void subghz_protocol_decoder_honda_v9_feed(void* context, bool level, uint32_t d
     }
 }
 
-
-
 SubGhzProtocolStatus subghz_protocol_decoder_honda_v9_serialize(
     void* context,
     FlipperFormat* flipper_format,
@@ -215,6 +211,16 @@ SubGhzProtocolStatus subghz_protocol_decoder_honda_v9_serialize(
        !flipper_format_write_uint32(flipper_format, "TailLo", &tail_lo, 1)) {
         return SubGhzProtocolStatusErrorParserOthers;
     }
+
+    uint8_t fdata[17];
+    uint64_t g = instance->generic.data;
+    for(uint8_t b = 0; b < 8; b++) fdata[b] = (uint8_t)(g >> (56 - b * 8));
+    uint64_t t = instance->tail;
+    for(uint8_t b = 0; b < 8; b++) fdata[8 + b] = (uint8_t)(t >> (56 - b * 8));
+    fdata[16] = instance->crc;
+    if(!flipper_format_write_hex(flipper_format, "Data", fdata, sizeof(fdata))) {
+        return SubGhzProtocolStatusErrorParserOthers;
+    }
     return SubGhzProtocolStatusOk;
 }
 
@@ -226,27 +232,35 @@ SubGhzProtocolStatus
         &instance->generic, flipper_format, subghz_protocol_honda_v9_const.min_count_bit_for_found);
     if(status != SubGhzProtocolStatusOk) return status;
 
-    uint64_t data = instance->generic.data;
-    uint8_t dec[8];
-    for(int i = 0; i < 8; i++) dec[i] = (uint8_t)(data >> (8 * (7 - i)));
+    uint8_t dec[17] = {0};
+    flipper_format_rewind(flipper_format);
+    if(!flipper_format_read_hex(flipper_format, "Data", dec, 17)) {
+
+        uint64_t d0 = instance->generic.data;
+        for(int i = 0; i < 8; i++) dec[i] = (uint8_t)(d0 >> (8 * (7 - i)));
+    }
     instance->hdr = (dec[0] >> 4) & 0x0F;
-    instance->btn = dec[0] & 0x0F;
+    instance->btn = dec[8];
     instance->serial =
         ((uint32_t)dec[1] << 12) | ((uint32_t)dec[2] << 4) | ((dec[3] >> 4) & 0x0F);
     instance->flags = dec[3] & 0x0F;
     instance->fingerprint = ((uint32_t)dec[4] << 24) | ((uint32_t)dec[5] << 16) |
                             ((uint32_t)dec[6] << 8) | dec[7];
+    instance->cnt = ((uint16_t)dec[12] << 8) | dec[13];
+    instance->crc = dec[16];
 
-    uint32_t tmp = 0;
-    flipper_format_rewind(flipper_format);
-    instance->crc = flipper_format_read_uint32(flipper_format, "CRC", &tmp, 1) ? (uint8_t)tmp : 0;
-    flipper_format_rewind(flipper_format);
-    instance->cnt = flipper_format_read_uint32(flipper_format, "Cnt", &tmp, 1) ? (uint16_t)tmp : 0;
+    uint8_t crc = honda_v9_crc8(dec, 16);
+    int crc_bits = (int)instance->generic.data_count_bit - 128;
+    uint8_t shift = (crc_bits >= 8) ? 0u : (uint8_t)(8 - (crc_bits < 0 ? 0 : crc_bits));
+    instance->crc_ok =
+        (crc_bits >= 6) && ((uint8_t)(crc >> shift) == (uint8_t)(dec[16] >> shift));
 
-    uint8_t xchk = 0;
-    for(int i = 0; i < 8; i++) xchk ^= dec[i];
-    instance->crc_ok = (xchk == instance->crc);
+    uint64_t data = 0;
+    for(int i = 0; i < 8; i++) data = (data << 8) | dec[i];
+    instance->tail = 0;
+    for(int i = 8; i < 16; i++) instance->tail = (instance->tail << 8) | dec[i];
 
+    instance->generic.data = data;
     instance->generic.serial = instance->serial;
     instance->generic.btn = instance->btn;
     instance->generic.cnt = instance->cnt;
@@ -266,12 +280,16 @@ const SubGhzProtocolDecoder subghz_protocol_honda_v9_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_honda_v9_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_honda_v9 = {
     .name = HONDA_V9_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
             SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_honda_v9_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_honda_v9_encoder_ext.vtable,
 };

@@ -11,6 +11,7 @@
 #include <flipper_format/flipper_format.h>
 #include <assets_icons.h>
 #include "fox_setup_icons.h"
+#include <notification/notification_messages.h>
 
 #define FOX_PIN_LENGTH_OFFSET  45
 #define FOX_SETTINGS_XOR_KEY   0xAD
@@ -43,6 +44,11 @@ static bool fox_setup_pin_is_set(void) {
 #define FOX_SETUP_AUTO_ARG          "auto"
 #define FOX_SETUP_WIPER_ARG         "wiper"
 
+#define SLIDE_FADE_STEPS   26
+#define SLIDE_FADE_STEP_MS 33
+
+#define WIZARD_IDLE_TIMEOUT_MS 290000u
+
 typedef enum {
     Page1_Welcome = 1,
     Page2_RenamePrompt,
@@ -50,6 +56,8 @@ typedef enum {
     Page4_PinPrompt,
     Page5_PinAction,
     Page6_Complete,
+    Page7_SlideFox,
+    Page8_SlideVersion,
 } FoxSetupPage;
 
 static FoxSetupPage fox_post_rename_page(void) {
@@ -76,6 +84,8 @@ typedef struct {
     char         device_name[FURI_HAL_VERSION_ARRAY_NAME_LENGTH];
     PinState     pin;
     uint32_t     ignore_input_until;
+    bool         fading;
+    uint8_t      fade_step;
 
 } FoxSetupModel;
 
@@ -87,7 +97,8 @@ typedef enum {
 typedef enum {
     EventRenameOk      = 0,
     EventRenameBack    = 1,
-    EventSetupComplete = 2,
+    EventSlideTick     = 2,
+    EventIdleTimeout   = 3,
 } FoxSetupEvent;
 
 typedef struct {
@@ -98,6 +109,7 @@ typedef struct {
     FuriMutex*      mutex;
     FuriTimer*      complete_timer;
     bool            complete_armed;
+    FuriTimer*      idle_timer;
 } FoxSetupApp;
 
 static bool fox_setup_already_ran(void) {
@@ -316,10 +328,33 @@ static void fox_setup_draw_main(Canvas* canvas, void* ctx) {
             elements_multiline_text_aligned(canvas, 64, 32, AlignCenter, AlignCenter, done_msg);
             if(!app->complete_armed) {
                 app->complete_armed = true;
-                furi_timer_start(app->complete_timer, furi_ms_to_ticks(2000));
+                /* Backlight may have gone dark during a long idle before the
+                 * idle-timeout dropped us here -- drive it full so the Welcome
+                 * page is visible and the fade-out has something to fade from. */
+                furi_hal_light_set(LightBacklight, 0xFF);
+                furi_timer_stop(app->idle_timer);
+                furi_timer_start(app->complete_timer, furi_ms_to_ticks(1300));
             }
             break;
         }
+
+        case Page7_SlideFox:
+            canvas_draw_icon(canvas, 0, 0, &I_slide_fox);
+            if(!app->complete_armed) {
+                app->complete_armed = true;
+                furi_timer_stop(app->idle_timer);
+                furi_timer_start(app->complete_timer, furi_ms_to_ticks(1300));
+            }
+            break;
+
+        case Page8_SlideVersion:
+            canvas_draw_icon(canvas, 0, 0, &I_slide_version);
+            if(!app->complete_armed) {
+                app->complete_armed = true;
+                furi_timer_stop(app->idle_timer);
+                furi_timer_start(app->complete_timer, furi_ms_to_ticks(1300));
+            }
+            break;
     }
 
     furi_mutex_release(app->mutex);
@@ -342,6 +377,10 @@ static bool fox_setup_input_main(InputEvent* event, void* ctx) {
         return true;
     }
     model->ignore_input_until = 0;
+
+    if(model->current_page < Page6_Complete) {
+        furi_timer_start(app->idle_timer, furi_ms_to_ticks(WIZARD_IDLE_TIMEOUT_MS));
+    }
 
     InputKey key = event->key;
     bool consumed = true;
@@ -487,9 +526,12 @@ static bool fox_setup_input_main(InputEvent* event, void* ctx) {
         }
 
         case Page6_Complete:
-            if(key == InputKeyBack || key == InputKeyOk || key == InputKeyRight) {
+        case Page7_SlideFox:
+        case Page8_SlideVersion:
+            if(key == InputKeyBack) {
                 model->completed = true;
                 furi_mutex_release(app->mutex);
+                furi_hal_light_set(LightBacklight, 0xFF);
                 view_dispatcher_stop(app->view_dispatcher);
                 return true;
             }
@@ -506,19 +548,73 @@ static bool fox_setup_input_main(InputEvent* event, void* ctx) {
     return consumed;
 }
 
+static void fox_setup_idle_timer_cb(void* ctx) {
+    FoxSetupApp* app = ctx;
+    view_dispatcher_send_custom_event(app->view_dispatcher, EventIdleTimeout);
+}
+
 static void fox_setup_complete_timer_cb(void* ctx) {
     FoxSetupApp* app = ctx;
-    view_dispatcher_send_custom_event(app->view_dispatcher, EventSetupComplete);
+    view_dispatcher_send_custom_event(app->view_dispatcher, EventSlideTick);
 }
 
 static bool fox_setup_custom_event(void* ctx, uint32_t event) {
     FoxSetupApp* app = ctx;
 
-    if(event == EventSetupComplete) {
+    if(event == EventSlideTick) {
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        app->model->completed = true;
+        bool rearm = false, finish = false, advance = false, apply_bl = false;
+        uint8_t bl = 0xFF;
+        if(!app->model->fading) {
+            app->model->fading = true;
+            app->model->fade_step = 0;
+            rearm = true;
+        } else {
+            app->model->fade_step++;
+            bl = (uint8_t)((255u * (SLIDE_FADE_STEPS - app->model->fade_step)) / SLIDE_FADE_STEPS);
+            apply_bl = true;
+            if(app->model->fade_step < SLIDE_FADE_STEPS) {
+                rearm = true;
+            } else {
+                app->model->fading = false;
+                if(app->model->current_page == Page6_Complete) {
+                    app->model->current_page = Page8_SlideVersion;
+                    app->complete_armed = false;
+                    advance = true;
+                } else if(app->model->current_page == Page8_SlideVersion) {
+                    app->model->current_page = Page7_SlideFox;
+                    app->complete_armed = false;
+                    advance = true;
+                } else {
+                    app->model->completed = true;
+                    finish = true;
+                }
+            }
+        }
         furi_mutex_release(app->mutex);
-        view_dispatcher_stop(app->view_dispatcher);
+
+        if(apply_bl) furi_hal_light_set(LightBacklight, bl);
+        if(rearm) {
+            furi_timer_start(app->complete_timer, furi_ms_to_ticks(SLIDE_FADE_STEP_MS));
+        } else {
+            furi_hal_light_set(LightBacklight, 0xFF);
+            if(finish) view_dispatcher_stop(app->view_dispatcher);
+            else if(advance) view_dispatcher_switch_to_view(app->view_dispatcher, ViewIdMain);
+        }
+        return true;
+    }
+
+    if(event == EventIdleTimeout) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        bool start_outro = (app->model->current_page < Page6_Complete);
+        if(start_outro) {
+            app->model->current_page = Page6_Complete;
+            app->complete_armed = false;
+        }
+        furi_mutex_release(app->mutex);
+        furi_timer_stop(app->idle_timer);
+        if(start_outro)
+            view_dispatcher_switch_to_view(app->view_dispatcher, ViewIdMain);
         return true;
     }
 
@@ -583,6 +679,8 @@ int32_t fox_setup_app(void* p) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->complete_timer = furi_timer_alloc(fox_setup_complete_timer_cb, FuriTimerTypeOnce, app);
     app->complete_armed = false;
+    app->idle_timer = furi_timer_alloc(fox_setup_idle_timer_cb, FuriTimerTypeOnce, app);
+    furi_timer_start(app->idle_timer, furi_ms_to_ticks(WIZARD_IDLE_TIMEOUT_MS));
 
     app->view_dispatcher = view_dispatcher_alloc();
     Gui* gui = furi_record_open(RECORD_GUI);
@@ -610,6 +708,13 @@ int32_t fox_setup_app(void* p) {
     view_dispatcher_switch_to_view(app->view_dispatcher, ViewIdMain);
     view_dispatcher_run(app->view_dispatcher);
 
+    /* The wizard drove the backlight directly (furi_hal_light_set) for the fade; hand
+     * control back to the notification service on exit so it keeps the screen lit now
+     * and then honours the settings dim-after-timeout, instead of staying on forever. */
+    NotificationApp* notification = furi_record_open(RECORD_NOTIFICATION);
+    notification_message(notification, &sequence_display_backlight_on);
+    furi_record_close(RECORD_NOTIFICATION);
+
     bool write_flag = !wiper_launch;
 
     view_dispatcher_remove_view(app->view_dispatcher, ViewIdMain);
@@ -620,6 +725,8 @@ int32_t fox_setup_app(void* p) {
     furi_record_close(RECORD_GUI);
     furi_timer_stop(app->complete_timer);
     furi_timer_free(app->complete_timer);
+    furi_timer_stop(app->idle_timer);
+    furi_timer_free(app->idle_timer);
     furi_mutex_free(app->mutex);
     free(app->model);
     free(app);

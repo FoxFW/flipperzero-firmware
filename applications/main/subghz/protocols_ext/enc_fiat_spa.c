@@ -1,5 +1,5 @@
-/* enc_fiat_spa.fal : SD encoder for fiat_spa (auto-split enc v1). FoxFW2.0 2026-10-21. */
-/* plugin-unique globals (fbt also links plugin sources into firmware.elf) */
+
+
 #define subghz_protocol_encoder_fiat_spa_alloc enc_fiat_spa__subghz_protocol_encoder_fiat_spa_alloc
 #define subghz_protocol_encoder_fiat_spa_deserialize enc_fiat_spa__subghz_protocol_encoder_fiat_spa_deserialize
 #define subghz_protocol_encoder_fiat_spa_free enc_fiat_spa__subghz_protocol_encoder_fiat_spa_free
@@ -201,7 +201,6 @@ static const SubGhzProtocolEncoder enc_fiat_spa_vt = {
     .yield = subghz_protocol_encoder_fiat_spa_yield,
 };
 
-/* Plugin-local protocol object: encoder alloc points base.protocol here. */
 const SubGhzProtocol subghz_protocol_fiat_spa = {
     .name = SUBGHZ_PROTOCOL_FIAT_SPA_NAME,
     .type = SubGhzProtocolTypeStatic,

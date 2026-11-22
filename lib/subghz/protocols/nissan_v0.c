@@ -4,18 +4,10 @@
 #include <lib/subghz/blocks/generic.h>
 #include <lib/subghz/blocks/math.h>
 #include "common.h"
+#include "../encode_plugin.h"
 #include <lib/subghz/blocks/bitbuf.h>
 
 #define TAG "NissanV0"
-
-// Nissan V0 -- ported from firmware nissan_v0.c via KeeLoq-RX arke_vag.py (class
-// NissanV0). OOK/ASK, Manchester te_short=500 / te_long=1000. The demod is run-length
-// based: each pulse is expanded into 1..4 half-bit samples (duration / ~500us), the
-// half-bit stream is paired into bits by a stateless differential Manchester (differing
-// pair -> bit, equal pair -> slip), and the decoder scans for a 6-bit sync '110001'
-// with a 6-bit marker '000010' at +48. On a match a 64-bit payload is taken from the
-// sync offset. Payload encrypted -> structural lock only (no CRC), with same-frame
-// de-dup. Decode-only; .encoder = NULL.
 
 #define NISSAN_V0_DATA_BITS 64
 #define NISSAN_V0_HB_MAX    512
@@ -45,14 +37,12 @@ struct SubGhzProtocolDecoderNissanV0 {
 };
 SUBGHZ_ASSERT_DECODER_COMMON_LAYOUT(SubGhzProtocolDecoderNissanV0);
 
-
 static void nissan_v0_process(SubGhzProtocolDecoderNissanV0* instance) {
     if(instance->hb_len < NISSAN_V0_HB_MIN) {
         instance->hb_len = 0;
         return;
     }
 
-    // stateless Manchester: pair differing half-bits, slip on equal
     uint8_t bits[NISSAN_V0_BITS_MAX];
     uint16_t nbits = 0;
     uint16_t i = 0;
@@ -122,8 +112,6 @@ void* subghz_protocol_decoder_nissan_v0_alloc(SubGhzEnvironment* environment) {
     return instance;
 }
 
-
-
 void subghz_protocol_decoder_nissan_v0_reset(void* context) {
     furi_check(context);
     SubGhzProtocolDecoderNissanV0* instance = context;
@@ -159,10 +147,6 @@ void subghz_protocol_decoder_nissan_v0_feed(void* context, bool level, uint32_t 
     if(instance->hb_len >= NISSAN_V0_HB_CAP) nissan_v0_process(instance);
 }
 
-
-
-
-
 SubGhzProtocolStatus
     subghz_protocol_decoder_nissan_v0_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_check(context);
@@ -190,11 +174,15 @@ const SubGhzProtocolDecoder subghz_protocol_nissan_v0_decoder = {
     .get_string = subghz_protocol_decoder_common_get_string,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_nissan_v0_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_nissan_v0 = {
     .name = NISSAN_V0_PROTOCOL_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_433 | SubGhzProtocolFlag_315 | SubGhzProtocolFlag_AM |
-            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Decodable | SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save |
+            SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_nissan_v0_decoder,
-    .encoder = NULL,
+    .encoder = &subghz_protocol_nissan_v0_encoder_ext.vtable,
 };

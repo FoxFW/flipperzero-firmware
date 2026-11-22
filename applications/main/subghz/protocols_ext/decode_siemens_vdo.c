@@ -1,4 +1,4 @@
-/* decode_siemens_vdo.fal : SD get_string for siemens_vdo (auto-split v5). FoxFW2.0 2026-10-21. */
+
 #include "subghz_decode_plugin_desc.h"
 #include <string.h>
 #include <lib/subghz/protocols/siemens_vdo.h>
@@ -14,14 +14,14 @@ struct SubGhzProtocolDecoderSiemensVdo {
     SubGhzBlockGeneric generic;
 
     ManchesterState manchester_state;
-    uint16_t sync_shift; // sliding 16-bit window while hunting for the sync word
-    uint16_t sync_bits; // number of bits shifted in (saturates at 16)
-    bool synced; // sync word found, now collecting payload
-    bool invert; // sync matched inverted -> invert captured bits
-    uint16_t data_bit_count; // payload bits collected so far
+    uint16_t sync_shift;
+    uint16_t sync_bits;
+    bool synced;
+    bool invert;
+    uint16_t data_bit_count;
     uint8_t bytes[SIEMENS_VDO_PAYLOAD_BYTES];
-    uint8_t crc; // captured check byte
-    bool crc_check; // XOR integrity result
+    uint8_t crc;
+    bool crc_check;
 };
 
 static void siemens_vdo_check_remote_controller(SubGhzProtocolDecoderSiemensVdo* instance);
@@ -56,7 +56,6 @@ static const char* siemens_vdo_get_button_name(uint8_t btn) {
 static void siemens_vdo_decode(const SubGhzDecodeInput* input, FuriString* output) {
     if(!input || !input->decoder) return;
     SubGhzProtocolDecoderSiemensVdo* instance = input->decoder;
-
 
     siemens_vdo_check_remote_controller(instance);
 

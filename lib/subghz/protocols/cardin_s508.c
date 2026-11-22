@@ -1,9 +1,11 @@
 #include "cardin_s508.h"
+#include "decode_plugin.h"
 
 #include <lib/toolbox/manchester_decoder.h>
 #include "../blocks/const.h"
 #include "../blocks/decoder.h"
 #include "../blocks/encoder.h"
+#include "../encode_plugin.h"
 #include "../blocks/generic.h"
 #include "../blocks/math.h"
 
@@ -68,13 +70,16 @@ const SubGhzProtocolEncoder subghz_protocol_cardin_s508_encoder = {
     .yield = NULL,
 };
 
+static const SubGhzEncoderExternal subghz_protocol_cardin_s508_encoder_ext =
+    SUBGHZ_ENCODER_EXTERNAL("enc_recon_manchester");
+
 const SubGhzProtocol subghz_protocol_cardin_s508 = {
     .name = SUBGHZ_PROTOCOL_CARDIN_S508_NAME,
     .type = SubGhzProtocolTypeDynamic,
     .flag = SubGhzProtocolFlag_868 | SubGhzProtocolFlag_FM | SubGhzProtocolFlag_Decodable |
-            SubGhzProtocolFlag_Save,
+            SubGhzProtocolFlag_Load | SubGhzProtocolFlag_Save | SubGhzProtocolFlag_Send,
     .decoder = &subghz_protocol_cardin_s508_decoder,
-    .encoder = &subghz_protocol_cardin_s508_encoder,
+    .encoder = &subghz_protocol_cardin_s508_encoder_ext.vtable,
 };
 
 static void subghz_protocol_decoder_cardin_s508_reset_accumulators(
@@ -265,15 +270,8 @@ SubGhzProtocolStatus
 void subghz_protocol_decoder_cardin_s508_get_string(void* context, FuriString* output) {
     furi_assert(context);
     SubGhzProtocolDecoderCardinS508* instance = context;
-    furi_string_cat_printf(
-        output,
-        "%s\r\n"
-        "Rolling (AES-128)\r\n"
-        "Sync:110011110100\r\n"
-        "Key:%08lX%08lX%08lX%08lX\r\n",
-        instance->generic.protocol_name,
-        (uint32_t)(instance->generic.data_2 >> 32),
-        (uint32_t)(instance->generic.data_2 & 0xFFFFFFFF),
-        (uint32_t)(instance->generic.data >> 32),
-        (uint32_t)(instance->generic.data & 0xFFFFFFFF));
+        const SubGhzDecodeInput input = {
+        .generic = &instance->generic,
+    };
+    subghz_decode_plugin_get_string("Cardin S508", &input, output);
 }
